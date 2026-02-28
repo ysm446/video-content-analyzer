@@ -4,8 +4,8 @@ const fs = require('fs')
 
 function createMainWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 860,
+    width: 1920,
+    height: 1280,
     minWidth: 900,
     minHeight: 650,
     webPreferences: {
