@@ -98,6 +98,7 @@ class ReviewRequest(BaseModel):
     max_frames:    int   = 30
     min_interval:  float = 5.0
     include_audio: bool  = False
+    frame_mode:    str   = "uniform"  # "uniform" | "scene"
 
 
 class QARequest(BaseModel):
@@ -106,10 +107,17 @@ class QARequest(BaseModel):
     max_frames:   int   = 20
     min_interval: float = 5.0
     transcript:   str   = ""
+    frame_mode:   str   = "uniform"  # "uniform" | "scene"
 
 
 class SetVLModelRequest(BaseModel):
     model_id: str
+
+
+class UISettingsRequest(BaseModel):
+    frame_mode:    Optional[str]  = None  # "uniform" | "scene"
+    max_frames:    Optional[int]  = None
+    include_audio: Optional[bool] = None
 
 
 # ---------- 利用可能なモデル ----------
@@ -141,6 +149,27 @@ TRANSLATOR_MODELS = [
 
 @app.get("/health")
 def health():
+    return {"status": "ok"}
+
+
+@app.get("/ui-settings")
+def get_ui_settings():
+    s = load_settings()
+    return {
+        "frame_mode":    s.get("frame_mode", "uniform"),
+        "max_frames":    s.get("max_frames", 30),
+        "include_audio": s.get("include_audio", False),
+    }
+
+
+@app.post("/ui-settings")
+def post_ui_settings(req: UISettingsRequest):
+    to_save = {}
+    if req.frame_mode    is not None: to_save["frame_mode"]    = req.frame_mode
+    if req.max_frames    is not None: to_save["max_frames"]    = req.max_frames
+    if req.include_audio is not None: to_save["include_audio"] = req.include_audio
+    if to_save:
+        save_settings(to_save)
     return {"status": "ok"}
 
 
@@ -416,13 +445,21 @@ async def review_analyze(req: ReviewRequest):
 
             yield sse({"status": "extracting_frames"})
             try:
-                frames, meta = await loop.run_in_executor(
-                    None,
-                    video_reviewer.extract_frames,
-                    str(video_path),
-                    req.max_frames,
-                    req.min_interval,
-                )
+                if req.frame_mode == "scene":
+                    frames, meta = await loop.run_in_executor(
+                        None,
+                        video_reviewer.extract_frames_scene,
+                        str(video_path),
+                        req.max_frames,
+                    )
+                else:
+                    frames, meta = await loop.run_in_executor(
+                        None,
+                        video_reviewer.extract_frames,
+                        str(video_path),
+                        req.max_frames,
+                        req.min_interval,
+                    )
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
@@ -477,13 +514,21 @@ async def review_qa(req: QARequest):
 
         yield sse({"status": "extracting_frames"})
         try:
-            frames, meta = await loop.run_in_executor(
-                None,
-                video_reviewer.extract_frames,
-                str(video_path),
-                req.max_frames,
-                req.min_interval,
-            )
+            if req.frame_mode == "scene":
+                frames, meta = await loop.run_in_executor(
+                    None,
+                    video_reviewer.extract_frames_scene,
+                    str(video_path),
+                    req.max_frames,
+                )
+            else:
+                frames, meta = await loop.run_in_executor(
+                    None,
+                    video_reviewer.extract_frames,
+                    str(video_path),
+                    req.max_frames,
+                    req.min_interval,
+                )
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
             return

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -15,10 +16,13 @@ from .vram import MAX_PIXELS_PER_FRAME, max_memory_map
 
 DEFAULT_MODEL_ID = "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
 
+# シーン検出の閾値（0.0〜1.0、低いほど敏感）
+SCENE_THRESHOLD = 0.35
+
 ANALYZE_SYSTEM = (
     "/no_think\n"
     "あなたは動画分析の専門家です。"
-    "提供されたフレーム画像（動画から均等サンプリング）と、"
+    "提供されたフレーム画像と、"
     "必要に応じて音声の書き起こしテキストを総合して動画の内容を分析します。"
 )
 
@@ -38,7 +42,7 @@ _ANALYZE_JSON_FORMAT = (
 
 # 指示文のみ（JSON フォーマットはプロンプト構築時に追加）
 _ANALYZE_INSTR_VISUAL = (
-    "この動画から均等サンプリングされたフレームを分析し、"
+    "この動画からサンプリングされたフレームを分析し、"
     "以下のJSON形式のみで回答してください。"
     "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
     "scenes は序盤・中盤・終盤の固定3区分ではなく、"
@@ -47,7 +51,7 @@ _ANALYZE_INSTR_VISUAL = (
 )
 
 _ANALYZE_INSTR_AUDIO = (
-    "この動画から均等サンプリングされたフレームと、以下の音声書き起こしを総合して分析し、"
+    "この動画からサンプリングされたフレームと、以下の音声書き起こしを総合して分析し、"
     "以下のJSON形式のみで回答してください。"
     "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
     "scenes は序盤・中盤・終盤の固定3区分ではなく、"
@@ -118,6 +122,91 @@ class VideoReviewer:
         probe = ffmpeg.probe(video_path)
         return float(probe["format"]["duration"])
 
+    def extract_frames_scene(
+        self,
+        video_path: str,
+        max_frames: int,
+        threshold: float = SCENE_THRESHOLD,
+    ) -> tuple[list[Image.Image], dict]:
+        """
+        ffmpeg のシーン変化検出でキーフレームを抽出して PIL.Image のリストを返す。
+        先頭フレームを常に含む。検出数が max_frames を超える場合は間引く。
+        フレームが 1 枚以下の場合は均等サンプリングにフォールバック。
+
+        Returns:
+            (frames, meta)
+            meta = {"count": int, "interval": None, "duration": float,
+                    "timestamps": list[float], "mode": "scene"}
+        """
+        duration = self._get_duration(video_path)
+        frames: list[Image.Image] = []
+        timestamps: list[float] = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
+            # 先頭フレーム（eq(n\,0)）＋シーン変化フレームを抽出
+            # showinfo フィルターで各フレームの pts_time を stderr に出力させる
+            cmd = [
+                "ffmpeg", "-i", video_path,
+                "-vf", f"select=eq(n\\,0)+gt(scene\\,{threshold}),showinfo",
+                "-vsync", "vfr",
+                "-vcodec", "mjpeg", "-q:v", "2",
+                outpattern, "-y",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            # stderr から pts_time を抽出（showinfo の出力形式: "pts_time:1.234"）
+            ts_pattern = re.compile(r"\bpts_time:(\d+\.?\d*)")
+            raw_ts = [
+                float(m.group(1))
+                for line in result.stderr.splitlines()
+                if (m := ts_pattern.search(line))
+            ]
+
+            frame_files = sorted(
+                f for f in os.listdir(tmpdir)
+                if f.startswith("frame_") and f.endswith(".jpg")
+            )
+
+            # タイムスタンプとファイル数を合わせる（ずれた場合は末尾を補完）
+            if len(raw_ts) > len(frame_files):
+                raw_ts = raw_ts[:len(frame_files)]
+            elif len(raw_ts) < len(frame_files):
+                step = duration / max(len(frame_files) - 1, 1)
+                raw_ts += [step * i for i in range(len(raw_ts), len(frame_files))]
+
+            # max_frames を超えたら間引く（先頭は必ず保持）
+            if len(frame_files) > max_frames:
+                step = (len(frame_files) - 1) / (max_frames - 1)
+                indices = sorted(set(
+                    [0] + [min(round(i * step), len(frame_files) - 1)
+                           for i in range(1, max_frames)]
+                ))
+                frame_files = [frame_files[i] for i in indices]
+                raw_ts = [raw_ts[i] for i in indices]
+
+            for fname in frame_files:
+                frames.append(Image.open(str(Path(tmpdir) / fname)).copy())
+            timestamps = raw_ts[:len(frames)]
+
+        # フレームが取れなかった場合は均等サンプリングにフォールバック
+        if len(frames) <= 1:
+            print("[VideoReviewer] シーン検出フレームなし → 均等サンプリングにフォールバック")
+            return self.extract_frames(video_path, max_frames, 5.0)
+
+        m_d, s_d = divmod(int(duration), 60)
+        print(
+            f"[VideoReviewer] シーン検出フレーム抽出完了: {len(frames)}枚"
+            f" (動画 {m_d}分{s_d}秒 / 閾値 {threshold} / 最大 {max_frames}枚指定)"
+        )
+        return frames, {
+            "count": len(frames),
+            "interval": None,
+            "duration": duration,
+            "timestamps": timestamps,
+            "mode": "scene",
+        }
+
     def extract_frames(
         self,
         video_path: str,
@@ -154,7 +243,7 @@ class VideoReviewer:
 
         timestamps = [round(i * interval, 1) for i in range(len(frames))]
         meta = {"count": len(frames), "interval": interval, "duration": duration,
-                "timestamps": timestamps}
+                "timestamps": timestamps, "mode": "uniform"}
         m, s = divmod(int(duration), 60)
         print(
             f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚"
