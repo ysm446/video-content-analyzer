@@ -133,7 +133,7 @@ TRANSLATOR_MODELS = [
     {"id": "Qwen/Qwen3-1.7B",  "label": "Qwen3-1.7B",  "vram_gb": 3.5,  "note": "速い・省メモリ"},
     {"id": "Qwen/Qwen3-4B",    "label": "Qwen3-4B",    "vram_gb": 8.0,  "note": "高品質"},
     {"id": "Qwen/Qwen3-8B",    "label": "Qwen3-8B",    "vram_gb": 16.0, "note": "高品質・大容量"},
-    {"id": "Qwen/Qwen3-14B",   "label": "Qwen3-14B",   "vram_gb": 28.0, "note": "最高品質"},
+    {"id": "huihui-ai/Huihui-Qwen3-14B-abliterated-v2", "label": "Huihui Qwen3-14B v2", "vram_gb": 28.0, "note": "最高品質"},
 ]
 
 
@@ -257,7 +257,7 @@ async def translate(req: TranslateRequest):
         loop = asyncio.get_event_loop()
         translated = []
 
-        # Translator が未ロードならロード（単語ルックアップのために使用後は保持）
+        # Translator が未ロードならロード（翻訳終了後に必ずアンロード）
         if translator.model is None:
             yield sse({"status": "loading_model"})
             try:
@@ -404,40 +404,43 @@ async def review_analyze(req: ReviewRequest):
 
             yield sse({"status": "asr_done", "chars": len(transcript)})
 
-        # --- VL モデルロード ---
-        if video_reviewer.model is None:
-            yield sse({"status": "loading_model"})
+        # --- VL モデルロード & 分析（終了後は必ずアンロード）---
+        try:
+            if video_reviewer.model is None:
+                yield sse({"status": "loading_model"})
+                try:
+                    await loop.run_in_executor(None, video_reviewer.load)
+                except Exception as e:
+                    yield sse({"status": "error", "message": str(e)})
+                    return
+
+            yield sse({"status": "extracting_frames"})
             try:
-                await loop.run_in_executor(None, video_reviewer.load)
+                frames, meta = await loop.run_in_executor(
+                    None,
+                    video_reviewer.extract_frames,
+                    str(video_path),
+                    req.max_frames,
+                    req.min_interval,
+                )
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
 
-        yield sse({"status": "extracting_frames"})
-        try:
-            frames, meta = await loop.run_in_executor(
-                None,
-                video_reviewer.extract_frames,
-                str(video_path),
-                req.max_frames,
-                req.min_interval,
-            )
-        except Exception as e:
-            yield sse({"status": "error", "message": str(e)})
-            return
+            yield sse({"status": "analyzing",
+                       **{k: v for k, v in meta.items() if k != "timestamps"}})
+            try:
+                result = await loop.run_in_executor(
+                    None, video_reviewer.analyze_frames,
+                    frames, transcript, meta.get("timestamps", [])
+                )
+            except Exception as e:
+                yield sse({"status": "error", "message": str(e)})
+                return
 
-        yield sse({"status": "analyzing",
-                   **{k: v for k, v in meta.items() if k != "timestamps"}})
-        try:
-            result = await loop.run_in_executor(
-                None, video_reviewer.analyze_frames,
-                frames, transcript, meta.get("timestamps", [])
-            )
-        except Exception as e:
-            yield sse({"status": "error", "message": str(e)})
-            return
-
-        yield sse({"status": "done", "result": result, "meta": meta, "transcript": transcript})
+            yield sse({"status": "done", "result": result, "meta": meta, "transcript": transcript})
+        finally:
+            await loop.run_in_executor(None, video_reviewer.unload)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

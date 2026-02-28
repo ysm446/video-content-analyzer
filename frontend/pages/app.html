@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Language Caption Player</title>
+  <link rel="stylesheet" href="../css/common.css">
+  <style>
+    html,body{height:100%}
+    body{display:flex;flex-direction:column;overflow:hidden}
+    .tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 14px;gap:4px;flex-shrink:0}
+    .tab-btn{background:none;border:none;color:var(--text-dim);padding:12px 16px;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;margin-bottom:-1px}
+    .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+    .tab-panels,.tab-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+
+    .player-shell{flex:1;display:grid;grid-template-columns:minmax(460px,1fr) 8px minmax(300px,360px);min-height:0;overflow:hidden}
+    .player-left{min-width:0;display:flex;flex-direction:column}
+    .panel-resizer{background:var(--border);cursor:col-resize;user-select:none}
+    .panel-resizer:hover{background:var(--accent)}
+    .player-top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap}
+    .video-name{font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:220px}
+
+    .player-layout{flex:0 0 clamp(260px,45vh,460px);display:flex;flex-direction:column;min-height:0;background:#000}
+    .vertical-resizer{height:8px;background:var(--border);cursor:row-resize;user-select:none}
+    .vertical-resizer:hover{background:var(--accent)}
+    .video-wrap{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0}
+    #video{max-width:100%;max-height:100%;display:block}
+    .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim)}
+    .subtitle-area{background:#111;border-top:1px solid var(--border);padding:12px 20px}
+    #subtitleOrig{font-size:17px;color:#d0d0d0;min-height:24px}
+    #subtitleJp{font-size:19px;color:#fff;min-height:26px}
+
+    .controls{background:var(--surface);border-top:1px solid var(--border);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .controls input[type='range']{accent-color:var(--accent)}
+    .time-label{font-size:12px;color:var(--text-dim)}
+
+    .action-box{flex:1;border-top:1px solid var(--border);padding:10px 12px;background:var(--bg);overflow:auto}
+    .action-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .action-row .btn{justify-content:center}
+    .mini{font-size:11px;color:var(--text-dim);margin-top:8px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+    .result-row{display:flex;gap:8px;margin-top:6px;font-size:12px;color:var(--text-dim)}
+    .result-row.done{color:var(--success)} .result-row.error{color:var(--error)}
+
+    .right-column{min-width:0;display:flex;flex-direction:column;background:var(--surface)}
+    .analysis-pane{flex:0 0 42%;min-height:180px;display:flex;flex-direction:column;border-bottom:1px solid var(--border)}
+    .analysis-header{padding:12px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+    .analysis-scroll{flex:1;overflow-y:auto;padding:10px 12px}
+    .qa-panel{flex:1;min-height:0;display:flex;flex-direction:column}
+    .qa-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
+    .qa-title{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+    .qa-history{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+    .qa-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;text-align:center}
+    .qa-question{align-self:flex-end;background:var(--accent);color:#fff;padding:8px 12px;border-radius:12px 12px 4px 12px;max-width:85%}
+    .qa-answer{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);padding:8px 12px;border-radius:4px 12px 12px 12px;max-width:90%;white-space:pre-wrap}
+    .qa-answering{font-size:12px;color:var(--text-dim)}
+    .qa-input-row{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px}
+    .qa-input{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius)}
+
+    .settings-main{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;max-width:920px;margin:0 auto;width:100%}
+    .section-label{font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+    .model-columns{display:flex;gap:14px}.model-column{flex:1;min-width:0}
+    .model-group-label{font-size:11px;color:var(--text-dim);margin:0 0 4px}
+    .model-option{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius);cursor:pointer}
+    .model-option:hover{background:var(--surface2)}
+    .model-meta{font-size:12px;color:var(--text-dim)}
+    .model-apply-row{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+    .status-dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim)} .status-dot.loaded{background:var(--success)}
+    .frame-setting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .frame-slider{accent-color:var(--accent);min-width:180px}
+    .frame-hint{font-size:12px;color:var(--text-dim);margin-top:6px}
+    .analysis-detail{margin:0}
+    .genre-tag{display:inline-block;padding:2px 10px;border-radius:99px;background:rgba(74,158,255,0.16);color:var(--accent);font-size:12px;margin-bottom:8px}
+    .summary-text{font-size:13px;line-height:1.65}
+    .scenes-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px}
+    .scene-time{font-size:11px;color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
+    .scene-text{font-size:12px;line-height:1.5}
+    .tags-wrap{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .tag{font-size:11px;padding:3px 8px;border-radius:99px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim)}
+
+    @media (max-width:1100px){.player-shell{grid-template-columns:1fr!important;grid-template-rows:1fr 50%}.panel-resizer{display:none}.player-left{border-bottom:1px solid var(--border)}.analysis-pane{flex:0 0 45%}.action-row{grid-template-columns:1fr}.model-columns{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <nav class="tab-bar">
+    <button class="tab-btn active" data-tab="player">▶ プレイヤー</button>
+    <button class="tab-btn" data-tab="settings">⚙ 設定</button>
+  </nav>
+
+  <div class="tab-panels">
+    <section id="tab-player" class="tab-panel">
+      <div class="player-shell">
+        <div class="player-left">
+          <div class="player-top">
+            <button class="btn btn-ghost" id="loadVideoBtn" style="padding:6px 12px;font-size:13px">📂 動画</button>
+            <button class="btn btn-ghost" id="loadOrigBtn" style="padding:6px 12px;font-size:13px">📄 原文SRT</button>
+            <button class="btn btn-ghost" id="loadJpBtn" style="padding:6px 12px;font-size:13px">🇯🇵 日本語SRT</button>
+            <button class="btn btn-ghost" id="goSettingsBtn" style="padding:6px 12px;font-size:13px">⚙ 設定</button>
+            <div class="video-name" id="currentVideoName">動画未選択</div>
+          </div>
+
+          <div class="player-layout">
+            <div class="video-wrap" id="videoWrap">
+              <div class="no-video" id="noVideo">
+                <div style="font-size:44px">🎬</div>
+                <div>動画ファイルを読み込んでください</div>
+                <button class="btn btn-primary" id="loadVideoBtn2">📂 動画を選択</button>
+              </div>
+              <video id="video" style="display:none"></video>
+            </div>
+            <div class="subtitle-area">
+              <div id="subtitleOrig"></div>
+              <div id="subtitleJp"></div>
+            </div>
+            <div class="controls">
+              <button class="ctrl-btn" id="playBtn">▶</button>
+              <span class="time-label" id="timeLabel">0:00 / 0:00</span>
+              <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
+              <span class="time-label">🔊</span>
+              <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1" style="width:100px">
+            </div>
+          </div>
+          <div class="vertical-resizer" id="verticalResizer" aria-label="動画エリア高さを調整" role="separator"></div>
+
+          <div class="action-box">
+            <div class="action-row">
+              <button class="btn btn-primary" id="transcribeBtn" disabled>🎙️ 文字起こし</button>
+              <button class="btn btn-primary" id="translateBtn" disabled>🇯🇵 字幕生成</button>
+              <button class="btn btn-success" id="analyzeBtn" disabled>🔍 動画分析</button>
+            </div>
+
+            <div class="mini">文字起こし</div>
+            <div class="progress-wrap" id="transcribeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="transcribeFill"></div></div><div class="progress-label" id="transcribeLabel">準備中...</div></div>
+            <div class="result-row" id="transcribeResult"></div>
+
+            <div class="mini">日本語字幕</div>
+            <div class="progress-wrap" id="translateProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="translateFill"></div></div><div class="progress-label" id="translateLabel">準備中...</div></div>
+            <div class="result-row" id="translateResult"></div>
+
+            <div class="mini">動画分析</div>
+            <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel">準備中...</div></div>
+            <div class="result-row" id="analyzeResult"></div>
+
+          </div>
+        </div>
+
+        <div class="panel-resizer" id="panelResizer" aria-label="レイアウト幅を調整" role="separator"></div>
+        <aside class="right-column">
+          <section class="analysis-pane">
+            <div class="analysis-header">分析結果</div>
+            <div class="analysis-scroll">
+              <div class="card analysis-detail" id="analysisDetail" style="display:none">
+                <span class="genre-tag" id="genreTag"></span>
+                <div class="summary-text" id="summaryText"></div>
+                <hr class="divider">
+                <div class="mini">シーン</div>
+                <div class="scenes-list" id="scenesList"></div>
+                <hr class="divider">
+                <div class="mini">タグ</div>
+                <div class="tags-wrap" id="tagsWrap"></div>
+              </div>
+              <div id="analysisEmpty" class="qa-placeholder" style="padding:16px">分析するとここに結果を表示します</div>
+            </div>
+          </section>
+
+          <section class="qa-panel">
+            <div class="qa-header">
+              <div class="qa-title">動画に質問する</div>
+              <button class="btn btn-ghost" id="clearHistoryBtn" style="font-size:11px;padding:3px 10px">履歴をクリア</button>
+            </div>
+            <div class="qa-history" id="qaHistory">
+              <div class="qa-placeholder" id="qaPlaceholder">分析完了後に質問できます</div>
+            </div>
+            <div class="qa-input-row">
+              <input type="text" class="qa-input" id="qaInput" disabled placeholder="例：この動画の要点は？">
+              <button class="btn btn-primary" id="qaBtn" disabled style="padding:8px 14px">送信</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab-panel" style="display:none">
+      <main class="settings-main">
+        <div class="card">
+          <div class="section-label">対象動画</div>
+          <div id="settingsVideoPath" style="font-size:13px;color:var(--text-dim)">動画未選択（プレイヤータブで読み込み）</div>
+        </div>
+
+        <div class="card">
+          <div class="section-label">音声・辞書モデル設定</div>
+          <div class="model-columns">
+            <div class="model-column">
+              <div class="model-group-label">翻訳モデル</div>
+              <div id="translatorModelList"></div>
+            </div>
+            <div class="model-column">
+              <div class="model-group-label">辞書モデル</div>
+              <div id="lookupModelList"></div>
+            </div>
+          </div>
+          <div class="model-apply-row">
+            <button class="btn btn-ghost" id="applyModelBtn" style="padding:5px 14px;font-size:13px">適用</button>
+            <span class="status-dot" id="translatorDot"></span><span id="translatorStatusText" style="color:var(--text-dim)">接続中...</span>
+            <span class="status-dot" id="lookupDot" style="margin-left:8px"></span><span id="lookupStatusText" style="color:var(--text-dim)"></span>
+          </div>
+        </div>        <div class="card">
+          <div class="section-label">動画レビュー設定</div>
+          <div style="margin-bottom:8px;font-size:12px;color:var(--text-dim)">ビジョンモデル</div>
+          <div id="vlModelList"></div>
+          <div class="model-apply-row" style="margin-top:8px">
+            <span class="status-dot" id="vlModelDot"></span><span id="vlModelStatusText" style="color:var(--text-dim)">接続中...</span>
+            <button class="btn btn-ghost" id="unloadBtn" style="margin-left:auto;display:none;padding:4px 12px;font-size:12px">VRAM 解放</button>
+          </div>
+
+          <hr class="divider">
+
+          <div class="section-label" style="margin-bottom:6px">サンプリング設定</div>
+          <div class="frame-setting">
+            <label>最大フレーム数：</label>
+            <input type="range" class="frame-slider" id="maxFrames" min="5" max="60" value="30" step="5">
+            <span id="maxFramesValue">30 枚</span>
+          </div>
+          <div class="frame-hint" id="frameHint"></div>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer">
+            <input type="checkbox" id="includeAudio" style="accent-color:var(--accent)"> 音声も解析する（ASR）
+          </label>
+        </div>
+      </main>
+    </section>
+  </div>
+
+  <script>
+    const API = 'http://127.0.0.1:8765'
+    const MIN_INTERVAL = 5.0
+    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, cachedTranscript:'', analysisReady:false }
+
+    function switchTab(name){
+      document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name))
+    }
+    document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)))
+    document.getElementById('goSettingsBtn').addEventListener('click',()=>switchTab('settings'))
+
+    function setCurrentVideo(path){
+      state.videoPath = path
+      const name = path ? path.split(/[\\/]/).pop() : '動画未選択'
+      document.getElementById('currentVideoName').textContent = name
+      document.getElementById('settingsVideoPath').textContent = path || '動画未選択（プレイヤータブで読み込み）'
+      document.getElementById('transcribeBtn').disabled = !path
+      document.getElementById('analyzeBtn').disabled = !path
+      if(path){
+        state.origSrtPath = null
+        state.jpSrtPath = null
+        resetSection('transcribe')
+        resetSection('translate')
+        document.getElementById('translateBtn').disabled = true
+        clearAnalysisDetail()
+      }
+    }
+
+    function resetSection(kind){
+      document.getElementById(`${kind}Progress`).style.display='none'
+      document.getElementById(`${kind}Fill`).style.width='0%'
+      document.getElementById(`${kind}Result`).innerHTML=''
+    }
+    function setProgress(kind,pct,label){
+      document.getElementById(`${kind}Progress`).style.display='block'
+      document.getElementById(`${kind}Fill`).style.width=pct+'%'
+      document.getElementById(`${kind}Label`).textContent=label
+    }
+    function setResult(kind,ok,text){
+      const el=document.getElementById(`${kind}Result`)
+      el.className='result-row '+(ok?'done':'error')
+      el.innerHTML = ok ? `<span>✓</span><span>${text}</span>` : `<span>✗</span><span>${text}</span>`
+    }
+    function setQAEnabled(enabled){
+      state.analysisReady = enabled
+      const input=document.getElementById('qaInput')
+      const btn=document.getElementById('qaBtn')
+      const ph=document.getElementById('qaPlaceholder')
+      input.disabled=!enabled
+      btn.disabled=!enabled
+      if(ph) ph.style.display = enabled ? 'none' : 'flex'
+    }
+
+    async function readSSE(response,onEvent){
+      const reader=response.body.getReader()
+      const decoder=new TextDecoder()
+      let buf=''
+      while(true){
+        const {done,value}=await reader.read()
+        if(done) break
+        buf += decoder.decode(value,{stream:true})
+        const lines=buf.split('\n')
+        buf=lines.pop()
+        for(const line of lines){
+          if(line.startsWith('data: ')){
+            try{ onEvent(JSON.parse(line.slice(6))) }catch{}
+          }
+        }
+      }
+    }
+
+    function escHtml(str){
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+    }
+
+    function clearAnalysisDetail(){
+      document.getElementById('analysisDetail').style.display = 'none'
+      document.getElementById('analysisEmpty').style.display = 'flex'
+      document.getElementById('genreTag').textContent = ''
+      document.getElementById('summaryText').textContent = ''
+      document.getElementById('scenesList').innerHTML = ''
+      document.getElementById('tagsWrap').innerHTML = ''
+    }
+
+    function renderAnalysisDetail(result){
+      if(!result) return
+      document.getElementById('analysisDetail').style.display = 'block'
+      document.getElementById('analysisEmpty').style.display = 'none'
+      document.getElementById('genreTag').textContent = result.genre || '不明'
+      document.getElementById('summaryText').textContent = result.summary || ''
+      document.getElementById('scenesList').innerHTML = (result.scenes || []).map(s=>{
+        const ts = s.timestamp ? `<span class="scene-time">${escHtml(s.timestamp)}</span>` : ''
+        const label = s.label ? `${escHtml(s.label)}: ` : ''
+        return `<div class="scene-item">${ts}<span class="scene-text">${label}${escHtml(s.description || '')}</span></div>`
+      }).join('')
+      document.getElementById('tagsWrap').innerHTML = (result.tags || []).map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')
+    }
+
+    const video=document.getElementById('video')
+    const noVideo=document.getElementById('noVideo')
+    const subOrigEl=document.getElementById('subtitleOrig')
+    const subJpEl=document.getElementById('subtitleJp')
+    const seekBar=document.getElementById('seekBar')
+    const timeLabel=document.getElementById('timeLabel')
+    const playBtn=document.getElementById('playBtn')
+    const volumeBar=document.getElementById('volumeBar')
+
+    let origSubtitles=[]
+    let jpSubtitles=[]
+
+    function parseSRT(content){
+      const result=[]
+      const blocks=content.trim().split(/\r?\n\r?\n/)
+      for(const block of blocks){
+        const lines=block.trim().split(/\r?\n/)
+        if(lines.length<3) continue
+        const m=lines[1].match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/)
+        if(!m) continue
+        const toSec=(h,min,s,ms)=> +h*3600 + +min*60 + +s + +ms/1000
+        result.push({ start:toSec(m[1],m[2],m[3],m[4]), end:toSec(m[5],m[6],m[7],m[8]), text:lines.slice(2).join('\n') })
+      }
+      return result
+    }
+
+    function findSub(subs,t){ return subs.find(s=>t>=s.start&&t<=s.end)??null }
+
+    function updateSubtitles(){
+      const t=video.currentTime
+      const o=findSub(origSubtitles,t)
+      const j=findSub(jpSubtitles,t)
+      subOrigEl.textContent = o ? o.text : ''
+      subJpEl.textContent = j ? j.text : ''
+    }
+
+    function toFileUrl(filePath){ return 'file:///'+filePath.replace(/\\/g,'/') }
+    function loadVideo(filePath){
+      video.src=toFileUrl(filePath)
+      video.style.display='block'
+      noVideo.style.display='none'
+      origSubtitles=[]; jpSubtitles=[]
+      subOrigEl.textContent=''; subJpEl.textContent=''
+    }
+    async function loadSrt(filePath,kind){
+      const result=await window.electronAPI.readFile(filePath)
+      if(!result.ok) return
+      const subs=parseSRT(result.content)
+      if(kind==='orig') origSubtitles=subs
+      else jpSubtitles=subs
+    }
+
+    async function tryAutoLoadSrt(videoFilePath){
+      const stem=videoFilePath.replace(/\.[^.]+$/,'')
+      const targets=[{path:stem+'.original.srt',kind:'orig'},{path:stem+'.japanese.srt',kind:'jp'}]
+      for(const {path,kind} of targets){
+        const result=await window.electronAPI.readFile(path)
+        if(result.ok){
+          if(kind==='orig'){ state.origSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
+          else { state.jpSrtPath=path; await loadSrt(path,'jp'); setResult('translate',true,path) }
+        }
+      }
+    }
+
+    async function selectVideo(){
+      const p=await window.electronAPI.openVideo()
+      if(!p) return
+      setCurrentVideo(p)
+      loadVideo(p)
+      await tryAutoLoadSrt(p)
+    }
+
+    document.getElementById('loadVideoBtn').addEventListener('click',selectVideo)
+    document.getElementById('loadVideoBtn2').addEventListener('click',selectVideo)
+
+    document.getElementById('loadOrigBtn').addEventListener('click',async()=>{
+      const p=await window.electronAPI.openSrt(); if(!p) return
+      state.origSrtPath=p; await loadSrt(p,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,p)
+    })
+    document.getElementById('loadJpBtn').addEventListener('click',async()=>{
+      const p=await window.electronAPI.openSrt(); if(!p) return
+      state.jpSrtPath=p; await loadSrt(p,'jp'); setResult('translate',true,p)
+    })
+
+    video.addEventListener('timeupdate',()=>{
+      updateSubtitles()
+      if(!isNaN(video.duration)){
+        seekBar.value=(video.currentTime/video.duration)*100
+        const m=Math.floor(video.currentTime/60), s=Math.floor(video.currentTime%60).toString().padStart(2,'0')
+        const dm=Math.floor(video.duration/60), ds=Math.floor(video.duration%60).toString().padStart(2,'0')
+        timeLabel.textContent=`${m}:${s} / ${dm}:${ds}`
+      }
+    })
+    video.addEventListener('play',()=>playBtn.textContent='⏸')
+    video.addEventListener('pause',()=>playBtn.textContent='▶')
+    playBtn.addEventListener('click',()=> video.paused ? video.play() : video.pause())
+    seekBar.addEventListener('input',()=>{ if(!isNaN(video.duration)) video.currentTime=(seekBar.value/100)*video.duration })
+    volumeBar.addEventListener('input',()=>{ video.volume=volumeBar.value })
+
+    const videoWrap=document.getElementById('videoWrap')
+    window.addEventListener('dragover',e=>e.preventDefault())
+    window.addEventListener('drop',e=>e.preventDefault())
+    videoWrap.addEventListener('drop',async e=>{
+      e.preventDefault()
+      const file=e.dataTransfer.files[0]
+      if(!file) return
+      const p=window.electronAPI.getPathForFile(file)
+      if(!p) return
+      setCurrentVideo(p); loadVideo(p); await tryAutoLoadSrt(p)
+    })
+
+    const slider=document.getElementById('maxFrames')
+    function updateFrameHint(){
+      document.getElementById('maxFramesValue').textContent=slider.value+' 枚'
+      document.getElementById('frameHint').textContent=`最低 ${MIN_INTERVAL} 秒間隔で最大 ${slider.value} 枚をサンプリングします。`
+    }
+    slider.addEventListener('input',updateFrameHint)
+
+    function renderModelList(containerId, radioName, available, current){
+      document.getElementById(containerId).innerHTML=available.map(m=>`<label class="model-option"><input type="radio" name="${radioName}" value="${m.id}" ${m.id===current?'checked':''}><span>${m.label}</span><span class="model-meta">~${m.vram_gb} GB · ${m.note}</span></label>`).join('')
+    }
+    function setModelStatus(dotId,textId,info,label){
+      const dot=document.getElementById(dotId), text=document.getElementById(textId)
+      dot.classList.toggle('loaded',info.loaded)
+      const modelLabel=info.available.find(m=>m.id===info.current)?.label ?? info.current
+      text.textContent=`${label}: ${info.loaded?'ロード済み':'未ロード'}（${modelLabel}）`
+    }
+
+    async function fetchLanguageModels(){
+      try{
+        const res=await fetch(`${API}/models`); if(!res.ok) return
+        const {translator:tInfo,lookup:lInfo}=await res.json()
+        renderModelList('translatorModelList','translatorModel',tInfo.available,tInfo.current)
+        renderModelList('lookupModelList','lookupModel',lInfo.available,lInfo.current)
+        setModelStatus('translatorDot','translatorStatusText',tInfo,'翻訳')
+        setModelStatus('lookupDot','lookupStatusText',lInfo,'辞書')
+      }catch{
+        document.getElementById('translatorStatusText').textContent='バックエンド未起動'
+      }
+    }
+
+    document.getElementById('applyModelBtn').addEventListener('click',async()=>{
+      const tSel=document.querySelector('input[name="translatorModel"]:checked')
+      const lSel=document.querySelector('input[name="lookupModel"]:checked')
+      const body={}; if(tSel) body.translator=tSel.value; if(lSel) body.lookup=lSel.value
+      await fetch(`${API}/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      await fetchLanguageModels()
+    })
+
+    async function fetchReviewModelStatus(){
+      try{
+        const res=await fetch(`${API}/review/models`); if(!res.ok) return
+        const info=await res.json()
+        document.getElementById('vlModelList').innerHTML=info.available.map(m=>`<label class="model-option"><input type="radio" name="vlModel" value="${m.id}" ${m.id===info.current?'checked':''}><span>${m.label}</span><span class="model-meta">~${m.vram_gb} GB · ${m.note}</span></label>`).join('')
+        const dot=document.getElementById('vlModelDot'), text=document.getElementById('vlModelStatusText'), unloadBtn=document.getElementById('unloadBtn')
+        dot.classList.toggle('loaded',info.loaded)
+        const label=info.available.find(m=>m.id===info.current)?.label ?? info.current
+        text.textContent=info.loaded ? `${label} ロード済み` : `${label} 未ロード`
+        unloadBtn.style.display=info.loaded?'block':'none'
+        document.querySelectorAll('input[name="vlModel"]').forEach(radio=>{
+          radio.addEventListener('change',async()=>{
+            await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:radio.value})})
+            await fetchReviewModelStatus()
+          })
+        })
+      }catch{ document.getElementById('vlModelStatusText').textContent='バックエンド未起動' }
+    }
+    document.getElementById('unloadBtn').addEventListener('click',async()=>{ await fetch(`${API}/review/unload`,{method:'POST'}); await fetchReviewModelStatus() })
+
+    document.getElementById('transcribeBtn').addEventListener('click',async()=>{
+      if(!state.videoPath){ setResult('transcribe',false,'先に動画を読み込んでください'); return }
+      const btn=document.getElementById('transcribeBtn'); btn.disabled=true
+      resetSection('transcribe'); setProgress('transcribe',5,'準備中...')
+      try{
+        const res=await fetch(`${API}/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,language:null})})
+        await readSSE(res,event=>{
+          if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
+          else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
+          else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
+          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; loadSrt(state.origSrtPath,'orig') }
+          else if(event.status==='error') setResult('transcribe',false,event.message)
+        })
+      }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`) }
+      btn.disabled=!state.videoPath
+    })
+
+    document.getElementById('translateBtn').addEventListener('click',async()=>{
+      if(!state.origSrtPath){ setResult('translate',false,'先に文字起こしを実行してください'); return }
+      const btn=document.getElementById('translateBtn'); btn.disabled=true
+      resetSection('translate'); setProgress('translate',0,'準備中...')
+      try{
+        const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:state.origSrtPath})})
+        await readSSE(res,event=>{
+          if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
+          else if(event.status==='translating'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('translate',pct,`翻訳中 ${event.current}/${event.total}`) }
+          else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); loadSrt(state.jpSrtPath,'jp') }
+          else if(event.status==='error') setResult('translate',false,event.message)
+        })
+      }catch(e){ setResult('translate',false,`接続エラー: ${e.message}`) }
+      btn.disabled=false
+    })
+
+    document.getElementById('analyzeBtn').addEventListener('click',async()=>{
+      if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
+      const btn=document.getElementById('analyzeBtn'); btn.disabled=true
+      resetSection('analyze'); setQAEnabled(false)
+      try{
+        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,include_audio:document.getElementById('includeAudio').checked})})
+        await readSSE(res,event=>{
+          if(event.status==='loading_model') setProgress('analyze',15,'モデルをロード中...')
+          else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
+          else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中...`)
+          else if(event.status==='done'){ setProgress('analyze',100,'完了'); setResult('analyze',true,'分析完了'); state.cachedTranscript=event.transcript||''; renderAnalysisDetail(event.result); setQAEnabled(true) }
+          else if(event.status==='error') setResult('analyze',false,event.message)
+        })
+      }catch(e){ setResult('analyze',false,`接続エラー: ${e.message}`) }
+      btn.disabled=!state.videoPath
+    })
+
+    const qaInput=document.getElementById('qaInput')
+    const qaBtn=document.getElementById('qaBtn')
+    const qaHistory=document.getElementById('qaHistory')
+
+    async function submitQuestion(){
+      const q=qaInput.value.trim()
+      if(!q || !state.videoPath || !state.analysisReady) return
+      qaInput.value=''; qaBtn.disabled=true
+
+      const pair=document.createElement('div')
+      pair.innerHTML=`<div class="qa-question">${escHtml(q)}</div>`
+      const thinking=document.createElement('div')
+      thinking.className='qa-answering'
+      thinking.textContent='回答生成中...'
+      pair.appendChild(thinking)
+      qaHistory.appendChild(pair)
+      pair.scrollIntoView({behavior:'smooth'})
+
+      try{
+        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.cachedTranscript})})
+        await readSSE(res,event=>{
+          if(event.status==='extracting_frames') thinking.textContent='フレーム抽出中...'
+          else if(event.status==='answering') thinking.textContent='回答生成中...'
+          else if(event.status==='done'){ const ans=document.createElement('div'); ans.className='qa-answer'; ans.textContent=event.answer; pair.replaceChild(ans,thinking) }
+          else if(event.status==='error') thinking.textContent='❌ '+event.message
+        })
+      }catch(e){ thinking.textContent='❌ 接続エラー: '+e.message }
+
+      qaBtn.disabled=false
+    }
+
+    qaBtn.addEventListener('click',submitQuestion)
+    qaInput.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.isComposing) submitQuestion() })
+    document.getElementById('clearHistoryBtn').addEventListener('click',()=>{
+      const ph=document.getElementById('qaPlaceholder')
+      qaHistory.innerHTML=''
+      if(ph) qaHistory.appendChild(ph)
+      ph.style.display=qaInput.disabled?'flex':'none'
+    })
+
+    const playerShell = document.querySelector('.player-shell')
+    const panelResizer = document.getElementById('panelResizer')
+    const playerLeft = document.querySelector('.player-left')
+    const verticalResizer = document.getElementById('verticalResizer')
+    const playerLayoutEl = document.querySelector('.player-layout')
+    let resizing = false
+    let verticalResizing = false
+    function setSplitByX(clientX){
+      const rect = playerShell.getBoundingClientRect()
+      const divider = 8
+      const minLeft = 460
+      const minRight = 300
+      let left = clientX - rect.left
+      left = Math.max(minLeft, Math.min(left, rect.width - minRight - divider))
+      const right = rect.width - left - divider
+      playerShell.style.gridTemplateColumns = `${left}px ${divider}px ${right}px`
+    }
+    panelResizer.addEventListener('pointerdown', e=>{
+      if(window.innerWidth <= 1100) return
+      resizing = true
+      panelResizer.setPointerCapture(e.pointerId)
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+    })
+    panelResizer.addEventListener('pointermove', e=>{
+      if(!resizing) return
+      setSplitByX(e.clientX)
+    })
+    panelResizer.addEventListener('pointerup', ()=>{
+      resizing = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    })
+    panelResizer.addEventListener('dblclick', ()=>{
+      playerShell.style.gridTemplateColumns = 'minmax(460px,1fr) 8px minmax(300px,360px)'
+    })
+
+    function setVideoHeightByY(clientY){
+      const rect = playerLeft.getBoundingClientRect()
+      const topBarEl = document.querySelector('.player-top')
+      const actionEl = document.querySelector('.action-box')
+      const topBarH = topBarEl ? topBarEl.offsetHeight : 0
+      const resizerH = 8
+      const minVideo = 220
+      const minAction = 180
+      const available = rect.height - topBarH - resizerH
+      let videoH = clientY - rect.top - topBarH
+      videoH = Math.max(minVideo, Math.min(videoH, available - minAction))
+      playerLayoutEl.style.flex = `0 0 ${Math.round(videoH)}px`
+      if(actionEl) actionEl.style.flex = '1 1 auto'
+    }
+    verticalResizer.addEventListener('pointerdown', e=>{
+      verticalResizing = true
+      verticalResizer.setPointerCapture(e.pointerId)
+      document.body.style.cursor = 'row-resize'
+      document.body.style.userSelect = 'none'
+    })
+    verticalResizer.addEventListener('pointermove', e=>{
+      if(!verticalResizing) return
+      setVideoHeightByY(e.clientY)
+    })
+    verticalResizer.addEventListener('pointerup', ()=>{
+      verticalResizing = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    })
+    verticalResizer.addEventListener('dblclick', ()=>{
+      playerLayoutEl.style.flex = '0 0 clamp(260px,45vh,460px)'
+    })
+
+    switchTab('player')
+    updateFrameHint()
+    fetchLanguageModels()
+    fetchReviewModelStatus()
+    setQAEnabled(false)
+  </script>
+</body>
+</html>

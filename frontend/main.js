@@ -4,9 +4,9 @@ const fs = require('fs')
 
 function createMainWindow() {
   const win = new BrowserWindow({
-    width: 900,
-    height: 900,
-    minWidth: 700,
+    width: 1280,
+    height: 860,
+    minWidth: 900,
     minHeight: 650,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -16,7 +16,7 @@ function createMainWindow() {
     title: 'Language Caption Player',
     backgroundColor: '#111111',
   })
-  win.loadFile(path.join(__dirname, 'pages', 'transcribe.html'))
+  win.loadFile(path.join(__dirname, 'pages', 'app.html'))
 }
 
 app.whenReady().then(() => {
@@ -63,47 +63,4 @@ ipcMain.handle('fs:readFile', (_, filePath) => {
   } catch (e) {
     return { ok: false, error: e.message }
   }
-})
-
-// 動画レビューウィンドウを開く
-ipcMain.handle('window:openReview', () => {
-  const win = new BrowserWindow({
-    width: 800,
-    height: 900,
-    minWidth: 600,
-    minHeight: 600,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-    title: '動画レビュー – Language Caption Player',
-    backgroundColor: '#111111',
-  })
-  win.loadFile(path.join(__dirname, 'pages', 'review.html'))
-})
-
-// プレイヤーウィンドウを開く
-ipcMain.handle('window:openPlayer', (_, { videoPath, origSrt, jpSrt }) => {
-  const params = new URLSearchParams()
-  if (videoPath) params.set('video', videoPath)
-  if (origSrt)   params.set('orig',  origSrt)
-  if (jpSrt)     params.set('jp',    jpSrt)
-
-  const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 800,
-    minHeight: 600,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-    title: 'Player – Language Caption Player',
-    backgroundColor: '#111111',
-  })
-  win.loadFile(path.join(__dirname, 'pages', 'player.html'), {
-    search: params.toString(),
-  })
 })
