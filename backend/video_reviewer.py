@@ -27,8 +27,8 @@ _ANALYZE_JSON_FORMAT = (
     "{\n"
     '  "summary": "動画全体の概要（2〜4文）",\n'
     '  "scenes": [\n'
-    '    {"label": "場面の内容を表す短いタイトル", "description": "この場面で起きていることの説明"},\n'
-    '    {"label": "場面の内容を表す短いタイトル", "description": "この場面で起きていることの説明"}\n'
+    '    {"timestamp": "0:00", "label": "場面のタイトル", "description": "この場面で起きていることの説明"},\n'
+    '    {"timestamp": "1:30", "label": "場面のタイトル", "description": "この場面で起きていることの説明"}\n'
     '    ... （場面転換ごとに繰り返す）\n'
     "  ],\n"
     '  "tags": ["タグ1", "タグ2", "タグ3", "タグ4", "タグ5"],\n'
@@ -36,24 +36,23 @@ _ANALYZE_JSON_FORMAT = (
     "}"
 )
 
-ANALYZE_PROMPT_VISUAL = (
+# 指示文のみ（JSON フォーマットはプロンプト構築時に追加）
+_ANALYZE_INSTR_VISUAL = (
     "この動画から均等サンプリングされたフレームを分析し、"
     "以下のJSON形式のみで回答してください。"
     "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
     "scenes は序盤・中盤・終盤の固定3区分ではなく、"
     "映像の内容や雰囲気が変わるたびに新しい場面として追加してください（目安: 3〜10場面）。"
-    "label には場面の内容を表す短いタイトルを付けてください。\n\n"
-    + _ANALYZE_JSON_FORMAT
+    "label には場面の内容を表す短いタイトルを付けてください。"
 )
 
-ANALYZE_PROMPT_AUDIO = (
+_ANALYZE_INSTR_AUDIO = (
     "この動画から均等サンプリングされたフレームと、以下の音声書き起こしを総合して分析し、"
     "以下のJSON形式のみで回答してください。"
     "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
     "scenes は序盤・中盤・終盤の固定3区分ではなく、"
     "映像や音声の内容・雰囲気が変わるたびに新しい場面として追加してください（目安: 3〜10場面）。"
-    "label には場面の内容を表す短いタイトルを付けてください。\n\n"
-    + _ANALYZE_JSON_FORMAT
+    "label には場面の内容を表す短いタイトルを付けてください。"
 )
 
 QA_SYSTEM = (
@@ -153,7 +152,9 @@ class VideoReviewer:
                     img = Image.open(str(Path(tmpdir) / fname)).copy()
                     frames.append(img)
 
-        meta = {"count": len(frames), "interval": interval, "duration": duration}
+        timestamps = [round(i * interval, 1) for i in range(len(frames))]
+        meta = {"count": len(frames), "interval": interval, "duration": duration,
+                "timestamps": timestamps}
         m, s = divmod(int(duration), 60)
         print(
             f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚"
@@ -222,11 +223,39 @@ class VideoReviewer:
         return transcript[:_TRANSCRIPT_MAX_CHARS] + "…（以下省略）"
 
     @staticmethod
-    def _build_analyze_prompt(transcript: str) -> str:
+    def _fmt_ts(secs: float) -> str:
+        """秒数を m:ss 形式にフォーマット"""
+        m, s = divmod(int(secs), 60)
+        return f"{m}:{s:02d}"
+
+    @staticmethod
+    def _ts_hint(timestamps: list[float]) -> str:
+        """フレームタイムスタンプをプロンプトに挿入するヒント文を生成"""
+        if not timestamps:
+            return ""
+        parts = [
+            f"フレーム{i + 1}={VideoReviewer._fmt_ts(t)}"
+            for i, t in enumerate(timestamps)
+        ]
+        return (
+            "\n\nフレームのタイムスタンプ（フレーム番号=動画内の時刻）: "
+            + ", ".join(parts)
+            + "\nscenes の timestamp にはその場面が始まる最も近いフレームの時刻（m:ss 形式）を記入してください。"
+        )
+
+    @staticmethod
+    def _build_analyze_prompt(transcript: str, timestamps: list[float] = []) -> str:
+        ts_hint = VideoReviewer._ts_hint(timestamps)
         if not transcript:
-            return ANALYZE_PROMPT_VISUAL
+            return _ANALYZE_INSTR_VISUAL + ts_hint + "\n\n" + _ANALYZE_JSON_FORMAT
         truncated = VideoReviewer._truncate_transcript(transcript)
-        return f"[音声書き起こし]\n{truncated}\n\n" + ANALYZE_PROMPT_AUDIO
+        return (
+            f"[音声書き起こし]\n{truncated}\n\n"
+            + _ANALYZE_INSTR_AUDIO
+            + ts_hint
+            + "\n\n"
+            + _ANALYZE_JSON_FORMAT
+        )
 
     @staticmethod
     def _build_qa_prompt(question: str, transcript: str) -> str:
@@ -241,10 +270,15 @@ class VideoReviewer:
 
     # ---------- 公開 API ----------
 
-    def analyze_frames(self, frames: list[Image.Image], transcript: str = "") -> dict:
+    def analyze_frames(
+        self,
+        frames: list[Image.Image],
+        transcript: str = "",
+        timestamps: list[float] = [],
+    ) -> dict:
         """フレームリストから動画を分析してサマリー・シーン・タグを返す"""
         self._ensure_loaded()
-        prompt = self._build_analyze_prompt(transcript)
+        prompt = self._build_analyze_prompt(transcript, timestamps)
         raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=2048)
 
         # JSON パース（コードブロック除去 → パース → 失敗時はフォールバック）

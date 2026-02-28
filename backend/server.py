@@ -426,10 +426,12 @@ async def review_analyze(req: ReviewRequest):
             yield sse({"status": "error", "message": str(e)})
             return
 
-        yield sse({"status": "analyzing", **meta})
+        yield sse({"status": "analyzing",
+                   **{k: v for k, v in meta.items() if k != "timestamps"}})
         try:
             result = await loop.run_in_executor(
-                None, video_reviewer.analyze_frames, frames, transcript
+                None, video_reviewer.analyze_frames,
+                frames, transcript, meta.get("timestamps", [])
             )
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
