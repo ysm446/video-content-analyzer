@@ -1,0 +1,54 @@
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.code-workspace
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+
+# ---------- 仮想環境 ----------
+venv/
+env/
+ENV/
+.venv
+
+# ---------- Node / Electron ----------
+node_modules/
+
+# ---------- モデルファイル（大容量） ----------
+models/hub/
+models/xet/
+!models/.gitkeep
+
+# ---------- 生成された字幕ファイル（出力物） ----------
+*.original.srt
+*.japanese.srt
+
+# ---------- テスト用動画 ----------
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+
+# ---------- ログ ----------
+*.log
+logs/
+
+# ---------- OS固有 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- その他 ----------
+.env
+.cache/
+*.swp
+*~

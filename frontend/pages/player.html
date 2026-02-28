@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Player – Language Caption Player</title>
+  <link rel="stylesheet" href="../css/common.css">
+  <style>
+    html, body {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---------- ヘッダー ---------- */
+    .header { flex-shrink: 0; }
+
+    /* ---------- メインレイアウト ---------- */
+    .player-layout {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /* ---------- ビデオ ---------- */
+    .video-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      overflow: hidden;
+      min-height: 0;
+    }
+    #video {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+    }
+
+    /* ---------- 字幕エリア ---------- */
+    .subtitle-area {
+      flex-shrink: 0;
+      background: #111;
+      border-top: 1px solid var(--border);
+      padding: 14px 24px;
+      min-height: 90px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+    .subtitle-orig {
+      font-size: 17px;
+      color: #d0d0d0;
+      line-height: 1.5;
+      min-height: 26px;
+    }
+    .subtitle-jp {
+      font-size: 19px;
+      font-weight: 500;
+      color: #ffffff;
+      line-height: 1.5;
+      min-height: 28px;
+    }
+
+    /* ---------- 単語 hover ---------- */
+    .word {
+      display: inline-block;
+      cursor: pointer;
+      border-radius: 3px;
+      padding: 0 1px;
+      transition: color 0.12s, background 0.12s;
+    }
+    .word:hover {
+      color: #ffd700;
+      background: rgba(255, 215, 0, 0.18);
+    }
+    .word.word-active {
+      color: #fff;
+      background: rgba(255, 215, 0, 0.38);
+    }
+
+    /* ---------- 辞書ツールチップ ---------- */
+    #dictTooltip {
+      position: fixed;
+      display: none;
+      background: #1e1e2e;
+      border: 1px solid #555;
+      border-radius: 8px;
+      padding: 10px 14px;
+      max-width: 300px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #cdd6f4;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.75);
+      z-index: 9999;
+      pointer-events: none;
+      white-space: pre-wrap;
+    }
+    #dictTooltip .dict-word {
+      font-size: 15px;
+      font-weight: bold;
+      color: #ffd700;
+      margin-bottom: 4px;
+    }
+    #dictTooltip .dict-body { color: #cdd6f4; }
+    #dictTooltip .dict-loading { color: #888; font-style: italic; }
+
+    /* ---------- コントロールバー ---------- */
+    .controls {
+      flex-shrink: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* シークバー */
+    .seek-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .time-label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+    #seekBar {
+      flex: 1;
+      accent-color: var(--accent);
+      cursor: pointer;
+      height: 4px;
+    }
+
+    /* ボタン行 */
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .ctrl-left,
+    .ctrl-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .ctrl-right {
+      margin-left: auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .ctrl-btn {
+      background: none;
+      border: none;
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 6px 10px;
+      border-radius: var(--radius);
+      transition: background 0.15s;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+    .ctrl-btn:hover { background: var(--surface2); }
+    #playBtn {
+      min-width: 48px;
+      font-size: 18px;
+    }
+
+    /* 音量 */
+    .volume-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #volumeBar {
+      width: 70px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* 字幕トグル */
+    .sub-toggles {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .sub-toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      color: var(--text-dim);
+      user-select: none;
+    }
+    .sub-toggle-label input { accent-color: var(--accent); cursor: pointer; }
+    .sub-toggle-label:has(input:checked) { color: var(--text); }
+
+    /* 再生速度タブ */
+    .speed-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: var(--surface2);
+      border-radius: var(--radius);
+      padding: 2px;
+    }
+    .speed-tab {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: calc(var(--radius) - 2px);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+    .speed-tab:hover { color: var(--text); }
+    .speed-tab.active { background: var(--accent); color: #fff; }
+
+    /* ドロップゾーン（ファイルなし時） */
+    .no-video {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 12px;
+      color: var(--text-dim);
+    }
+    .no-video .icon { font-size: 48px; }
+    .no-video .btn { margin-top: 8px; }
+
+    /* ドラッグオーバー時のビデオエリアオーバーレイ */
+    .video-wrap.drag-over::after {
+      content: '動画ファイルをドロップ';
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      color: var(--accent);
+      background: rgba(74, 158, 255, 0.12);
+      border: 2px dashed var(--accent);
+      border-radius: 4px;
+      pointer-events: none;
+    }
+    .video-wrap { position: relative; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <button class="back-btn" onclick="window.history.back()">←</button>
+    <h1>Player</h1>
+    <div style="display:flex; gap:8px; margin-left:auto">
+      <button class="btn btn-ghost" id="loadVideoBtn" style="padding:6px 12px; font-size:13px">📂 動画</button>
+      <button class="btn btn-ghost" id="loadOrigBtn"  style="padding:6px 12px; font-size:13px">📄 原文SRT</button>
+      <button class="btn btn-ghost" id="loadJpBtn"    style="padding:6px 12px; font-size:13px">🇯🇵 日本語SRT</button>
+    </div>
+  </header>
+
+  <div class="player-layout">
+    <!-- ビデオ -->
+    <div class="video-wrap">
+      <div class="no-video" id="noVideo">
+        <div class="icon">🎬</div>
+        <div>動画ファイルを読み込んでください</div>
+        <button class="btn btn-primary" id="loadVideoBtn2">📂 動画を選択</button>
+      </div>
+      <video id="video" style="display:none"></video>
+    </div>
+
+    <!-- 字幕 -->
+    <div class="subtitle-area">
+      <div class="subtitle-orig" id="subtitleOrig"></div>
+      <div class="subtitle-jp"   id="subtitleJp"></div>
+    </div>
+
+    <!-- コントロール -->
+    <div class="controls">
+      <div class="seek-row">
+        <span class="time-label" id="timeLabel">0:00 / 0:00</span>
+        <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1">
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-left">
+          <button class="ctrl-btn" id="repeatBtn" title="字幕を繰り返す (R)">↩</button>
+          <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ (N)">↪</button>
+          <button class="ctrl-btn" id="rewindBtn" title="5秒戻る (←)">5秒戻る</button>
+          <button class="ctrl-btn" id="playBtn" title="再生/一時停止 (Space)">▶</button>
+          <div class="volume-row">
+            <span style="font-size:14px">🔊</span>
+            <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1">
+          </div>
+        </div>
+        <div class="ctrl-right">
+          <div class="speed-tabs" id="speedTabs">
+            <button class="speed-tab" data-speed="0.5">0.5×</button>
+            <button class="speed-tab" data-speed="0.75">0.75×</button>
+            <button class="speed-tab active" data-speed="1">1×</button>
+            <button class="speed-tab" data-speed="1.25">1.25×</button>
+            <button class="speed-tab" data-speed="1.5">1.5×</button>
+          </div>
+          <div class="sub-toggles">
+            <label class="sub-toggle-label">
+              <input type="checkbox" id="showOrig" checked> 原文
+            </label>
+            <label class="sub-toggle-label">
+              <input type="checkbox" id="showJp" checked> 日本語
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- 状態 ----------
+    let origSubtitles  = []
+    let jpSubtitles    = []
+    let currentOrigSeg = null  // 再レンダリング抑制用
+
+    // ---------- DOM ----------
+    const video       = document.getElementById('video')
+    const noVideo     = document.getElementById('noVideo')
+    const playBtn     = document.getElementById('playBtn')
+    const seekBar     = document.getElementById('seekBar')
+    const volumeBar   = document.getElementById('volumeBar')
+    const timeLabel   = document.getElementById('timeLabel')
+    const subOrigEl   = document.getElementById('subtitleOrig')
+    const subJpEl     = document.getElementById('subtitleJp')
+    const showOrig    = document.getElementById('showOrig')
+    const showJp      = document.getElementById('showJp')
+
+    // ---------- SRT パーサー ----------
+    function parseSRT(content) {
+      const result = []
+      const blocks = content.trim().split(/\r?\n\r?\n/)
+      for (const block of blocks) {
+        const lines = block.trim().split(/\r?\n/)
+        if (lines.length < 3) continue
+        const m = lines[1].match(
+          /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/
+        )
+        if (!m) continue
+        const toSec = (h, min, s, ms) =>
+          +h * 3600 + +min * 60 + +s + +ms / 1000
+        result.push({
+          start: toSec(m[1], m[2], m[3], m[4]),
+          end:   toSec(m[5], m[6], m[7], m[8]),
+          text:  lines.slice(2).join('\n'),
+        })
+      }
+      return result
+    }
+
+    // ---------- 字幕同期 ----------
+    function findSub(subs, t) {
+      return subs.find(s => t >= s.start && t <= s.end) ?? null
+    }
+    function findPrevSub(subs, currentSub) {
+      const i = subs.indexOf(currentSub)
+      if (i > 0) return subs[i - 1]
+      return null
+    }
+    function findNextSubByTime(subs, t) {
+      return subs.find(s => s.start > t + 0.001) ?? null
+    }
+
+    // 単語を <span class="word"> で囲む（セグメント時間を均等割りで各単語に付与）
+    function wrapWords(text, segStart, segEnd) {
+      const parts = text.split(' ')
+      const wordCount = parts.filter(w => w.trim()).length || 1
+      const wordDuration = (segEnd - segStart) / wordCount
+      let wordIndex = 0
+      return parts.map(w => {
+        if (!w.trim()) return w
+        const wStart = (segStart + wordIndex * wordDuration).toFixed(3)
+        const wEnd   = (segStart + (wordIndex + 1) * wordDuration).toFixed(3)
+        wordIndex++
+        return `<span class="word" data-start="${wStart}" data-end="${wEnd}">${w}</span>`
+      }).join(' ')
+    }
+
+    function updateSubtitles() {
+      const t = video.currentTime
+
+      // ---- 原文字幕 ----
+      const origSub = findSub(origSubtitles, t)
+      if (showOrig.checked) {
+        subOrigEl.style.display = ''
+        if (origSub !== currentOrigSeg) {
+          // セグメント切り替わり時のみ再レンダリング（ホバー中のスパンを壊さない）
+          currentOrigSeg = origSub
+          subOrigEl.innerHTML = origSub
+            ? wrapWords(origSub.text, origSub.start, origSub.end)
+            : ''
+        }
+        // 現在発話中の単語をハイライト
+        if (origSub) {
+          subOrigEl.querySelectorAll('.word').forEach(span => {
+            const active = t >= parseFloat(span.dataset.start) &&
+                           t <  parseFloat(span.dataset.end)
+            span.classList.toggle('word-active', active)
+          })
+        }
+      } else {
+        subOrigEl.innerHTML = ''
+        subOrigEl.style.display = 'none'
+        currentOrigSeg = null
+      }
+
+      // ---- 日本語字幕 ----
+      const jpSub = findSub(jpSubtitles, t)
+      if (showJp.checked && jpSub) {
+        subJpEl.textContent = jpSub.text
+        subJpEl.style.display = ''
+      } else {
+        subJpEl.textContent = ''
+        subJpEl.style.display = showJp.checked ? '' : 'none'
+      }
+    }
+
+    // ---------- ビデオイベント ----------
+    video.addEventListener('timeupdate', () => {
+      updateSubtitles()
+      if (!isNaN(video.duration)) {
+        seekBar.value = (video.currentTime / video.duration) * 100
+        timeLabel.textContent = `${fmt(video.currentTime)} / ${fmt(video.duration)}`
+      }
+    })
+    video.addEventListener('play',  () => { playBtn.textContent = '⏸' })
+    video.addEventListener('pause', () => { playBtn.textContent = '▶' })
+    video.addEventListener('ended', () => { playBtn.textContent = '▶' })
+
+    playBtn.addEventListener('click', () => {
+      video.paused ? video.play() : video.pause()
+    })
+
+    // 字幕リピート：現在の字幕の先頭に戻る（なければ5秒戻る）
+    function repeatSubtitle() {
+      const t = video.currentTime
+      const nearStartThresholdSec = 0.7
+
+      const origSub = findSub(origSubtitles, t)
+      const jpSub = origSub ? null : findSub(jpSubtitles, t)
+      const sub = origSub || jpSub
+
+      if (sub) {
+        const activeTrack = origSub ? origSubtitles : jpSubtitles
+        const nearStart = (t - sub.start) <= nearStartThresholdSec
+        const prevSub = nearStart ? findPrevSub(activeTrack, sub) : null
+        video.currentTime = prevSub ? prevSub.start : sub.start
+      } else {
+        video.currentTime = Math.max(0, t - 5)
+      }
+    }
+    function jumpToNextSubtitle() {
+      const t = video.currentTime
+      const candidates = [
+        findNextSubByTime(origSubtitles, t),
+        findNextSubByTime(jpSubtitles, t),
+      ].filter(Boolean)
+      if (candidates.length === 0) return
+      const nextSub = candidates.reduce((a, b) => (a.start <= b.start ? a : b))
+      video.currentTime = nextSub.start
+    }
+    document.getElementById('repeatBtn').addEventListener('click', repeatSubtitle)
+    document.getElementById('nextSubBtn').addEventListener('click', jumpToNextSubtitle)
+    document.getElementById('rewindBtn').addEventListener('click', () => {
+      video.currentTime = Math.max(0, video.currentTime - 5)
+    })
+
+    seekBar.addEventListener('input', () => {
+      if (!isNaN(video.duration))
+        video.currentTime = (seekBar.value / 100) * video.duration
+    })
+    volumeBar.addEventListener('input', () => {
+      video.volume = volumeBar.value
+    })
+
+    // キーボードショートカット
+    document.addEventListener('keydown', e => {
+      if (e.target.tagName === 'INPUT') return
+      if (e.code === 'Space')      { e.preventDefault(); video.paused ? video.play() : video.pause() }
+      if (e.code === 'ArrowRight') video.currentTime += 5
+      if (e.code === 'ArrowLeft')  video.currentTime -= 5
+      if (e.code === 'KeyR')       { e.preventDefault(); repeatSubtitle() }
+      if (e.code === 'KeyN')       { e.preventDefault(); jumpToNextSubtitle() }
+    })
+
+    function fmt(sec) {
+      const m = Math.floor(sec / 60)
+      const s = Math.floor(sec % 60).toString().padStart(2, '0')
+      return `${m}:${s}`
+    }
+
+    // ---------- ファイル読み込み ----------
+    function toFileUrl(filePath) {
+      return 'file:///' + filePath.replace(/\\/g, '/')
+    }
+
+    function loadVideo(filePath) {
+      video.src = toFileUrl(filePath)
+      video.style.display = 'block'
+      noVideo.style.display = 'none'
+      // 新しい動画に切り替えたら字幕をリセット
+      origSubtitles = []
+      jpSubtitles   = []
+      currentOrigSeg = null
+      subOrigEl.innerHTML = ''
+      subJpEl.textContent = ''
+    }
+
+    async function loadSrt(filePath, kind) {
+      const result = await window.electronAPI.readFile(filePath)
+      if (result.ok) {
+        const subs = parseSRT(result.content)
+        if (kind === 'orig') origSubtitles = subs
+        else                 jpSubtitles   = subs
+        console.log(`[SRT] ${kind}: ${subs.length} セグメント`)
+      } else {
+        console.error(`[SRT] 読み込み失敗: ${result.error}`)
+      }
+    }
+
+    // 動画と同階層の .original.srt / .japanese.srt を自動読み込み
+    async function tryAutoLoadSrt(videoFilePath) {
+      const stem = videoFilePath.replace(/\.[^.]+$/, '')
+      const targets = [
+        { path: stem + '.original.srt', kind: 'orig' },
+        { path: stem + '.japanese.srt', kind: 'jp' },
+      ]
+      for (const { path, kind } of targets) {
+        const result = await window.electronAPI.readFile(path)
+        if (result.ok) {
+          const subs = parseSRT(result.content)
+          if (kind === 'orig') origSubtitles = subs
+          else                 jpSubtitles   = subs
+          console.log(`[SRT] 自動読み込み ${kind}: ${subs.length} セグメント (${path})`)
+        }
+      }
+    }
+
+    // ---------- ヘッダーボタン ----------
+    document.getElementById('loadVideoBtn').addEventListener('click', async () => {
+      const p = await window.electronAPI.openVideo()
+      if (p) { loadVideo(p); await tryAutoLoadSrt(p) }
+    })
+    document.getElementById('loadVideoBtn2').addEventListener('click', async () => {
+      const p = await window.electronAPI.openVideo()
+      if (p) { loadVideo(p); await tryAutoLoadSrt(p) }
+    })
+    document.getElementById('loadOrigBtn').addEventListener('click', async () => {
+      const p = await window.electronAPI.openSrt()
+      if (p) await loadSrt(p, 'orig')
+    })
+    document.getElementById('loadJpBtn').addEventListener('click', async () => {
+      const p = await window.electronAPI.openSrt()
+      if (p) await loadSrt(p, 'jp')
+    })
+
+    // ---------- ドラッグ&ドロップで動画を開く ----------
+    const videoWrap = document.querySelector('.video-wrap')
+
+    // ウィンドウ全体でデフォルトのファイルナビゲーションを抑制
+    window.addEventListener('dragover', e => e.preventDefault())
+    window.addEventListener('drop',     e => e.preventDefault())
+
+    videoWrap.addEventListener('dragenter', e => {
+      if (e.dataTransfer.types.includes('Files')) videoWrap.classList.add('drag-over')
+    })
+    videoWrap.addEventListener('dragleave', e => {
+      if (!videoWrap.contains(e.relatedTarget)) videoWrap.classList.remove('drag-over')
+    })
+    videoWrap.addEventListener('dragover', e => {
+      e.preventDefault()
+      if (e.dataTransfer.types.includes('Files')) videoWrap.classList.add('drag-over')
+    })
+    videoWrap.addEventListener('drop', async e => {
+      e.preventDefault()
+      videoWrap.classList.remove('drag-over')
+      const file = e.dataTransfer.files[0]
+      if (!file) return
+      const p = window.electronAPI.getPathForFile(file)
+      if (p) { loadVideo(p); await tryAutoLoadSrt(p) }
+    })
+
+    // ---------- URL パラメーターから自動ロード ----------
+    ;(async () => {
+      const params = new URLSearchParams(window.location.search)
+      const vp  = params.get('video')
+      const op  = params.get('orig')
+      const jp  = params.get('jp')
+      if (vp) loadVideo(vp)
+      if (op) await loadSrt(op, 'orig')
+      if (jp) await loadSrt(jp, 'jp')
+    })()
+
+    // ---------- 再生速度 ----------
+    document.getElementById('speedTabs').addEventListener('click', e => {
+      const btn = e.target.closest('.speed-tab')
+      if (!btn) return
+      video.playbackRate = parseFloat(btn.dataset.speed)
+      document.querySelectorAll('.speed-tab').forEach(b => b.classList.toggle('active', b === btn))
+    })
+
+    // ---------- 辞書ツールチップ ----------
+    const dictTooltip = document.createElement('div')
+    dictTooltip.id = 'dictTooltip'
+    document.body.appendChild(dictTooltip)
+
+    const dictCache = {}       // word → definition text (or null)
+    let hoverTimer = null
+    let currentHoveredSpan = null
+
+    async function lookupWord(word) {
+      if (word in dictCache) return dictCache[word]
+      try {
+        const res = await fetch('http://localhost:8765/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ word }),
+        })
+        if (!res.ok) { dictCache[word] = null; return null }
+        const data = await res.json()
+        dictCache[word] = data.definition
+        return data.definition
+      } catch {
+        dictCache[word] = null
+        return null
+      }
+    }
+
+    function positionTooltip(anchorEl) {
+      const rect = anchorEl.getBoundingClientRect()
+      const tipW = dictTooltip.offsetWidth
+      const tipH = dictTooltip.offsetHeight
+      let left = rect.left
+      let top  = rect.top - tipH - 8
+      if (left + tipW > window.innerWidth - 8) left = window.innerWidth - tipW - 8
+      if (left < 8) left = 8
+      if (top < 8) top = rect.bottom + 8
+      dictTooltip.style.left = left + 'px'
+      dictTooltip.style.top  = top + 'px'
+    }
+
+    function showTooltip(anchorEl, html) {
+      dictTooltip.innerHTML = html
+      dictTooltip.style.left = '-9999px'
+      dictTooltip.style.display = 'block'
+      requestAnimationFrame(() => positionTooltip(anchorEl))
+    }
+
+    subOrigEl.addEventListener('mouseover', e => {
+      const span = e.target.closest('.word')
+      if (!span || span === currentHoveredSpan) return
+      currentHoveredSpan = span
+      clearTimeout(hoverTimer)
+      dictTooltip.style.display = 'none'
+
+      hoverTimer = setTimeout(async () => {
+        const word = span.textContent.replace(/[^a-zA-Z'-]/g, '')
+        if (!word || word.length < 2) return
+
+        // キャッシュなし → ローディング表示
+        if (!(word.toLowerCase() in dictCache)) {
+          showTooltip(span,
+            `<div class="dict-word">${word}</div><div class="dict-loading">調べています...</div>`
+          )
+        }
+
+        const definition = await lookupWord(word.toLowerCase())
+        if (currentHoveredSpan !== span || !document.body.contains(span)) return
+        if (!definition) { dictTooltip.style.display = 'none'; return }
+
+        showTooltip(span,
+          `<div class="dict-word">${word}</div><div class="dict-body">${definition}</div>`
+        )
+      }, 400)
+    })
+
+    subOrigEl.addEventListener('mouseout', e => {
+      const span = e.target.closest('.word')
+      if (!span) return
+      clearTimeout(hoverTimer)
+      currentHoveredSpan = null
+      dictTooltip.style.display = 'none'
+    })
+  </script>
+</body>
+</html>

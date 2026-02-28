@@ -1,0 +1,5 @@
+{
+  "translator_model": "Qwen/Qwen3-14B",
+  "lookup_model": "Qwen/Qwen3-1.7B",
+  "vl_model": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
+}

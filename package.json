@@ -1,0 +1,12 @@
+{
+  "name": "language-caption-player",
+  "version": "1.0.0",
+  "description": "動画字幕生成・2言語再生アプリ",
+  "main": "frontend/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
