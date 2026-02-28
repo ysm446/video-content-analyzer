@@ -94,11 +94,11 @@ class SetModelRequest(BaseModel):
 
 
 class ReviewRequest(BaseModel):
-    video_path:    str
-    max_frames:    int   = 30
-    min_interval:  float = 5.0
-    include_audio: bool  = False
-    frame_mode:    str   = "uniform"  # "uniform" | "scene"
+    video_path:   str
+    max_frames:   int   = 30
+    min_interval: float = 5.0
+    transcript:   str   = ""        # SRT由来のトランスクリプト（フロントから送信）
+    frame_mode:   str   = "uniform"  # "uniform" | "scene"
 
 
 class QARequest(BaseModel):
@@ -115,9 +115,8 @@ class SetVLModelRequest(BaseModel):
 
 
 class UISettingsRequest(BaseModel):
-    frame_mode:    Optional[str]  = None  # "uniform" | "scene"
-    max_frames:    Optional[int]  = None
-    include_audio: Optional[bool] = None
+    frame_mode: Optional[str] = None  # "uniform" | "scene"
+    max_frames: Optional[int] = None
 
 
 # ---------- 利用可能なモデル ----------
@@ -156,18 +155,16 @@ def health():
 def get_ui_settings():
     s = load_settings()
     return {
-        "frame_mode":    s.get("frame_mode", "uniform"),
-        "max_frames":    s.get("max_frames", 30),
-        "include_audio": s.get("include_audio", False),
+        "frame_mode": s.get("frame_mode", "uniform"),
+        "max_frames": s.get("max_frames", 30),
     }
 
 
 @app.post("/ui-settings")
 def post_ui_settings(req: UISettingsRequest):
     to_save = {}
-    if req.frame_mode    is not None: to_save["frame_mode"]    = req.frame_mode
-    if req.max_frames    is not None: to_save["max_frames"]    = req.max_frames
-    if req.include_audio is not None: to_save["include_audio"] = req.include_audio
+    if req.frame_mode is not None: to_save["frame_mode"] = req.frame_mode
+    if req.max_frames is not None: to_save["max_frames"] = req.max_frames
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -392,13 +389,10 @@ async def review_analyze(req: ReviewRequest):
     動画を分析してサマリー・シーン・タグを返す（SSE）。
 
     Events:
-      {"status": "loading_asr"}                                      ← include_audio=true かつ未ロード時
-      {"status": "transcribing"}                                     ← include_audio=true 時
-      {"status": "asr_done", "chars": int}                          ← include_audio=true 時
       {"status": "loading_model"}
       {"status": "extracting_frames"}
       {"status": "analyzing", "count": int, "interval": float, "duration": float}
-      {"status": "done", "result": dict, "meta": dict, "transcript": str}
+      {"status": "done", "result": dict, "meta": dict}
       {"status": "error", "message": str}
     """
     video_path = Path(req.video_path)
@@ -407,31 +401,7 @@ async def review_analyze(req: ReviewRequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
-        transcript = ""
-
-        # --- オプション: 音声書き起こし（include_audio=true 時）---
-        if req.include_audio:
-            if asr.model is None:
-                yield sse({"status": "loading_asr"})
-                try:
-                    await loop.run_in_executor(None, asr.load)
-                except Exception as e:
-                    yield sse({"status": "error", "message": str(e)})
-                    return
-
-            yield sse({"status": "transcribing"})
-            try:
-                segments = await loop.run_in_executor(
-                    None, asr.transcribe, str(video_path), None
-                )
-                transcript = "\n".join(s["text"] for s in segments if s.get("text"))
-            except Exception as e:
-                yield sse({"status": "error", "message": str(e)})
-                return
-            finally:
-                await loop.run_in_executor(None, asr.unload)
-
-            yield sse({"status": "asr_done", "chars": len(transcript)})
+        transcript = req.transcript  # SRT由来のトランスクリプトをそのまま使用
 
         # --- VL モデルロード & 分析（終了後は必ずアンロード）---
         try:
@@ -478,7 +448,7 @@ async def review_analyze(req: ReviewRequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
-            yield sse({"status": "done", "result": result, "meta": meta, "transcript": transcript})
+            yield sse({"status": "done", "result": result, "meta": meta})
         finally:
             await loop.run_in_executor(None, video_reviewer.unload)
 

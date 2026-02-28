@@ -39,6 +39,7 @@
     .action-row .btn{justify-content:center}
     .mini{font-size:11px;color:var(--text-dim);margin-top:8px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
     .result-row{display:flex;gap:8px;margin-top:6px;font-size:12px;color:var(--text-dim)}
+    .elapsed-time{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
     .result-row.done{color:var(--success)} .result-row.error{color:var(--error)}
 
     .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);grid-area:analysis;overflow:hidden}
@@ -145,7 +146,7 @@
             <div class="result-row" id="translateResult"></div>
 
             <div class="mini">動画分析</div>
-            <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel">準備中...</div></div>
+            <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel">準備中...</div><div class="elapsed-time" id="analyzeElapsed"></div></div>
             <div class="result-row" id="analyzeResult"></div>
 
           </div>
@@ -238,9 +239,6 @@
             <span id="maxFramesValue">30 枚</span>
           </div>
           <div class="frame-hint" id="frameHint"></div>
-          <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer">
-            <input type="checkbox" id="includeAudio" style="accent-color:var(--accent)"> 音声も解析する（ASR）
-          </label>
         </div>
       </main>
     </section>
@@ -249,7 +247,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, cachedTranscript:'', analysisReady:false }
+    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
@@ -268,6 +266,7 @@
       if(path){
         state.origSrtPath = null
         state.jpSrtPath = null
+        state.origTranscript = ''
         resetSection('transcribe')
         resetSection('translate')
         document.getElementById('translateBtn').disabled = true
@@ -279,11 +278,34 @@
       document.getElementById(`${kind}Progress`).style.display='none'
       document.getElementById(`${kind}Fill`).style.width='0%'
       document.getElementById(`${kind}Result`).innerHTML=''
+      if(kind==='analyze'){
+        if(_analyzeTimer){ clearInterval(_analyzeTimer); _analyzeTimer=null }
+        const el=document.getElementById('analyzeElapsed')
+        if(el) el.textContent=''
+      }
     }
     function setProgress(kind,pct,label){
       document.getElementById(`${kind}Progress`).style.display='block'
       document.getElementById(`${kind}Fill`).style.width=pct+'%'
       document.getElementById(`${kind}Label`).textContent=label
+    }
+
+    // 分析経過時間タイマー
+    let _analyzeTimer=null, _analyzeStart=0
+    function startAnalyzeTimer(){
+      _analyzeStart=Date.now()
+      const el=document.getElementById('analyzeElapsed')
+      el.textContent=''
+      if(_analyzeTimer) clearInterval(_analyzeTimer)
+      _analyzeTimer=setInterval(()=>{
+        const s=Math.floor((Date.now()-_analyzeStart)/1000)
+        el.textContent=`経過: ${s}秒`
+      },1000)
+    }
+    function stopAnalyzeTimer(){
+      if(_analyzeTimer){ clearInterval(_analyzeTimer); _analyzeTimer=null }
+      const s=Math.floor((Date.now()-_analyzeStart)/1000)
+      document.getElementById('analyzeElapsed').textContent=`完了: ${s}秒`
     }
     function setResult(kind,ok,text){
       const el=document.getElementById(`${kind}Result`)
@@ -389,11 +411,17 @@
       origSubtitles=[]; jpSubtitles=[]
       subOrigEl.textContent=''; subJpEl.textContent=''
     }
+    function subsToTranscript(subs){
+      return subs.map(s=>{
+        const m=Math.floor(s.start/60), sec=Math.floor(s.start%60)
+        return `[${m}:${sec.toString().padStart(2,'0')}] ${s.text}`
+      }).join('\n')
+    }
     async function loadSrt(filePath,kind){
       const result=await window.electronAPI.readFile(filePath)
       if(!result.ok) return
       const subs=parseSRT(result.content)
-      if(kind==='orig') origSubtitles=subs
+      if(kind==='orig'){ origSubtitles=subs; state.origTranscript=subsToTranscript(subs) }
       else jpSubtitles=subs
     }
 
@@ -469,9 +497,7 @@
     document.querySelectorAll('input[name="frameMode"]').forEach(r=>r.addEventListener('change',()=>{
       updateFrameHint(); saveUiSettings({frame_mode:getFrameMode()})
     }))
-    document.getElementById('includeAudio').addEventListener('change',()=>{
-      saveUiSettings({include_audio:document.getElementById('includeAudio').checked})
-    })
+
 
     async function saveUiSettings(data){
       try{ await fetch(`${API}/ui-settings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}) }catch{}
@@ -484,7 +510,6 @@
         const fmRadio=document.querySelector(`input[name="frameMode"][value="${s.frame_mode}"]`)
         if(fmRadio) fmRadio.checked=true
         slider.value=s.max_frames
-        document.getElementById('includeAudio').checked=s.include_audio
         updateFrameHint()
       }catch{}
     }
@@ -577,16 +602,17 @@
       if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
       resetSection('analyze'); setQAEnabled(false)
+      startAnalyzeTimer()
       try{
-        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,include_audio:document.getElementById('includeAudio').checked,frame_mode:getFrameMode()})})
+        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode()})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('analyze',15,'モデルをロード中...')
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
           else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
-          else if(event.status==='done'){ setProgress('analyze',100,'完了'); setResult('analyze',true,'分析完了'); state.cachedTranscript=event.transcript||''; renderAnalysisDetail(event.result); setQAEnabled(true) }
-          else if(event.status==='error') setResult('analyze',false,event.message)
+          else if(event.status==='done'){ stopAnalyzeTimer(); setProgress('analyze',100,'完了'); setResult('analyze',true,'分析完了'); renderAnalysisDetail(event.result); setQAEnabled(true) }
+          else if(event.status==='error'){ stopAnalyzeTimer(); setResult('analyze',false,event.message) }
         })
-      }catch(e){ setResult('analyze',false,`接続エラー: ${e.message}`) }
+      }catch(e){ stopAnalyzeTimer(); setResult('analyze',false,`接続エラー: ${e.message}`) }
       btn.disabled=!state.videoPath
     })
 
@@ -613,7 +639,7 @@
       pair.scrollIntoView({behavior:'smooth'})
 
       try{
-        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.cachedTranscript,frame_mode:getFrameMode()})})
+        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode()})})
         await readSSE(res,event=>{
           if(event.status==='extracting_frames') thinking.textContent='フレーム抽出中...'
           else if(event.status==='answering') thinking.textContent='回答生成中...'
