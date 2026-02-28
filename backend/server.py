@@ -454,6 +454,7 @@ async def review_qa(req: QARequest):
       {"status": "loading_model"}
       {"status": "extracting_frames"}
       {"status": "answering", "count": int}
+      {"status": "answer_delta", "delta": str}
       {"status": "done", "answer": str}
       {"status": "error", "message": str}
     """
@@ -495,6 +496,12 @@ async def review_qa(req: QARequest):
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
             return
+
+        # フロント側で逐次表示できるよう、回答を小さく分割してストリーミング
+        chunk_size = 24
+        for i in range(0, len(answer), chunk_size):
+            yield sse({"status": "answer_delta", "delta": answer[i:i + chunk_size]})
+            await asyncio.sleep(0)
 
         yield sse({"status": "done", "answer": answer})
 

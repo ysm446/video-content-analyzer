@@ -563,6 +563,10 @@
       thinking.className='qa-answering'
       thinking.textContent='回答生成中...'
       pair.appendChild(thinking)
+      const ans=document.createElement('div')
+      ans.className='qa-answer'
+      ans.style.display='none'
+      pair.appendChild(ans)
       qaHistory.appendChild(pair)
       pair.scrollIntoView({behavior:'smooth'})
 
@@ -571,7 +575,21 @@
         await readSSE(res,event=>{
           if(event.status==='extracting_frames') thinking.textContent='フレーム抽出中...'
           else if(event.status==='answering') thinking.textContent='回答生成中...'
-          else if(event.status==='done'){ const ans=document.createElement('div'); ans.className='qa-answer'; ans.textContent=event.answer; pair.replaceChild(ans,thinking) }
+          else if(event.status==='answer_delta'){
+            if(ans.style.display==='none'){
+              ans.style.display=''
+              thinking.style.display='none'
+            }
+            ans.textContent += event.delta || ''
+            pair.scrollIntoView({behavior:'smooth'})
+          }
+          else if(event.status==='done'){
+            if((ans.textContent || '').trim().length===0){
+              ans.style.display=''
+              ans.textContent=event.answer || ''
+              thinking.style.display='none'
+            }
+          }
           else if(event.status==='error') thinking.textContent='❌ '+event.message
         })
       }catch(e){ thinking.textContent='❌ 接続エラー: '+e.message }
