@@ -103,7 +103,6 @@
             <button class="btn btn-ghost" id="loadVideoBtn" style="padding:6px 12px;font-size:13px">📂 動画</button>
             <button class="btn btn-ghost" id="loadOrigBtn" style="padding:6px 12px;font-size:13px">📄 原文SRT</button>
             <button class="btn btn-ghost" id="loadJpBtn" style="padding:6px 12px;font-size:13px">🇯🇵 日本語SRT</button>
-            <button class="btn btn-ghost" id="goSettingsBtn" style="padding:6px 12px;font-size:13px">⚙ 設定</button>
             <div class="video-name" id="currentVideoName">動画未選択</div>
           </div>
 
@@ -257,7 +256,7 @@
       document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name))
     }
     document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)))
-    document.getElementById('goSettingsBtn').addEventListener('click',()=>switchTab('settings'))
+
 
     function setCurrentVideo(path){
       state.videoPath = path

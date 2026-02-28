@@ -464,6 +464,9 @@ async def review_analyze(req: ReviewRequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
+            # 分析後のフレームをキャッシュ（Q&A で再利用）
+            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, frames, meta)
+
             yield sse({"status": "analyzing",
                        **{k: v for k, v in meta.items() if k != "timestamps"}})
             try:
@@ -512,26 +515,30 @@ async def review_qa(req: QARequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
-        yield sse({"status": "extracting_frames"})
-        try:
-            if req.frame_mode == "scene":
-                frames, meta = await loop.run_in_executor(
-                    None,
-                    video_reviewer.extract_frames_scene,
-                    str(video_path),
-                    req.max_frames,
-                )
-            else:
-                frames, meta = await loop.run_in_executor(
-                    None,
-                    video_reviewer.extract_frames,
-                    str(video_path),
-                    req.max_frames,
-                    req.min_interval,
-                )
-        except Exception as e:
-            yield sse({"status": "error", "message": str(e)})
-            return
+        cached = video_reviewer.get_cached_frames(str(video_path), req.frame_mode, req.max_frames)
+        if cached is not None:
+            frames, meta = cached
+        else:
+            yield sse({"status": "extracting_frames"})
+            try:
+                if req.frame_mode == "scene":
+                    frames, meta = await loop.run_in_executor(
+                        None,
+                        video_reviewer.extract_frames_scene,
+                        str(video_path),
+                        req.max_frames,
+                    )
+                else:
+                    frames, meta = await loop.run_in_executor(
+                        None,
+                        video_reviewer.extract_frames,
+                        str(video_path),
+                        req.max_frames,
+                        req.min_interval,
+                    )
+            except Exception as e:
+                yield sse({"status": "error", "message": str(e)})
+                return
 
         yield sse({"status": "answering", "count": meta["count"]})
         try:

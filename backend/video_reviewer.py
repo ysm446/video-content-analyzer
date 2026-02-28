@@ -74,6 +74,9 @@ class VideoReviewer:
         self.model_id = DEFAULT_MODEL_ID
         self.model = None
         self.processor = None
+        # フレームキャッシュ: 同じ動画・同じ設定なら再抽出しない
+        # _frame_cache = ((video_path, frame_mode, max_frames), frames, meta)
+        self._frame_cache: tuple | None = None
 
     def set_model_id(self, model_id: str):
         if self.model_id != model_id:
@@ -110,6 +113,24 @@ class VideoReviewer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             print("[VideoReviewer] モデルをアンロードしました")
+        self._frame_cache = None
+
+    def cache_frames(self, video_path: str, frame_mode: str, max_frames: int,
+                     frames: list, meta: dict):
+        """フレームをキャッシュして次のQ&Aで再利用できるようにする"""
+        self._frame_cache = ((video_path, frame_mode, max_frames), frames, meta)
+        print(f"[VideoReviewer] フレームキャッシュ保存: {len(frames)}枚 ({frame_mode})")
+
+    def get_cached_frames(self, video_path: str, frame_mode: str,
+                          max_frames: int) -> tuple[list, dict] | None:
+        """キャッシュがヒットすれば (frames, meta) を返す。なければ None"""
+        if self._frame_cache is None:
+            return None
+        key, frames, meta = self._frame_cache
+        if key == (video_path, frame_mode, max_frames):
+            print(f"[VideoReviewer] フレームキャッシュヒット: {len(frames)}枚 ({frame_mode})")
+            return frames, meta
+        return None
 
     def _ensure_loaded(self):
         if self.model is None:
