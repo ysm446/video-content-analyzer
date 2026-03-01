@@ -5,12 +5,13 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from threading import Thread
 
 import ffmpeg
 import torch
 from PIL import Image
 from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import AutoProcessor, Qwen3VLForConditionalGeneration, TextIteratorStreamer
 
 from .vram import MAX_PIXELS_PER_FRAME, max_memory_map
 
@@ -135,6 +136,14 @@ class VideoReviewer:
     def _ensure_loaded(self):
         if self.model is None:
             self.load()
+
+    @staticmethod
+    def _clean_generated_text(text: str) -> str:
+        """生成文から不要な thinking ブロックを除去する"""
+        cleaned = text.strip()
+        if "</think>" in cleaned:
+            cleaned = cleaned.split("</think>", 1)[-1].strip()
+        return cleaned
 
     # ---------- フレーム抽出 ----------
 
@@ -323,12 +332,81 @@ class VideoReviewer:
         result = self.processor.batch_decode(
             [generated_ids], skip_special_tokens=True
         )[0].strip()
+        return self._clean_generated_text(result)
 
-        # thinking トークンが残っている場合は除去
-        if "</think>" in result:
-            result = result.split("</think>", 1)[-1].strip()
+    def _infer_stream(
+        self,
+        frames: list[Image.Image],
+        system: str,
+        prompt: str,
+        max_new_tokens: int,
+        timestamps: list[float] | None = None,
+    ):
+        # タイムスタンプがある場合は各画像の直後にラベルを挿入して対応付けを明確にする
+        if timestamps and len(timestamps) == len(frames):
+            content: list[dict] = []
+            for frame, ts in zip(frames, timestamps):
+                content.append({"type": "image", "image": frame})
+                content.append({"type": "text", "text": f"[{self._fmt_ts(ts)}]"})
+            content.append({"type": "text", "text": prompt})
+        else:
+            content = [{"type": "image", "image": f} for f in frames] + [{"type": "text", "text": prompt}]
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.model.device)
 
-        return result
+        n_input_tokens = inputs.input_ids.shape[1]
+        tokens_per_frame = (n_input_tokens // len(frames)) if frames else 0
+        print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚, "
+              f"入力トークン={n_input_tokens} (~{tokens_per_frame}トークン/枚)")
+
+        streamer = TextIteratorStreamer(
+            self.processor.tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+        )
+        error_box: list[Exception] = []
+        t0 = time.time()
+
+        def run_generate():
+            try:
+                with torch.no_grad():
+                    self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        do_sample=False,
+                        repetition_penalty=1.15,
+                        no_repeat_ngram_size=20,
+                        streamer=streamer,
+                    )
+            except Exception as e:
+                error_box.append(e)
+
+        th = Thread(target=run_generate, daemon=True)
+        th.start()
+        try:
+            for chunk in streamer:
+                if chunk:
+                    yield chunk
+        finally:
+            th.join()
+            elapsed = time.time() - t0
+            print(f"[VideoReviewer] ストリーミング推論完了: {elapsed:.1f}秒")
+
+        if error_box:
+            raise error_box[0]
 
     # ---------- プロンプト構築ヘルパー ----------
 
@@ -410,3 +488,16 @@ class VideoReviewer:
         prompt = self._build_qa_prompt(question, transcript, timestamps)
         return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=1024,
                            timestamps=timestamps or None)
+
+    def qa_frames_stream(self, frames: list[Image.Image], question: str,
+                         transcript: str = "", timestamps: list[float] = []):
+        """フレームリストと質問から回答をストリーミング生成する"""
+        self._ensure_loaded()
+        prompt = self._build_qa_prompt(question, transcript, timestamps)
+        yield from self._infer_stream(
+            frames,
+            QA_SYSTEM,
+            prompt,
+            max_new_tokens=1024,
+            timestamps=timestamps or None,
+        )

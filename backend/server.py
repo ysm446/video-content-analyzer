@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import queue
+import threading
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -511,21 +513,37 @@ async def review_qa(req: QARequest):
                 return
 
         yield sse({"status": "answering", "count": meta["count"]})
-        try:
-            answer = await loop.run_in_executor(
-                None, video_reviewer.qa_frames,
-                frames, req.question, req.transcript, meta.get("timestamps", [])
-            )
-        except Exception as e:
-            yield sse({"status": "error", "message": str(e)})
-            return
+        q: queue.Queue[tuple[str, str]] = queue.Queue()
 
-        # フロント側で逐次表示できるよう、回答を小さく分割してストリーミング
-        chunk_size = 24
-        for i in range(0, len(answer), chunk_size):
-            yield sse({"status": "answer_delta", "delta": answer[i:i + chunk_size]})
-            await asyncio.sleep(0)
+        def run_stream():
+            parts: list[str] = []
+            try:
+                for delta in video_reviewer.qa_frames_stream(
+                    frames,
+                    req.question,
+                    req.transcript,
+                    meta.get("timestamps", []),
+                ):
+                    parts.append(delta)
+                    q.put(("answer_delta", delta))
+                answer = video_reviewer._clean_generated_text("".join(parts))
+                q.put(("done", answer))
+            except Exception as e:
+                q.put(("error", str(e)))
 
-        yield sse({"status": "done", "answer": answer})
+        th = threading.Thread(target=run_stream, daemon=True)
+        th.start()
+
+        while True:
+            status, payload = await loop.run_in_executor(None, q.get)
+            if status == "answer_delta":
+                yield sse({"status": "answer_delta", "delta": payload})
+                await asyncio.sleep(0)
+            elif status == "done":
+                yield sse({"status": "done", "answer": payload})
+                break
+            else:
+                yield sse({"status": "error", "message": payload})
+                break
 
     return StreamingResponse(stream(), media_type="text/event-stream")
