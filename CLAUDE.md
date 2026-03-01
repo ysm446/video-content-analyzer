@@ -80,6 +80,13 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /review/unload` — VL モデルを VRAM から解放
 - `POST /review/analyze` — 動画分析（SSE）
 - `POST /review/qa` — 動画への質問（SSE）
+- `POST /review/toc/build` — 動画分析→TOC 生成（SSE）
+- `POST /review/toc/save` — TOC JSON ファイル保存（`video.toc.json`）
+- `POST /review/toc/load` — TOC JSON ファイル読み込み
+
+### 設定
+- `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode 等）
+- `POST /ui-settings` — UI 設定保存
 
 ## SSE イベント仕様
 
@@ -148,12 +155,11 @@ error            → {message}
 ```
 video.mp4 → video.original.srt  （ASR生成）
           → video.japanese.srt  （翻訳生成）
+          → video.toc.json      （TOC生成）
 ```
 
 ## フロントエンドページ
 
 | ファイル | 役割 |
 |---|---|
-| `frontend/pages/transcribe.html` | 字幕生成UI（動画選択・進捗・言語選択） |
-| `frontend/pages/player.html` | 2言語プレイヤー（字幕オーバーレイ・辞書） |
-| `frontend/pages/review.html` | 動画レビューUI（分析・Q&A） |
+| `frontend/pages/app.html` | 統合UI（字幕生成・2言語プレイヤー・動画レビュー・Q&A・目次編集） |

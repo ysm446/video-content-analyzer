@@ -472,6 +472,39 @@ class VideoReviewer:
         return f"{m}:{s:02d}"
 
     @staticmethod
+    def _parse_ts(ts: str) -> float:
+        """m:ss 形式を秒に変換（パース失敗時は 0.0）"""
+        try:
+            parts = ts.split(":")
+            if len(parts) == 2:
+                return int(parts[0]) * 60 + float(parts[1])
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
+    def _dedup_scenes(scenes: list) -> list:
+        """
+        モデルが生成した scenes から重複タイムスタンプを除去し、時系列順に並べる。
+        同一秒（切り捨て）のシーンが複数ある場合は最初の1件のみ残す。
+        """
+        if not scenes:
+            return scenes
+        parsed = [
+            (VideoReviewer._parse_ts(s.get("timestamp", "")), s)
+            for s in scenes
+        ]
+        parsed.sort(key=lambda x: x[0])
+        result: list = []
+        seen: set[int] = set()
+        for ts_sec, s in parsed:
+            key = int(ts_sec)
+            if key not in seen:
+                seen.add(key)
+                result.append(s)
+        return result
+
+    @staticmethod
     def _ts_hint(timestamps: list[float]) -> str:
         """タイムスタンプ付き推論用のプロンプト補足を生成（各画像直後にラベルが付くため一覧は不要）"""
         if not timestamps:
@@ -525,7 +558,10 @@ class VideoReviewer:
         try:
             clean = re.sub(r"^```[a-z]*\n?", "", raw.strip(), flags=re.MULTILINE)
             clean = re.sub(r"\n?```$", "", clean.strip(), flags=re.MULTILINE)
-            return json.loads(clean.strip())
+            result = json.loads(clean.strip())
+            if isinstance(result.get("scenes"), list):
+                result["scenes"] = self._dedup_scenes(result["scenes"])
+            return result
         except Exception:
             return {"summary": raw, "scenes": [], "tags": [], "genre": "不明"}
 
