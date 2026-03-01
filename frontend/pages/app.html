@@ -29,6 +29,12 @@
     .subtitle-area{background:#111;border-top:1px solid var(--border);padding:12px 20px}
     #subtitleOrig{font-size:17px;color:#d0d0d0;min-height:24px}
     #subtitleJp{font-size:19px;color:#fff;min-height:26px}
+    #subtitleOrig .sub-word{display:inline-block;border-radius:3px;padding:0 1px;transition:color .12s,background .12s}
+    #subtitleOrig .sub-word-active{color:#fff;background:rgba(255,215,0,.36)}
+    #dictTooltip{position:fixed;display:none;background:#1f2530;border:1px solid #4a5568;border-radius:8px;padding:10px 12px;max-width:320px;font-size:13px;line-height:1.6;color:#dbe6ff;box-shadow:0 6px 24px rgba(0,0,0,.65);z-index:9999;pointer-events:none;white-space:pre-wrap}
+    #dictTooltip .dict-word{font-size:14px;font-weight:700;color:#ffd86b;margin-bottom:4px}
+    #dictTooltip .dict-body{color:#dbe6ff}
+    #dictTooltip .dict-loading{color:#9aa4b2;font-style:italic}
 
     .controls{background:var(--surface);border-top:1px solid var(--border);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .controls input[type='range']{accent-color:var(--accent)}
@@ -142,7 +148,9 @@
               <div id="subtitleJp"></div>
             </div>
             <div class="controls">
+              <button class="ctrl-btn" id="prevSubBtn" title="前の字幕へ">←</button>
               <button class="ctrl-btn" id="playBtn">▶</button>
+              <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ">→</button>
               <span class="time-label" id="timeLabel">0:00 / 0:00</span>
               <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
               <span class="time-label">🔊</span>
@@ -395,12 +403,21 @@
     const seekBar=document.getElementById('seekBar')
     const timeLabel=document.getElementById('timeLabel')
     const playBtn=document.getElementById('playBtn')
+    const prevSubBtn=document.getElementById('prevSubBtn')
+    const nextSubBtn=document.getElementById('nextSubBtn')
     const volumeBar=document.getElementById('volumeBar')
     const clearOrigBtn=document.getElementById('clearOrigBtn')
     const clearJpBtn=document.getElementById('clearJpBtn')
 
     let origSubtitles=[]
     let jpSubtitles=[]
+    let renderedOrigSub=null
+    const dictCache={}
+    let hoverTimer=null
+    let currentHoveredSpan=null
+    const dictTooltip=document.createElement('div')
+    dictTooltip.id='dictTooltip'
+    document.body.appendChild(dictTooltip)
 
     function syncSubtitleClearButtons(){
       clearOrigBtn.disabled = !(state.origSrtPath || origSubtitles.length)
@@ -422,12 +439,96 @@
     }
 
     function findSub(subs,t){ return subs.find(s=>t>=s.start&&t<=s.end)??null }
+    function findPrevSubByTime(subs,t){
+      let best=null
+      for(const s of subs){
+        if(s.start < t-0.001 && (!best || s.start > best.start)) best=s
+      }
+      return best
+    }
+    function findNextSubByTime(subs,t){
+      let best=null
+      for(const s of subs){
+        if(s.start > t+0.001 && (!best || s.start < best.start)) best=s
+      }
+      return best
+    }
+
+    async function lookupWord(word){
+      if(word in dictCache) return dictCache[word]
+      try{
+        const res=await fetch(`${API}/lookup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word})})
+        if(!res.ok){ dictCache[word]=null; return null }
+        const data=await res.json()
+        dictCache[word]=data.definition
+        return data.definition
+      }catch{
+        dictCache[word]=null
+        return null
+      }
+    }
+
+    function positionTooltip(anchorEl){
+      const rect=anchorEl.getBoundingClientRect()
+      const tipW=dictTooltip.offsetWidth
+      const tipH=dictTooltip.offsetHeight
+      let left=rect.left
+      let top=rect.top-tipH-8
+      if(left+tipW>window.innerWidth-8) left=window.innerWidth-tipW-8
+      if(left<8) left=8
+      if(top<8) top=rect.bottom+8
+      dictTooltip.style.left=`${left}px`
+      dictTooltip.style.top=`${top}px`
+    }
+
+    function showTooltip(anchorEl,html){
+      dictTooltip.innerHTML=html
+      dictTooltip.style.left='-9999px'
+      dictTooltip.style.display='block'
+      requestAnimationFrame(()=>positionTooltip(anchorEl))
+    }
+
+    function hideTooltip(){
+      clearTimeout(hoverTimer)
+      currentHoveredSpan=null
+      dictTooltip.style.display='none'
+    }
+
+    function wrapWords(text, segStart, segEnd){
+      const parts = String(text).split(/(\s+)/)
+      const wordCount = parts.filter(p=>p.trim().length>0).length || 1
+      const duration = Math.max(0, segEnd - segStart)
+      const step = duration / wordCount
+      let idx = 0
+      return parts.map(p=>{
+        if(p.trim().length===0){
+          return escHtml(p).replace(/ /g,'&nbsp;').replace(/\n/g,'<br>')
+        }
+        const wStart = segStart + idx * step
+        const wEnd = segStart + (idx + 1) * step
+        idx += 1
+        return `<span class="sub-word" data-start="${wStart.toFixed(3)}" data-end="${wEnd.toFixed(3)}">${escHtml(p)}</span>`
+      }).join('')
+    }
 
     function updateSubtitles(){
       const t=video.currentTime
       const o=findSub(origSubtitles,t)
       const j=findSub(jpSubtitles,t)
-      subOrigEl.textContent = o ? o.text : ''
+      if(o){
+        if(renderedOrigSub !== o){
+          subOrigEl.innerHTML = wrapWords(o.text, o.start, o.end)
+          renderedOrigSub = o
+        }
+        subOrigEl.querySelectorAll('.sub-word').forEach(span=>{
+          const active = t >= parseFloat(span.dataset.start) && t < parseFloat(span.dataset.end)
+          span.classList.toggle('sub-word-active', active)
+        })
+      }else{
+        subOrigEl.textContent = ''
+        renderedOrigSub = null
+        hideTooltip()
+      }
       subJpEl.textContent = j ? j.text : ''
     }
 
@@ -437,6 +538,8 @@
       video.style.display='block'
       noVideo.style.display='none'
       origSubtitles=[]; jpSubtitles=[]
+      renderedOrigSub=null
+      hideTooltip()
       subOrigEl.textContent=''; subJpEl.textContent=''
       syncSubtitleClearButtons()
     }
@@ -450,9 +553,10 @@
       const result=await window.electronAPI.readFile(filePath)
       if(!result.ok) return
       const subs=parseSRT(result.content)
-      if(kind==='orig'){ origSubtitles=subs; state.origTranscript=subsToTranscript(subs) }
+      if(kind==='orig'){ origSubtitles=subs; state.origTranscript=subsToTranscript(subs); renderedOrigSub=null }
       else jpSubtitles=subs
       syncSubtitleClearButtons()
+      updateSubtitles()
     }
 
     function clearSubtitle(kind){
@@ -460,6 +564,8 @@
         state.origSrtPath = null
         state.origTranscript = ''
         origSubtitles = []
+        renderedOrigSub = null
+        hideTooltip()
         subOrigEl.textContent = ''
         resetSection('transcribe')
         document.getElementById('translateBtn').disabled = true
@@ -470,6 +576,7 @@
         resetSection('translate')
       }
       syncSubtitleClearButtons()
+      updateSubtitles()
     }
 
     async function tryAutoLoadSrt(videoFilePath){
@@ -506,6 +613,31 @@
     })
     clearJpBtn.addEventListener('click',()=>clearSubtitle('jp'))
 
+    subOrigEl.addEventListener('mouseover',e=>{
+      const span=e.target.closest('.sub-word')
+      if(!span || span===currentHoveredSpan) return
+      currentHoveredSpan=span
+      clearTimeout(hoverTimer)
+      dictTooltip.style.display='none'
+      hoverTimer=setTimeout(async()=>{
+        const word=span.textContent.replace(/[^a-zA-Z'-]/g,'')
+        if(!word || word.length<2) return
+        const key=word.toLowerCase()
+        if(!(key in dictCache)){
+          showTooltip(span,`<div class="dict-word">${escHtml(word)}</div><div class="dict-loading">調べています...</div>`)
+        }
+        const definition=await lookupWord(key)
+        if(currentHoveredSpan!==span || !document.body.contains(span)) return
+        if(!definition){ dictTooltip.style.display='none'; return }
+        showTooltip(span,`<div class="dict-word">${escHtml(word)}</div><div class="dict-body">${escHtml(definition)}</div>`)
+      },400)
+    })
+
+    subOrigEl.addEventListener('mouseout',e=>{
+      if(!e.target.closest('.sub-word')) return
+      hideTooltip()
+    })
+
     video.addEventListener('timeupdate',()=>{
       updateSubtitles()
       if(!isNaN(video.duration)){
@@ -518,6 +650,22 @@
     video.addEventListener('play',()=>playBtn.textContent='⏸')
     video.addEventListener('pause',()=>playBtn.textContent='▶')
     playBtn.addEventListener('click',()=> video.paused ? video.play() : video.pause())
+    prevSubBtn.addEventListener('click',()=>{
+      const t=video.currentTime
+      const prevs=[findPrevSubByTime(origSubtitles,t),findPrevSubByTime(jpSubtitles,t)].filter(Boolean)
+      if(prevs.length===0) return
+      const prev=prevs.reduce((a,b)=>a.start>=b.start?a:b)
+      video.currentTime=prev.start
+      updateSubtitles()
+    })
+    nextSubBtn.addEventListener('click',()=>{
+      const t=video.currentTime
+      const nexts=[findNextSubByTime(origSubtitles,t),findNextSubByTime(jpSubtitles,t)].filter(Boolean)
+      if(nexts.length===0) return
+      const next=nexts.reduce((a,b)=>a.start<=b.start?a:b)
+      video.currentTime=next.start
+      updateSubtitles()
+    })
     seekBar.addEventListener('input',()=>{ if(!isNaN(video.duration)) video.currentTime=(seekBar.value/100)*video.duration })
     volumeBar.addEventListener('input',()=>{ video.volume=volumeBar.value })
 
