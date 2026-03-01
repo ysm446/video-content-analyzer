@@ -13,7 +13,7 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    title: 'Movie Review',
+    title: 'Video Content Analyzer',
     backgroundColor: '#111111',
   })
   win.loadFile(path.join(__dirname, 'pages', 'app.html'))
