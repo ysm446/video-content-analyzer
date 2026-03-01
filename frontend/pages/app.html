@@ -313,6 +313,13 @@
               <input type="radio" name="analysisMode" value="quality" style="accent-color:var(--accent)"> quality
             </label>
           </div>
+          <div class="frame-setting" style="margin-top:8px">
+            <label>出力言語：</label>
+            <select id="outputLang" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+              <option value="ja" selected>日本語</option>
+              <option value="en">英語</option>
+            </select>
+          </div>
           <div class="frame-hint" id="frameHint"></div>
         </div>
       </main>
@@ -955,8 +962,10 @@
     })
 
     const slider=document.getElementById('maxFrames')
+    const outputLangSel=document.getElementById('outputLang')
     function getFrameMode(){ return document.querySelector('input[name="frameMode"]:checked').value }
     function getAnalysisMode(){ return document.querySelector('input[name="analysisMode"]:checked').value }
+    function getOutputLang(){ return outputLangSel.value==='en'?'en':'ja' }
     function updateFrameHint(){
       document.getElementById('maxFramesValue').textContent=slider.value+' 枚'
       const frameHint=getFrameMode()==='scene'
@@ -975,6 +984,7 @@
     document.querySelectorAll('input[name="analysisMode"]').forEach(r=>r.addEventListener('change',()=>{
       updateFrameHint(); saveUiSettings({analysis_mode:getAnalysisMode()})
     }))
+    outputLangSel.addEventListener('change',()=>saveUiSettings({output_lang:getOutputLang()}))
 
 
     async function saveUiSettings(data){
@@ -1001,6 +1011,7 @@
           speedSelect.value=String(r)
           video.playbackRate=r
         }
+        outputLangSel.value=(s.output_lang==='en')?'en':'ja'
         updateFrameHint()
       }catch{}
     }
@@ -1095,7 +1106,7 @@
       resetSection('analyze')
       startAnalyzeTimer()
       try{
-        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode()})})
+        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang()})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('analyze',15,'モデルをロード中...')
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')

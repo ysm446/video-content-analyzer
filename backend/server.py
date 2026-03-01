@@ -156,6 +156,12 @@ def _validate_analysis_mode(mode: str) -> str:
     return mode
 
 
+def _validate_output_lang(lang: str) -> str:
+    if lang not in {"ja", "en"}:
+        raise HTTPException(400, f"無効な output_lang: {lang}")
+    return lang
+
+
 def _analysis_plan(mode: str, max_frames: int) -> dict:
     if mode == "speed":
         return {
@@ -203,7 +209,16 @@ def _transcript_lines_only(transcript_chunk: str) -> list[str]:
     return lines
 
 
-def _ground_entries_with_transcript(entries: list[dict], transcript: str, duration: float) -> list[dict]:
+def _has_japanese(text: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]", text or ""))
+
+
+def _ground_entries_with_transcript(
+    entries: list[dict],
+    transcript: str,
+    duration: float,
+    output_lang: str = "ja",
+) -> list[dict]:
     """
     各チャプターの [start, next_start) 区間で実際に発話された字幕を使い、
     summary を区間内事実に寄せる。
@@ -223,6 +238,9 @@ def _ground_entries_with_transcript(entries: list[dict], transcript: str, durati
         snippet = " / ".join(texts[:2])
         if len(snippet) > 220:
             snippet = snippet[:220].rstrip() + "…"
+        # 出力言語が日本語の時は、英語字幕で日本語要約を上書きしない。
+        if output_lang == "ja" and not _has_japanese(snippet):
+            continue
         e["summary"] = snippet
     return rows
 
@@ -316,6 +334,7 @@ class ReviewRequest(BaseModel):
     transcript:   str   = ""        # SRT由来のトランスクリプト（フロントから送信）
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
     analysis_mode: str  = "speed"    # "speed" | "balanced" | "quality"
+    output_lang: str = "ja"          # "ja" | "en"
 
 
 class QARequest(BaseModel):
@@ -337,6 +356,7 @@ class UISettingsRequest(BaseModel):
     analysis_mode: Optional[str] = None  # "speed" | "balanced" | "quality"
     volume: Optional[float] = None
     playback_rate: Optional[float] = None
+    output_lang: Optional[str] = None  # "ja" | "en"
 
 
 class TOCBuildRequest(BaseModel):
@@ -346,6 +366,7 @@ class TOCBuildRequest(BaseModel):
     transcript: str = ""
     frame_mode: str = "scene"  # "uniform" | "scene"
     analysis_mode: str = "speed"  # "speed" | "balanced" | "quality"
+    output_lang: str = "ja"  # "ja" | "en"
 
 
 class TOCLoadRequest(BaseModel):
@@ -398,6 +419,7 @@ def get_ui_settings():
         "analysis_mode": s.get("analysis_mode", "speed"),
         "volume": s.get("volume", 1.0),
         "playback_rate": s.get("playback_rate", 1.0),
+        "output_lang": s.get("output_lang", "ja"),
     }
 
 
@@ -412,6 +434,8 @@ def post_ui_settings(req: UISettingsRequest):
         allowed = {0.5, 0.75, 1.0, 1.25, 1.5}
         val = float(req.playback_rate)
         to_save["playback_rate"] = val if val in allowed else 1.0
+    if req.output_lang is not None:
+        to_save["output_lang"] = req.output_lang if req.output_lang in {"ja", "en"} else "ja"
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -648,6 +672,7 @@ async def review_analyze(req: ReviewRequest):
     if req.frame_mode not in {"uniform", "scene"}:
         raise HTTPException(400, f"無効な frame_mode: {req.frame_mode}")
     _validate_analysis_mode(req.analysis_mode)
+    _validate_output_lang(req.output_lang)
 
     async def stream():
         loop = asyncio.get_event_loop()
@@ -685,7 +710,7 @@ async def review_analyze(req: ReviewRequest):
             })
             try:
                 coarse_result = await loop.run_in_executor(
-                    None, video_reviewer.analyze_frames, frames, transcript, meta.get("timestamps", [])
+                    None, video_reviewer.analyze_frames, frames, transcript, meta.get("timestamps", []), req.output_lang
                 )
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
@@ -724,7 +749,7 @@ async def review_analyze(req: ReviewRequest):
                         )
                         r_transcript = _slice_transcript(transcript, start, end)
                         r_result = await loop.run_in_executor(
-                            None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", [])
+                            None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang
                         )
                         rel_entries = _entries_from_refine_result(
                             r_result, start, end, duration
@@ -734,7 +759,7 @@ async def review_analyze(req: ReviewRequest):
                         yield sse({"status": "error", "message": f"refine失敗: {e}"})
                         return
                 entries = _merge_toc_entries(entries + refined_entries, duration)
-            entries = _ground_entries_with_transcript(entries, transcript, duration)
+            entries = _ground_entries_with_transcript(entries, transcript, duration, req.output_lang)
 
             result = {
                 "summary": coarse_result.get("summary", ""),
@@ -863,6 +888,7 @@ async def review_build_toc(req: TOCBuildRequest):
     if req.frame_mode not in {"uniform", "scene"}:
         raise HTTPException(400, f"無効な frame_mode: {req.frame_mode}")
     _validate_analysis_mode(req.analysis_mode)
+    _validate_output_lang(req.output_lang)
 
     async def stream():
         loop = asyncio.get_event_loop()
@@ -907,7 +933,7 @@ async def review_build_toc(req: TOCBuildRequest):
             try:
                 coarse_analysis = await loop.run_in_executor(
                     None, video_reviewer.analyze_frames,
-                    frames, req.transcript, meta.get("timestamps", [])
+                    frames, req.transcript, meta.get("timestamps", []), req.output_lang
                 )
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
@@ -946,7 +972,7 @@ async def review_build_toc(req: TOCBuildRequest):
                         r_transcript = _slice_transcript(req.transcript, start, end)
                         r_result = await loop.run_in_executor(
                             None, video_reviewer.analyze_frames,
-                            r_frames, r_transcript, r_meta.get("timestamps", [])
+                            r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang
                         )
                         rel_entries = _entries_from_refine_result(
                             r_result, start, end, duration
@@ -956,7 +982,7 @@ async def review_build_toc(req: TOCBuildRequest):
                         yield sse({"status": "error", "message": f"refine失敗: {e}"})
                         return
                 entries = _merge_toc_entries(entries + refined_entries, duration)
-            entries = _ground_entries_with_transcript(entries, req.transcript, duration)
+            entries = _ground_entries_with_transcript(entries, req.transcript, duration, req.output_lang)
             toc_doc = {
                 "version": 1,
                 "video_path": str(video_path),
@@ -971,6 +997,7 @@ async def review_build_toc(req: TOCBuildRequest):
                     "tags": coarse_analysis.get("tags", []),
                     "frame_mode": req.frame_mode,
                     "analysis_mode": req.analysis_mode,
+                    "output_lang": req.output_lang,
                     "max_frames": req.max_frames,
                     "min_interval": req.min_interval,
                     "duration_sec": duration,

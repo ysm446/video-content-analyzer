@@ -516,15 +516,26 @@ class VideoReviewer:
         )
 
     @staticmethod
-    def _build_analyze_prompt(transcript: str, timestamps: list[float] = []) -> str:
+    def _build_analyze_prompt(
+        transcript: str,
+        timestamps: list[float] = [],
+        output_lang: str = "ja",
+    ) -> str:
+        lang_instr = (
+            "summary / scenes[].label / scenes[].description / tags / genre は日本語で記述してください。"
+            if output_lang == "ja"
+            else "summary / scenes[].label / scenes[].description / tags / genre は英語で記述してください。"
+        )
         ts_hint = VideoReviewer._ts_hint(timestamps)
         if not transcript:
-            return _ANALYZE_INSTR_VISUAL + ts_hint + "\n\n" + _ANALYZE_JSON_FORMAT
+            return _ANALYZE_INSTR_VISUAL + ts_hint + "\n" + lang_instr + "\n\n" + _ANALYZE_JSON_FORMAT
         truncated = VideoReviewer._truncate_transcript(transcript)
         return (
             f"[音声書き起こし]\n{truncated}\n\n"
             + _ANALYZE_INSTR_AUDIO
             + ts_hint
+            + "\n"
+            + lang_instr
             + "\n\n"
             + _ANALYZE_JSON_FORMAT
         )
@@ -547,10 +558,11 @@ class VideoReviewer:
         frames: list[Image.Image],
         transcript: str = "",
         timestamps: list[float] = [],
+        output_lang: str = "ja",
     ) -> dict:
         """フレームリストから動画を分析してサマリー・シーン・タグを返す"""
         self._ensure_loaded()
-        prompt = self._build_analyze_prompt(transcript, timestamps)
+        prompt = self._build_analyze_prompt(transcript, timestamps, output_lang)
         raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=2048,
                           timestamps=timestamps or None)
 
