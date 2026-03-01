@@ -59,7 +59,7 @@
     .ctrl-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
     .action-box{flex:1;border-top:1px solid var(--border);padding:10px 12px;background:var(--bg);overflow:auto}
-    .action-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+    .action-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
     .action-row .btn{justify-content:center}
     .mini{font-size:11px;color:var(--text-dim);margin-top:8px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
     .result-row{display:flex;gap:8px;margin-top:6px;font-size:12px;color:var(--text-dim)}
@@ -159,6 +159,14 @@
               <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ">→</button>
               <span class="time-label" id="timeLabel">0:00 / 0:00</span>
               <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
+              <label class="time-label" for="speedSelect">⏩</label>
+              <select id="speedSelect" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="1" selected>1x</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+              </select>
               <span class="time-label">🔊</span>
               <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1" style="width:100px">
             </div>
@@ -170,7 +178,6 @@
               <button class="btn btn-primary" id="transcribeBtn" disabled>🎙️ 文字起こし</button>
               <button class="btn btn-primary" id="translateBtn" disabled>🇯🇵 字幕生成</button>
               <button class="btn btn-success" id="analyzeBtn" disabled>🔍 動画分析</button>
-              <button class="btn btn-ghost" id="tocBtn" disabled>📑 目次生成/保存</button>
             </div>
 
             <div class="mini">文字起こし</div>
@@ -185,10 +192,6 @@
             <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel">準備中...</div><div class="elapsed-time" id="analyzeElapsed"></div></div>
             <div class="result-row" id="analyzeResult"></div>
 
-            <div class="mini">目次（JSON）</div>
-            <div class="progress-wrap" id="tocProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="tocFill"></div></div><div class="progress-label" id="tocLabel">準備中...</div></div>
-            <div class="result-row" id="tocResult"></div>
-
           </div>
         </div>
 
@@ -196,10 +199,10 @@
         <aside class="analysis-column">
           <section class="analysis-pane">
             <div class="analysis-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-              <span>分析/目次</span>
+              <span>分析/編集</span>
               <div style="display:flex;gap:6px">
                 <button class="btn btn-ghost" id="analysisTabBtn" style="font-size:11px;padding:3px 10px">分析</button>
-                <button class="btn btn-ghost" id="tocTabBtn" style="font-size:11px;padding:3px 10px">目次</button>
+                <button class="btn btn-ghost" id="tocTabBtn" style="font-size:11px;padding:3px 10px">編集</button>
               </div>
             </div>
             <div class="analysis-scroll">
@@ -222,6 +225,7 @@
                     <button class="btn btn-ghost" id="tocAddBtn" style="padding:4px 10px;font-size:12px">＋ チャプター追加</button>
                     <button class="btn btn-primary" id="tocSaveBtn" style="margin-left:auto;padding:4px 12px;font-size:12px">保存</button>
                   </div>
+                  <div class="result-row" id="tocResult" style="margin-top:8px"></div>
                   <div class="mini">チャプター</div>
                   <div id="tocEditList" class="scenes-list"></div>
                   <div id="tocEmpty" class="qa-placeholder" style="padding:16px;display:none">目次データがありません</div>
@@ -237,7 +241,7 @@
               <button class="btn btn-ghost" id="clearHistoryBtn" style="font-size:11px;padding:3px 10px">履歴をクリア</button>
             </div>
             <div class="qa-history" id="qaHistory">
-              <div class="qa-placeholder" id="qaPlaceholder">分析完了後に質問できます</div>
+              <div class="qa-placeholder" id="qaPlaceholder">動画を読み込むと質問できます</div>
             </div>
             <div class="qa-input-row">
               <input type="text" class="qa-input" id="qaInput" disabled placeholder="例：この動画の要点は？">
@@ -334,7 +338,6 @@
       document.getElementById('settingsVideoPath').textContent = path || '動画未選択（プレイヤータブで読み込み）'
       document.getElementById('transcribeBtn').disabled = !path
       document.getElementById('analyzeBtn').disabled = !path
-      document.getElementById('tocBtn').disabled = !path
       if(path){
         state.origSrtPath = null
         state.jpSrtPath = null
@@ -343,11 +346,11 @@
         state.tocData = null
         resetSection('transcribe')
         resetSection('translate')
-        resetSection('toc')
         document.getElementById('translateBtn').disabled = true
         clearAnalysisDetail()
         renderTocEditor()
       }
+      setQAEnabled(!!path)
     }
 
     function resetSection(kind){
@@ -475,6 +478,54 @@
       renderTocEditor()
     }
 
+    function analysisFromTocData(data){
+      const meta=data?.meta||{}
+      const toc=Array.isArray(data?.toc)?data.toc:[]
+      return {
+        genre: meta.genre || '目次',
+        summary: meta.summary || `目次 ${toc.length} 件`,
+        tags: Array.isArray(meta.tags)?meta.tags:[],
+        scenes: toc.map(ch=>({
+          timestamp: ch.timestamp || fmtTs(ch.start_sec||0),
+          label: ch.title || '',
+          description: ch.summary || '',
+          start_sec: ch.start_sec,
+        })),
+      }
+    }
+
+    function buildTocFromAnalysis(result){
+      const scenes=Array.isArray(result?.scenes)?result.scenes:[]
+      const toc=scenes.map((s,idx)=>{
+        const start=Number.isFinite(s.start_sec)?Number(s.start_sec):(parseTsToSec(s.timestamp)||0)
+        return {
+          id:`ch${String(idx+1).padStart(3,'0')}`,
+          start_sec:Math.max(0,start),
+          end_sec:Math.max(0,start+1),
+          timestamp:s.timestamp || fmtTs(start),
+          title:(s.label||`チャプター${idx+1}`).trim(),
+          summary:(s.description||'').trim(),
+          confidence:0.8,
+        }
+      }).sort((a,b)=>a.start_sec-b.start_sec)
+      for(let i=0;i<toc.length;i++){
+        toc[i].end_sec=i+1<toc.length?toc[i+1].start_sec:(toc[i].start_sec+1)
+      }
+      return {
+        version:1,
+        video_path:state.videoPath||'',
+        created_at:new Date().toISOString(),
+        model:{source:'analysis'},
+        meta:{
+          genre:result?.genre||'不明',
+          summary:result?.summary||'',
+          tags:Array.isArray(result?.tags)?result.tags:[],
+        },
+        toc,
+        bookmarks:Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[],
+      }
+    }
+
     function normalizeTocData(){
       if(!state.tocData || typeof state.tocData!=='object'){
         state.tocData={version:1,video_path:state.videoPath||'',meta:{},toc:[],bookmarks:[]}
@@ -548,6 +599,7 @@
     const playBtn=document.getElementById('playBtn')
     const prevSubBtn=document.getElementById('prevSubBtn')
     const nextSubBtn=document.getElementById('nextSubBtn')
+    const speedSelect=document.getElementById('speedSelect')
     const volumeBar=document.getElementById('volumeBar')
     const clearOrigBtn=document.getElementById('clearOrigBtn')
     const clearJpBtn=document.getElementById('clearJpBtn')
@@ -741,6 +793,7 @@
         const body=await res.json()
         state.tocPath=body.toc_path
         renderTocDetail(body.data)
+        renderAnalysisDetail(analysisFromTocData(body.data))
         setResult('toc',true,state.tocPath)
       }catch{}
     }
@@ -785,6 +838,7 @@
     document.getElementById('tocSaveBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('toc',false,'先に動画を読み込んでください'); return }
       const data=collectTocFromEditor()
+      renderTocEditor()
       try{
         const res=await fetch(`${API}/review/toc/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data})})
         if(!res.ok){
@@ -794,6 +848,7 @@
         }
         const body=await res.json()
         state.tocPath=body.toc_path
+        renderAnalysisDetail(analysisFromTocData(data))
         setResult('toc',true,state.tocPath)
       }catch(e){
         setResult('toc',false,`接続エラー: ${e.message}`)
@@ -880,6 +935,12 @@
     })
     seekBar.addEventListener('input',()=>{ if(!isNaN(video.duration)) video.currentTime=(seekBar.value/100)*video.duration })
     volumeBar.addEventListener('input',()=>{ video.volume=volumeBar.value })
+    volumeBar.addEventListener('change',()=>saveUiSettings({volume:parseFloat(volumeBar.value)}))
+    speedSelect.addEventListener('change',()=>{
+      const v=parseFloat(speedSelect.value)
+      video.playbackRate=v
+      saveUiSettings({playback_rate:v})
+    })
 
     const videoWrap=document.getElementById('videoWrap')
     window.addEventListener('dragover',e=>e.preventDefault())
@@ -929,6 +990,17 @@
         const amRadio=document.querySelector(`input[name="analysisMode"][value="${s.analysis_mode||'speed'}"]`)
         if(amRadio) amRadio.checked=true
         slider.value=s.max_frames
+        if(typeof s.volume==='number'){
+          const v=Math.max(0,Math.min(1,Number(s.volume)))
+          volumeBar.value=String(v)
+          video.volume=v
+        }
+        if(typeof s.playback_rate==='number'){
+          const allowed=[0.5,0.75,1,1.25,1.5]
+          const r=allowed.includes(Number(s.playback_rate))?Number(s.playback_rate):1
+          speedSelect.value=String(r)
+          video.playbackRate=r
+        }
         updateFrameHint()
       }catch{}
     }
@@ -1020,7 +1092,7 @@
     document.getElementById('analyzeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
-      resetSection('analyze'); setQAEnabled(false)
+      resetSection('analyze')
       startAnalyzeTimer()
       try{
         const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode()})})
@@ -1028,42 +1100,19 @@
           if(event.status==='loading_model') setProgress('analyze',15,'モデルをロード中...')
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
           else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
-          else if(event.status==='done'){ stopAnalyzeTimer(); setProgress('analyze',100,'完了'); setResult('analyze',true,'分析完了'); renderAnalysisDetail(event.result); setQAEnabled(true); switchAnalysisPane('analysis') }
+          else if(event.status==='done'){
+            stopAnalyzeTimer()
+            setProgress('analyze',100,'完了')
+            setResult('analyze',true,'分析完了（編集タブに目次下書きを作成）')
+            renderAnalysisDetail(event.result)
+            state.tocPath=null
+            renderTocDetail(buildTocFromAnalysis(event.result))
+            setResult('toc',true,'未保存（保存ボタンでJSON保存）')
+            switchAnalysisPane('analysis')
+          }
           else if(event.status==='error'){ stopAnalyzeTimer(); setResult('analyze',false,event.message) }
         })
       }catch(e){ stopAnalyzeTimer(); setResult('analyze',false,`接続エラー: ${e.message}`) }
-      btn.disabled=!state.videoPath
-    })
-
-    document.getElementById('tocBtn').addEventListener('click',async()=>{
-      if(!state.videoPath){ setResult('toc',false,'先に動画を読み込んでください'); return }
-      const btn=document.getElementById('tocBtn'); btn.disabled=true
-      resetSection('toc'); setProgress('toc',5,'準備中...')
-      try{
-        const payload={
-          video_path:state.videoPath,
-          max_frames:parseInt(document.getElementById('maxFrames').value),
-          min_interval:MIN_INTERVAL,
-          transcript:state.origTranscript,
-          frame_mode:getFrameMode(),
-          analysis_mode:getAnalysisMode(),
-        }
-        const res=await fetch(`${API}/review/toc/build`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-        await readSSE(res,event=>{
-          if(event.status==='loading_model') setProgress('toc',15,'モデルをロード中...')
-          else if(event.status==='extracting_frames') setProgress('toc',35,'フレーム抽出中...')
-          else if(event.status==='analyzing') setProgress('toc',70,`${event.count||0} 枚を解析中...`)
-          else if(event.status==='saving') setProgress('toc',90,'JSONを保存中...')
-          else if(event.status==='done'){
-            setProgress('toc',100,'完了')
-            state.tocPath=event.toc_path
-            setResult('toc',true,state.tocPath)
-            renderTocDetail(event.data)
-            switchAnalysisPane('toc')
-          }
-          else if(event.status==='error') setResult('toc',false,event.message)
-        })
-      }catch(e){ setResult('toc',false,`接続エラー: ${e.message}`) }
       btn.disabled=!state.videoPath
     })
 
@@ -1073,7 +1122,7 @@
 
     async function submitQuestion(){
       const q=qaInput.value.trim()
-      if(!q || !state.videoPath || !state.analysisReady) return
+      if(!q || !state.videoPath) return
       qaInput.value=''; qaBtn.disabled=true
 
       const pair=document.createElement('div')

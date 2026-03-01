@@ -335,6 +335,8 @@ class UISettingsRequest(BaseModel):
     frame_mode: Optional[str] = None  # "uniform" | "scene"
     max_frames: Optional[int] = None
     analysis_mode: Optional[str] = None  # "speed" | "balanced" | "quality"
+    volume: Optional[float] = None
+    playback_rate: Optional[float] = None
 
 
 class TOCBuildRequest(BaseModel):
@@ -394,6 +396,8 @@ def get_ui_settings():
         "frame_mode": s.get("frame_mode", "uniform"),
         "max_frames": s.get("max_frames", 30),
         "analysis_mode": s.get("analysis_mode", "speed"),
+        "volume": s.get("volume", 1.0),
+        "playback_rate": s.get("playback_rate", 1.0),
     }
 
 
@@ -403,6 +407,11 @@ def post_ui_settings(req: UISettingsRequest):
     if req.frame_mode is not None: to_save["frame_mode"] = req.frame_mode
     if req.max_frames is not None: to_save["max_frames"] = req.max_frames
     if req.analysis_mode is not None: to_save["analysis_mode"] = req.analysis_mode
+    if req.volume is not None: to_save["volume"] = max(0.0, min(1.0, float(req.volume)))
+    if req.playback_rate is not None:
+        allowed = {0.5, 0.75, 1.0, 1.25, 1.5}
+        val = float(req.playback_rate)
+        to_save["playback_rate"] = val if val in allowed else 1.0
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
