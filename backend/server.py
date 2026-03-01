@@ -193,11 +193,46 @@ def _slice_transcript(transcript: str, start_sec: float, end_sec: float) -> str:
     return "\n".join(rows)
 
 
+def _transcript_lines_only(transcript_chunk: str) -> list[str]:
+    lines: list[str] = []
+    for line in transcript_chunk.splitlines():
+        m = re.match(r"^\[\d+:\d{2}\]\s*(.*)$", line.strip())
+        text = (m.group(1) if m else line).strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
+def _ground_entries_with_transcript(entries: list[dict], transcript: str, duration: float) -> list[dict]:
+    """
+    各チャプターの [start, next_start) 区間で実際に発話された字幕を使い、
+    summary を区間内事実に寄せる。
+    """
+    if not transcript or not entries:
+        return entries
+    rows = sorted(entries, key=lambda x: float(x.get("start_sec", 0.0)))
+    for i, e in enumerate(rows):
+        start = float(e.get("start_sec", 0.0))
+        end = float(rows[i + 1].get("start_sec", duration)) if i + 1 < len(rows) else float(duration)
+        if end <= start:
+            continue
+        chunk = _slice_transcript(transcript, start, end)
+        texts = _transcript_lines_only(chunk)
+        if not texts:
+            continue
+        snippet = " / ".join(texts[:2])
+        if len(snippet) > 220:
+            snippet = snippet[:220].rstrip() + "…"
+        e["summary"] = snippet
+    return rows
+
+
 def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
     if not entries:
         return []
     rows = sorted(entries, key=lambda x: float(x.get("start_sec", 0.0)))
     merged: list[dict] = []
+    MERGE_GAP_SEC = 3.0
     for r in rows:
         if not merged:
             merged.append(r.copy())
@@ -205,9 +240,17 @@ def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
         prev = merged[-1]
         gap = float(r.get("start_sec", 0.0)) - float(prev.get("start_sec", 0.0))
         same_title = (r.get("title") or "").strip() == (prev.get("title") or "").strip()
-        if gap < 8.0 or same_title:
-            if len((r.get("summary") or "")) > len((prev.get("summary") or "")):
-                prev["summary"] = r.get("summary", prev.get("summary", ""))
+        prev_summary = (prev.get("summary") or "").strip()
+        curr_summary = (r.get("summary") or "").strip()
+        # 近接マージは厳しめに。タイトル一致時のみ積極的に統合する。
+        if same_title or (gap < MERGE_GAP_SEC and (not prev_summary or not curr_summary)):
+            # 後ろの説明を採用する場合は時刻も後ろに寄せて「早すぎる見出し」を防ぐ。
+            use_curr = len(curr_summary) > len(prev_summary)
+            if use_curr:
+                prev["start_sec"] = r.get("start_sec", prev.get("start_sec", 0.0))
+                prev["timestamp"] = r.get("timestamp", prev.get("timestamp", "0:00"))
+                prev["title"] = r.get("title", prev.get("title", ""))
+                prev["summary"] = curr_summary
             continue
         merged.append(r.copy())
     for i, r in enumerate(merged):
@@ -218,6 +261,32 @@ def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
             s = int(float(r["start_sec"]))
             r["timestamp"] = f"{s//60}:{s%60:02d}"
     return merged
+
+
+def _entries_from_refine_result(
+    result: dict,
+    start: float,
+    end: float,
+    total_duration: float,
+) -> list[dict]:
+    """
+    再解析区間の結果を絶対時刻に正規化する。
+    - モデルが絶対時刻を返す場合: そのまま区間内だけ採用
+    - モデルが相対時刻(0始まり)を返す場合: 区間開始時刻を加算
+    """
+    abs_entries = _build_toc_entries(result, total_duration)
+    in_range = [
+        e for e in abs_entries
+        if (start - 2.0) <= float(e.get("start_sec", 0.0)) <= (end + 2.0)
+    ]
+    if in_range:
+        return in_range
+
+    rel_entries = _build_toc_entries(result, end - start)
+    for e in rel_entries:
+        e["start_sec"] = round(start + float(e.get("start_sec", 0.0)), 3)
+        e["end_sec"] = round(start + float(e.get("end_sec", 0.0)), 3)
+    return rel_entries
 
 
 # ---------- リクエストモデル ----------
@@ -648,15 +717,15 @@ async def review_analyze(req: ReviewRequest):
                         r_result = await loop.run_in_executor(
                             None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", [])
                         )
-                        rel_entries = _build_toc_entries(r_result, end - start)
-                        for e in rel_entries:
-                            e["start_sec"] = round(start + float(e.get("start_sec", 0.0)), 3)
-                            e["end_sec"] = round(start + float(e.get("end_sec", 0.0)), 3)
+                        rel_entries = _entries_from_refine_result(
+                            r_result, start, end, duration
+                        )
                         refined_entries.extend(rel_entries)
                     except Exception as e:
                         yield sse({"status": "error", "message": f"refine失敗: {e}"})
                         return
                 entries = _merge_toc_entries(entries + refined_entries, duration)
+            entries = _ground_entries_with_transcript(entries, transcript, duration)
 
             result = {
                 "summary": coarse_result.get("summary", ""),
@@ -870,15 +939,15 @@ async def review_build_toc(req: TOCBuildRequest):
                             None, video_reviewer.analyze_frames,
                             r_frames, r_transcript, r_meta.get("timestamps", [])
                         )
-                        rel_entries = _build_toc_entries(r_result, end - start)
-                        for e in rel_entries:
-                            e["start_sec"] = round(start + float(e.get("start_sec", 0.0)), 3)
-                            e["end_sec"] = round(start + float(e.get("end_sec", 0.0)), 3)
+                        rel_entries = _entries_from_refine_result(
+                            r_result, start, end, duration
+                        )
                         refined_entries.extend(rel_entries)
                     except Exception as e:
                         yield sse({"status": "error", "message": f"refine失敗: {e}"})
                         return
                 entries = _merge_toc_entries(entries + refined_entries, duration)
+            entries = _ground_entries_with_transcript(entries, req.transcript, duration)
             toc_doc = {
                 "version": 1,
                 "video_path": str(video_path),
