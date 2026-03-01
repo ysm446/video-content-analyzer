@@ -3,9 +3,11 @@ import json
 import asyncio
 import queue
 import threading
+import re
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,6 +77,149 @@ def sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _parse_timestamp_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    m = re.match(r"^\s*(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d+))?\s*$", str(value))
+    if not m:
+        return None
+    h = int(m.group(1) or 0)
+    mm = int(m.group(2))
+    ss = int(m.group(3))
+    frac = float(f"0.{m.group(4)}") if m.group(4) else 0.0
+    return h * 3600 + mm * 60 + ss + frac
+
+
+def _build_toc_entries(result: dict, duration: float) -> list[dict]:
+    scenes = result.get("scenes") if isinstance(result, dict) else None
+    scenes = scenes if isinstance(scenes, list) else []
+
+    rows: list[dict] = []
+    for i, s in enumerate(scenes):
+        if not isinstance(s, dict):
+            continue
+        start = _parse_timestamp_seconds(s.get("timestamp"))
+        if start is None:
+            continue
+        start = max(0.0, min(float(duration), float(start)))
+        rows.append(
+            {
+                "start_sec": start,
+                "title": (s.get("label") or f"チャプター{i+1}").strip(),
+                "summary": (s.get("description") or "").strip(),
+                "timestamp": s.get("timestamp") or "",
+            }
+        )
+
+    if not rows:
+        summary = (result.get("summary") if isinstance(result, dict) else "") or "動画全体"
+        return [
+            {
+                "id": "ch001",
+                "start_sec": 0.0,
+                "end_sec": float(duration),
+                "title": "全体",
+                "summary": str(summary).strip(),
+                "timestamp": "0:00",
+                "confidence": 0.5,
+            }
+        ]
+
+    rows.sort(key=lambda x: x["start_sec"])
+    dedup: list[dict] = []
+    last_start: float | None = None
+    for r in rows:
+        if last_start is None or abs(r["start_sec"] - last_start) > 1e-3:
+            dedup.append(r)
+            last_start = r["start_sec"]
+
+    entries: list[dict] = []
+    for i, r in enumerate(dedup):
+        end_sec = dedup[i + 1]["start_sec"] if i + 1 < len(dedup) else float(duration)
+        entries.append(
+            {
+                "id": f"ch{i+1:03d}",
+                "start_sec": round(float(r["start_sec"]), 3),
+                "end_sec": round(max(float(r["start_sec"]), float(end_sec)), 3),
+                "title": r["title"] or f"チャプター{i+1}",
+                "summary": r["summary"],
+                "timestamp": r["timestamp"] or "0:00",
+                "confidence": 0.8,
+            }
+        )
+    return entries
+
+
+def _validate_analysis_mode(mode: str) -> str:
+    if mode not in {"speed", "balanced", "quality"}:
+        raise HTTPException(400, f"無効な analysis_mode: {mode}")
+    return mode
+
+
+def _analysis_plan(mode: str, max_frames: int) -> dict:
+    if mode == "speed":
+        return {
+            "coarse_frames": max_frames,
+            "refine_limit": 0,
+            "refine_min_span": 999999.0,
+            "refine_frames": 0,
+        }
+    if mode == "balanced":
+        return {
+            "coarse_frames": max(8, min(18, max_frames // 2 or 8)),
+            "refine_limit": 3,
+            "refine_min_span": 180.0,
+            "refine_frames": max(8, min(18, max_frames // 2 or 8)),
+        }
+    return {
+        "coarse_frames": max(10, min(22, max_frames // 2 or 10)),
+        "refine_limit": 6,
+        "refine_min_span": 120.0,
+        "refine_frames": max(10, min(24, (max_frames * 2) // 3 or 10)),
+    }
+
+
+def _slice_transcript(transcript: str, start_sec: float, end_sec: float) -> str:
+    if not transcript:
+        return ""
+    rows = []
+    for line in transcript.splitlines():
+        m = re.match(r"^\[(\d+):(\d{2})\]\s*(.*)$", line.strip())
+        if not m:
+            continue
+        sec = int(m.group(1)) * 60 + int(m.group(2))
+        if start_sec <= sec < end_sec:
+            rows.append(line)
+    return "\n".join(rows)
+
+
+def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
+    if not entries:
+        return []
+    rows = sorted(entries, key=lambda x: float(x.get("start_sec", 0.0)))
+    merged: list[dict] = []
+    for r in rows:
+        if not merged:
+            merged.append(r.copy())
+            continue
+        prev = merged[-1]
+        gap = float(r.get("start_sec", 0.0)) - float(prev.get("start_sec", 0.0))
+        same_title = (r.get("title") or "").strip() == (prev.get("title") or "").strip()
+        if gap < 8.0 or same_title:
+            if len((r.get("summary") or "")) > len((prev.get("summary") or "")):
+                prev["summary"] = r.get("summary", prev.get("summary", ""))
+            continue
+        merged.append(r.copy())
+    for i, r in enumerate(merged):
+        next_start = float(merged[i + 1]["start_sec"]) if i + 1 < len(merged) else float(duration)
+        r["id"] = f"ch{i+1:03d}"
+        r["end_sec"] = round(max(float(r["start_sec"]), next_start), 3)
+        if not r.get("timestamp"):
+            s = int(float(r["start_sec"]))
+            r["timestamp"] = f"{s//60}:{s%60:02d}"
+    return merged
+
+
 # ---------- リクエストモデル ----------
 
 class TranscribeRequest(BaseModel):
@@ -101,6 +246,7 @@ class ReviewRequest(BaseModel):
     min_interval: float = 5.0
     transcript:   str   = ""        # SRT由来のトランスクリプト（フロントから送信）
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
+    analysis_mode: str  = "speed"    # "speed" | "balanced" | "quality"
 
 
 class QARequest(BaseModel):
@@ -119,6 +265,25 @@ class SetVLModelRequest(BaseModel):
 class UISettingsRequest(BaseModel):
     frame_mode: Optional[str] = None  # "uniform" | "scene"
     max_frames: Optional[int] = None
+    analysis_mode: Optional[str] = None  # "speed" | "balanced" | "quality"
+
+
+class TOCBuildRequest(BaseModel):
+    video_path: str
+    max_frames: int = 30
+    min_interval: float = 5.0
+    transcript: str = ""
+    frame_mode: str = "scene"  # "uniform" | "scene"
+    analysis_mode: str = "speed"  # "speed" | "balanced" | "quality"
+
+
+class TOCLoadRequest(BaseModel):
+    video_path: str
+
+
+class TOCSaveRequest(BaseModel):
+    video_path: str
+    data: dict
 
 
 # ---------- 利用可能なモデル ----------
@@ -159,6 +324,7 @@ def get_ui_settings():
     return {
         "frame_mode": s.get("frame_mode", "uniform"),
         "max_frames": s.get("max_frames", 30),
+        "analysis_mode": s.get("analysis_mode", "speed"),
     }
 
 
@@ -167,6 +333,7 @@ def post_ui_settings(req: UISettingsRequest):
     to_save = {}
     if req.frame_mode is not None: to_save["frame_mode"] = req.frame_mode
     if req.max_frames is not None: to_save["max_frames"] = req.max_frames
+    if req.analysis_mode is not None: to_save["analysis_mode"] = req.analysis_mode
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -400,12 +567,15 @@ async def review_analyze(req: ReviewRequest):
     video_path = Path(req.video_path)
     if not video_path.exists():
         raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    if req.frame_mode not in {"uniform", "scene"}:
+        raise HTTPException(400, f"無効な frame_mode: {req.frame_mode}")
+    _validate_analysis_mode(req.analysis_mode)
 
     async def stream():
         loop = asyncio.get_event_loop()
-        transcript = req.transcript  # SRT由来のトランスクリプトをそのまま使用
+        transcript = req.transcript
+        plan = _analysis_plan(req.analysis_mode, req.max_frames)
 
-        # --- VL モデルロード & 分析（終了後は必ずアンロード）---
         try:
             if video_reviewer.model is None:
                 yield sse({"status": "loading_model"})
@@ -415,41 +585,95 @@ async def review_analyze(req: ReviewRequest):
                     yield sse({"status": "error", "message": str(e)})
                     return
 
-            yield sse({"status": "extracting_frames"})
+            yield sse({"status": "extracting_frames", "pass": "coarse"})
             try:
                 if req.frame_mode == "scene":
                     frames, meta = await loop.run_in_executor(
-                        None,
-                        video_reviewer.extract_frames_scene,
-                        str(video_path),
-                        req.max_frames,
+                        None, video_reviewer.extract_frames_scene, str(video_path), int(plan["coarse_frames"])
                     )
                 else:
                     frames, meta = await loop.run_in_executor(
-                        None,
-                        video_reviewer.extract_frames,
-                        str(video_path),
-                        req.max_frames,
-                        req.min_interval,
+                        None, video_reviewer.extract_frames, str(video_path), int(plan["coarse_frames"]), req.min_interval
                     )
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
 
-            # 分析後のフレームをキャッシュ（Q&A で再利用）
-            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, frames, meta)
-
-            yield sse({"status": "analyzing",
-                       **{k: v for k, v in meta.items() if k != "timestamps"}})
+            yield sse({
+                "status": "analyzing",
+                **{k: v for k, v in meta.items() if k != "timestamps"},
+                "pass": "coarse",
+                "analysis_mode": req.analysis_mode,
+            })
             try:
-                result = await loop.run_in_executor(
-                    None, video_reviewer.analyze_frames,
-                    frames, transcript, meta.get("timestamps", [])
+                coarse_result = await loop.run_in_executor(
+                    None, video_reviewer.analyze_frames, frames, transcript, meta.get("timestamps", [])
                 )
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
 
+            duration = float(meta.get("duration") or 0.0)
+            entries = _build_toc_entries(coarse_result, duration)
+
+            if int(plan["refine_limit"]) > 0 and entries:
+                targets = [
+                    e for e in entries
+                    if float(e.get("end_sec", 0.0)) - float(e.get("start_sec", 0.0)) >= float(plan["refine_min_span"])
+                ][: int(plan["refine_limit"])]
+                refined_entries: list[dict] = []
+                for idx, ch in enumerate(targets, start=1):
+                    start = float(ch.get("start_sec", 0.0))
+                    end = float(ch.get("end_sec", start))
+                    if end - start < 10.0:
+                        continue
+                    yield sse({
+                        "status": "extracting_frames",
+                        "pass": "refine",
+                        "current": idx,
+                        "total": len(targets),
+                        "range": {"start_sec": start, "end_sec": end},
+                    })
+                    try:
+                        r_frames, r_meta = await loop.run_in_executor(
+                            None,
+                            video_reviewer.extract_frames_between,
+                            str(video_path),
+                            start,
+                            end,
+                            int(plan["refine_frames"]),
+                            req.min_interval,
+                        )
+                        r_transcript = _slice_transcript(transcript, start, end)
+                        r_result = await loop.run_in_executor(
+                            None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", [])
+                        )
+                        rel_entries = _build_toc_entries(r_result, end - start)
+                        for e in rel_entries:
+                            e["start_sec"] = round(start + float(e.get("start_sec", 0.0)), 3)
+                            e["end_sec"] = round(start + float(e.get("end_sec", 0.0)), 3)
+                        refined_entries.extend(rel_entries)
+                    except Exception as e:
+                        yield sse({"status": "error", "message": f"refine失敗: {e}"})
+                        return
+                entries = _merge_toc_entries(entries + refined_entries, duration)
+
+            result = {
+                "summary": coarse_result.get("summary", ""),
+                "genre": coarse_result.get("genre", "不明"),
+                "tags": coarse_result.get("tags", []),
+                "scenes": [
+                    {
+                        "timestamp": e.get("timestamp", "0:00"),
+                        "label": e.get("title", ""),
+                        "description": e.get("summary", ""),
+                        "start_sec": e.get("start_sec", 0.0),
+                    }
+                    for e in entries
+                ],
+            }
+
+            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
         finally:
             await loop.run_in_executor(None, video_reviewer.unload)
@@ -547,3 +771,182 @@ async def review_qa(req: QARequest):
                 break
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/review/toc/build")
+async def review_build_toc(req: TOCBuildRequest):
+    """
+    視覚モデル＋字幕テキストから目次データを生成し、
+    動画と同じフォルダに .toc.json として保存する（SSE）。
+    """
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    if req.frame_mode not in {"uniform", "scene"}:
+        raise HTTPException(400, f"無効な frame_mode: {req.frame_mode}")
+    _validate_analysis_mode(req.analysis_mode)
+
+    async def stream():
+        loop = asyncio.get_event_loop()
+        plan = _analysis_plan(req.analysis_mode, req.max_frames)
+        try:
+            if video_reviewer.model is None:
+                yield sse({"status": "loading_model"})
+                try:
+                    await loop.run_in_executor(None, video_reviewer.load)
+                except Exception as e:
+                    yield sse({"status": "error", "message": str(e)})
+                    return
+
+            yield sse({"status": "extracting_frames", "pass": "coarse"})
+            try:
+                if req.frame_mode == "scene":
+                    frames, meta = await loop.run_in_executor(
+                        None,
+                        video_reviewer.extract_frames_scene,
+                        str(video_path),
+                        int(plan["coarse_frames"]),
+                    )
+                else:
+                    frames, meta = await loop.run_in_executor(
+                        None,
+                        video_reviewer.extract_frames,
+                        str(video_path),
+                        int(plan["coarse_frames"]),
+                        req.min_interval,
+                    )
+            except Exception as e:
+                yield sse({"status": "error", "message": str(e)})
+                return
+
+            yield sse({
+                "status": "analyzing",
+                "count": meta.get("count", 0),
+                "mode": meta.get("mode", req.frame_mode),
+                "pass": "coarse",
+                "analysis_mode": req.analysis_mode,
+            })
+            try:
+                coarse_analysis = await loop.run_in_executor(
+                    None, video_reviewer.analyze_frames,
+                    frames, req.transcript, meta.get("timestamps", [])
+                )
+            except Exception as e:
+                yield sse({"status": "error", "message": str(e)})
+                return
+
+            duration = float(meta.get("duration") or 0.0)
+            entries = _build_toc_entries(coarse_analysis, duration)
+            if int(plan["refine_limit"]) > 0 and entries:
+                targets = [
+                    e for e in entries
+                    if float(e.get("end_sec", 0.0)) - float(e.get("start_sec", 0.0)) >= float(plan["refine_min_span"])
+                ][: int(plan["refine_limit"])]
+                refined_entries: list[dict] = []
+                for idx, ch in enumerate(targets, start=1):
+                    start = float(ch.get("start_sec", 0.0))
+                    end = float(ch.get("end_sec", start))
+                    if end - start < 10.0:
+                        continue
+                    yield sse({
+                        "status": "extracting_frames",
+                        "pass": "refine",
+                        "current": idx,
+                        "total": len(targets),
+                        "range": {"start_sec": start, "end_sec": end},
+                    })
+                    try:
+                        r_frames, r_meta = await loop.run_in_executor(
+                            None,
+                            video_reviewer.extract_frames_between,
+                            str(video_path),
+                            start,
+                            end,
+                            int(plan["refine_frames"]),
+                            req.min_interval,
+                        )
+                        r_transcript = _slice_transcript(req.transcript, start, end)
+                        r_result = await loop.run_in_executor(
+                            None, video_reviewer.analyze_frames,
+                            r_frames, r_transcript, r_meta.get("timestamps", [])
+                        )
+                        rel_entries = _build_toc_entries(r_result, end - start)
+                        for e in rel_entries:
+                            e["start_sec"] = round(start + float(e.get("start_sec", 0.0)), 3)
+                            e["end_sec"] = round(start + float(e.get("end_sec", 0.0)), 3)
+                        refined_entries.extend(rel_entries)
+                    except Exception as e:
+                        yield sse({"status": "error", "message": f"refine失敗: {e}"})
+                        return
+                entries = _merge_toc_entries(entries + refined_entries, duration)
+            toc_doc = {
+                "version": 1,
+                "video_path": str(video_path),
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "model": {
+                    "vl_model": video_reviewer.model_id,
+                    "source": "vision+subtitle",
+                },
+                "meta": {
+                    "genre": coarse_analysis.get("genre", "不明"),
+                    "summary": coarse_analysis.get("summary", ""),
+                    "tags": coarse_analysis.get("tags", []),
+                    "frame_mode": req.frame_mode,
+                    "analysis_mode": req.analysis_mode,
+                    "max_frames": req.max_frames,
+                    "min_interval": req.min_interval,
+                    "duration_sec": duration,
+                },
+                "toc": entries,
+                "bookmarks": [],
+            }
+
+            yield sse({"status": "saving"})
+            toc_path = video_path.with_suffix(".toc.json")
+            toc_path.write_text(json.dumps(toc_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+            yield sse({"status": "done", "toc_path": str(toc_path), "data": toc_doc})
+        finally:
+            await loop.run_in_executor(None, video_reviewer.unload)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/review/toc/load")
+def review_load_toc(req: TOCLoadRequest):
+    """動画と同じフォルダの .toc.json を読み込む。"""
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    toc_path = video_path.with_suffix(".toc.json")
+    if not toc_path.exists():
+        raise HTTPException(404, f"目次ファイルが見つかりません: {toc_path}")
+    try:
+        data = json.loads(toc_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"目次ファイルの読み込みに失敗: {e}")
+    return {"status": "ok", "toc_path": str(toc_path), "data": data}
+
+
+@app.post("/review/toc/save")
+def review_save_toc(req: TOCSaveRequest):
+    """目次データを動画と同じフォルダの .toc.json に保存する。"""
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+
+    toc_path = video_path.with_suffix(".toc.json")
+    data = req.data if isinstance(req.data, dict) else {}
+    data["video_path"] = str(video_path)
+    data["created_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    if "version" not in data:
+        data["version"] = 1
+    if "toc" not in data or not isinstance(data["toc"], list):
+        data["toc"] = []
+    if "bookmarks" not in data or not isinstance(data["bookmarks"], list):
+        data["bookmarks"] = []
+
+    try:
+        toc_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"目次ファイルの保存に失敗: {e}")
+    return {"status": "ok", "toc_path": str(toc_path)}

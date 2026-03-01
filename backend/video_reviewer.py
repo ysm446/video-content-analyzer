@@ -280,6 +280,54 @@ class VideoReviewer:
         )
         return frames, meta
 
+    def extract_frames_between(
+        self,
+        video_path: str,
+        start_sec: float,
+        end_sec: float,
+        max_frames: int,
+        min_interval: float,
+    ) -> tuple[list[Image.Image], dict]:
+        """
+        動画の一部分 [start_sec, end_sec] だけを均等サンプリングして返す。
+        タイムスタンプは元動画の絶対時刻（秒）で返す。
+        """
+        start = max(0.0, float(start_sec))
+        end = max(start + 0.1, float(end_sec))
+        duration = end - start
+        interval = max(duration / max(max_frames, 1), min_interval)
+
+        frames: list[Image.Image] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
+            (
+                ffmpeg.input(video_path, ss=start, to=end)
+                .filter("fps", fps=f"1/{interval:.4f}")
+                .output(outpattern, format="image2", vcodec="mjpeg", q=2)
+                .overwrite_output()
+                .run(quiet=True)
+            )
+            for fname in sorted(os.listdir(tmpdir)):
+                if fname.startswith("frame_") and fname.endswith(".jpg"):
+                    img = Image.open(str(Path(tmpdir) / fname)).copy()
+                    frames.append(img)
+
+        timestamps = [round(start + i * interval, 1) for i in range(len(frames))]
+        meta = {
+            "count": len(frames),
+            "interval": interval,
+            "duration": duration,
+            "timestamps": timestamps,
+            "mode": "uniform-range",
+            "start_sec": start,
+            "end_sec": end,
+        }
+        print(
+            f"[VideoReviewer] 区間フレーム抽出: {len(frames)}枚 "
+            f"({self._fmt_ts(start)}-{self._fmt_ts(end)} / 間隔 {interval:.1f}秒)"
+        )
+        return frames, meta
+
     # ---------- 推論 ----------
 
     def _infer(self, frames: list[Image.Image], system: str, prompt: str,

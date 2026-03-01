@@ -2,5 +2,6 @@
   "translator_model": "huihui-ai/Huihui-Qwen3-14B-abliterated-v2",
   "lookup_model": "Qwen/Qwen3-1.7B",
   "vl_model": "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
-  "frame_mode": "uniform"
+  "frame_mode": "uniform",
+  "analysis_mode": "balanced"
 }
