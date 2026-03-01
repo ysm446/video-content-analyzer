@@ -273,14 +273,20 @@ class VideoReviewer:
 
     # ---------- 推論 ----------
 
-    def _infer(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int) -> str:
+    def _infer(self, frames: list[Image.Image], system: str, prompt: str,
+               max_new_tokens: int, timestamps: list[float] | None = None) -> str:
+        # タイムスタンプがある場合は各画像の直後にラベルを挿入して対応付けを明確にする
+        if timestamps and len(timestamps) == len(frames):
+            content: list[dict] = []
+            for frame, ts in zip(frames, timestamps):
+                content.append({"type": "image", "image": frame})
+                content.append({"type": "text", "text": f"[{self._fmt_ts(ts)}]"})
+            content.append({"type": "text", "text": prompt})
+        else:
+            content = [{"type": "image", "image": f} for f in frames] + [{"type": "text", "text": prompt}]
         messages = [
             {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": [{"type": "image", "image": f} for f in frames]
-                + [{"type": "text", "text": prompt}],
-            },
+            {"role": "user", "content": content},
         ]
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
@@ -305,6 +311,8 @@ class VideoReviewer:
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
+                repetition_penalty=1.15,
+                no_repeat_ngram_size=20,
             )
 
         elapsed = time.time() - t0
@@ -339,19 +347,13 @@ class VideoReviewer:
 
     @staticmethod
     def _ts_hint(timestamps: list[float]) -> str:
-        """フレームタイムスタンプをプロンプトに挿入するヒント文を生成"""
+        """タイムスタンプ付き推論用のプロンプト補足を生成（各画像直後にラベルが付くため一覧は不要）"""
         if not timestamps:
             return ""
-        parts = [
-            f"フレーム{i + 1}={VideoReviewer._fmt_ts(t)}"
-            for i, t in enumerate(timestamps)
-        ]
         return (
-            f"\n\n{len(parts)} 枚のフレームが提供されています。"
-            "フレームのタイムスタンプ（フレーム番号=動画内の時刻）: "
-            + ", ".join(parts)
-            + "\nscenes の timestamp にはその場面が始まる最も近いフレームの時刻（m:ss 形式）を記入してください。"
-            f"\n場面数は {max(len(parts) // 2, 5)} 以上を目安に、変化を見逃さず細かく記録してください。"
+            f"\n\n各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。"
+            "scenes の timestamp にはその場面が始まるフレームのタイムスタンプを使用してください。"
+            "\n実際に映像が変化した場面のみを記録してください。内容が変わらない場合は場面を増やさないでください。"
         )
 
     @staticmethod
@@ -369,15 +371,15 @@ class VideoReviewer:
         )
 
     @staticmethod
-    def _build_qa_prompt(question: str, transcript: str) -> str:
-        if not transcript:
-            return f"質問: {question}\n\nフレームに基づいて日本語で具体的に回答してください。"
-        truncated = VideoReviewer._truncate_transcript(transcript)
-        return (
-            f"[音声書き起こし]\n{truncated}\n\n"
-            f"質問: {question}\n\n"
-            "映像フレームと音声書き起こしを総合して、日本語で具体的に回答してください。"
-        )
+    def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = []) -> str:
+        parts = []
+        if timestamps:
+            parts.append("各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。時刻を参考にしてください。")
+        if transcript:
+            parts.append(f"[字幕テキスト]\n{VideoReviewer._truncate_transcript(transcript)}")
+        parts.append(f"質問: {question}")
+        parts.append("映像フレームと字幕テキストを参照して、日本語で具体的に回答してください。")
+        return "\n\n".join(parts)
 
     # ---------- 公開 API ----------
 
@@ -390,7 +392,8 @@ class VideoReviewer:
         """フレームリストから動画を分析してサマリー・シーン・タグを返す"""
         self._ensure_loaded()
         prompt = self._build_analyze_prompt(transcript, timestamps)
-        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=3000)
+        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=2048,
+                          timestamps=timestamps or None)
 
         # JSON パース（コードブロック除去 → パース → 失敗時はフォールバック）
         try:
@@ -400,8 +403,10 @@ class VideoReviewer:
         except Exception:
             return {"summary": raw, "scenes": [], "tags": [], "genre": "不明"}
 
-    def qa_frames(self, frames: list[Image.Image], question: str, transcript: str = "") -> str:
+    def qa_frames(self, frames: list[Image.Image], question: str,
+                  transcript: str = "", timestamps: list[float] = []) -> str:
         """フレームリストと質問から回答を生成する"""
         self._ensure_loaded()
-        prompt = self._build_qa_prompt(question, transcript)
-        return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=512)
+        prompt = self._build_qa_prompt(question, transcript, timestamps)
+        return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=1024,
+                           timestamps=timestamps or None)

@@ -513,7 +513,8 @@ async def review_qa(req: QARequest):
         yield sse({"status": "answering", "count": meta["count"]})
         try:
             answer = await loop.run_in_executor(
-                None, video_reviewer.qa_frames, frames, req.question, req.transcript
+                None, video_reviewer.qa_frames,
+                frames, req.question, req.transcript, meta.get("timestamps", [])
             )
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
