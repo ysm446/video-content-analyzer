@@ -53,14 +53,14 @@ if _m := _s.get("vl_model"):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Language Caption Player API が起動しました（モデルはオンデマンドでロード）")
+    print("Movie Review API が起動しました（モデルはオンデマンドでロード）")
     yield
     # シャットダウン時に VRAM を解放
     asr.unload()
     video_reviewer.unload()
 
 
-app = FastAPI(title="Language Caption Player API", lifespan=lifespan)
+app = FastAPI(title="Movie Review API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
