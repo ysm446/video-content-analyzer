@@ -1,13 +1,13 @@
 import os
 import re
 import tempfile
+from importlib import metadata
 
 import torch
 
 from .vram import max_memory_map
 import soundfile as sf
 import ffmpeg
-from qwen_asr import Qwen3ASRModel
 
 MODEL_ID           = "Qwen/Qwen3-ASR-1.7B"
 FORCED_ALIGNER_ID  = "Qwen/Qwen3-ForcedAligner-0.6B"
@@ -57,6 +57,19 @@ class ASRProcessor:
         self.model = None
 
     def load(self):
+        try:
+            from qwen_asr import Qwen3ASRModel
+        except Exception as e:
+            try:
+                tf_ver = metadata.version("transformers")
+            except metadata.PackageNotFoundError:
+                tf_ver = "not installed"
+            raise RuntimeError(
+                "Failed to import qwen_asr. "
+                f"Installed transformers={tf_ver}. "
+                "Please install compatible versions, e.g. `pip install -U \"transformers==4.57.6\" qwen-asr`."
+            ) from e
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype  = torch.float16 if device == "cuda" else torch.float32
         mm = max_memory_map()

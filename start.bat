@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 echo =============================================
-echo  Movie Review
+echo  Video Content Analyzer
 echo =============================================
 echo.
 

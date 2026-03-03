@@ -1,14 +1,14 @@
 fastapi
 uvicorn[standard]
-# qwen-asr が transformers 4.57.6 に依存するためバージョン固定
-# （qwen-asr は conda 環境に別途インストール済み）
+# qwen-asr requires a compatible transformers build
 transformers==4.57.6
+qwen-asr
 torch
 torchaudio
 soundfile
 ffmpeg-python
 srt
 accelerate
-# Qwen3-VL ビジョンモデル用
+# for Qwen3-VL
 qwen-vl-utils
 Pillow
