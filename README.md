@@ -83,16 +83,18 @@ npm install
 start.bat
 ```
 
+> Windows では `start.bat` 内で `chcp 65001` を実行し、コンソール出力を UTF-8 に統一しています。
+
 または手動で：
 
 ```bash
-# バックエンド
+# Electron 起動（バックエンドは自動起動）
 conda activate main
-python run_backend.py
-
-# フロントエンド（別ターミナル）
 npm start
 ```
+
+> バックエンド（`run_backend.py`）は Electron メインプロセスが子プロセスとして起動します。  
+> アプリケーション終了時にバックエンドも自動停止します。
 
 起動後、`http://127.0.0.1:8765/health` で `{"status":"ok"}` が返れば準備完了です。
 

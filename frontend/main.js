@@ -1,6 +1,110 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const http = require('http')
+const { spawn } = require('child_process')
+
+const BACKEND_HOST = '127.0.0.1'
+const BACKEND_PORT = 8765
+const BACKEND_START_TIMEOUT_MS = 30000
+const BACKEND_HEALTHCHECK_INTERVAL_MS = 500
+const BACKEND_HEALTHCHECK_TIMEOUT_MS = 1000
+
+let backendProcess = null
+let isQuitting = false
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function checkBackendHealth() {
+  return new Promise((resolve) => {
+    const req = http.get(
+      {
+        host: BACKEND_HOST,
+        port: BACKEND_PORT,
+        path: '/health',
+        timeout: BACKEND_HEALTHCHECK_TIMEOUT_MS,
+      },
+      (res) => {
+        res.resume()
+        resolve(res.statusCode === 200)
+      }
+    )
+    req.on('error', () => resolve(false))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+  })
+}
+
+async function waitForBackendReady(timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await checkBackendHealth()) {
+      return
+    }
+    await wait(BACKEND_HEALTHCHECK_INTERVAL_MS)
+  }
+  throw new Error(`Backend did not become ready within ${timeoutMs}ms`)
+}
+
+async function stopBackendProcess() {
+  if (!backendProcess || backendProcess.killed) return
+  const pid = backendProcess.pid
+  if (typeof pid !== 'number') {
+    backendProcess.kill()
+    return
+  }
+
+  if (process.platform === 'win32') {
+    await new Promise((resolve) => {
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true })
+      killer.on('error', () => resolve())
+      killer.on('close', () => resolve())
+    })
+  } else {
+    backendProcess.kill('SIGTERM')
+  }
+}
+
+async function startBackendProcess() {
+  if (backendProcess && !backendProcess.killed) return
+
+  const projectRoot = path.resolve(__dirname, '..')
+  const backendEntrypoint = path.join(projectRoot, 'run_backend.py')
+  const pythonCommand = process.env.BACKEND_PYTHON || 'python'
+
+  const env = {
+    ...process.env,
+    HF_HOME: path.join(projectRoot, 'models'),
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
+  }
+
+  backendProcess = spawn(pythonCommand, [backendEntrypoint], {
+    cwd: projectRoot,
+    env,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  backendProcess.stdout.setEncoding('utf8')
+  backendProcess.stderr.setEncoding('utf8')
+  backendProcess.stdout.on('data', (chunk) => {
+    console.log(`[backend] ${chunk.trimEnd()}`)
+  })
+  backendProcess.stderr.on('data', (chunk) => {
+    console.error(`[backend] ${chunk.trimEnd()}`)
+  })
+  backendProcess.on('exit', (code, signal) => {
+    console.log(`[backend] exited (code=${code}, signal=${signal})`)
+    backendProcess = null
+  })
+
+  await waitForBackendReady(BACKEND_START_TIMEOUT_MS)
+}
 
 function createMainWindow() {
   const win = new BrowserWindow({
@@ -19,12 +123,30 @@ function createMainWindow() {
   win.loadFile(path.join(__dirname, 'pages', 'app.html'))
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
+
+  try {
+    await startBackendProcess()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    dialog.showErrorBox('Backend startup failed', message)
+    app.quit()
+    return
+  }
+
   createMainWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
   })
+})
+
+app.on('before-quit', async (event) => {
+  if (isQuitting) return
+  isQuitting = true
+  event.preventDefault()
+  await stopBackendProcess()
+  app.quit()
 })
 
 app.on('window-all-closed', () => {
