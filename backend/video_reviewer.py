@@ -13,33 +13,17 @@ import ffmpeg
 import torch
 from PIL import Image
 
+from .model_catalog import (
+    available_review_models as catalog_review_models,
+    default_review_model_id,
+    get_review_model_meta,
+)
 from .vram import MAX_PIXELS_PER_FRAME
 
-DEFAULT_MODEL_ID = "gguf:qwen3.5-9b"
 LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", r"D:\GitHub\llama-b8466-bin-win-cuda-13.1-x64"))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
 LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "8192"))
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-
-REVIEW_MODELS = {
-    "gguf:qwen3.5-9b": {
-        "label": "Qwen3.5 9B Vision GGUF",
-        "model_path": MODELS_DIR / "Huihui-Qwen3.5-9B-abliterated-GGUF" / "Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf",
-        "mmproj_path": MODELS_DIR / "Huihui-Qwen3.5-9B-abliterated-GGUF" / "Huihui-Qwen3.5-9B-abliterated.mmproj-f16.gguf",
-        "vram_gb": 10.0,
-        "note": "llama.cpp・速い",
-        "backend": "llama.cpp",
-    },
-    "gguf:qwen3.5-35b": {
-        "label": "Qwen3.5 35B Vision GGUF",
-        "model_path": MODELS_DIR / "Huihui-Qwen3.5-35B-A3B-abliterated-GGUF" / "Huihui-Qwen3.5-35B-A3B-abliterated.Q4_K_M.gguf",
-        "mmproj_path": MODELS_DIR / "Huihui-Qwen3.5-35B-A3B-abliterated-GGUF" / "Huihui-Qwen3.5-35B-A3B-abliterated.mmproj-f16.gguf",
-        "vram_gb": 26.0,
-        "note": "llama.cpp・高品質",
-        "backend": "llama.cpp",
-    },
-}
 
 # シーン検出の閾値（0.0〜1.0、低いほど敏感）
 SCENE_THRESHOLD = 0.35
@@ -95,24 +79,7 @@ QA_MAX_NEW_TOKENS = 2048
 
 
 def available_review_models() -> list[dict]:
-    rows: list[dict] = []
-    for model_id, meta in REVIEW_MODELS.items():
-        model_path = Path(meta["model_path"])
-        mmproj_path = Path(meta["mmproj_path"])
-        exists = model_path.exists() and mmproj_path.exists()
-        rows.append(
-            {
-                "id": model_id,
-                "label": meta["label"],
-                "vram_gb": meta["vram_gb"],
-                "note": meta["note"] if exists else f'{meta["note"]}・未配置',
-                "backend": meta["backend"],
-                "path": str(model_path),
-                "mmproj_path": str(mmproj_path),
-                "exists": exists,
-            }
-        )
-    return rows
+    return catalog_review_models()
 
 
 class LlamaCppVisionServerManager:
@@ -157,7 +124,7 @@ class LlamaCppVisionServerManager:
             return False
 
     def ensure_model(self, model_id: str) -> None:
-        meta = REVIEW_MODELS.get(model_id)
+        meta = get_review_model_meta(model_id)
         if meta is None:
             raise ValueError(f"未対応の動画レビュー用モデルです: {model_id}")
         model_path = Path(meta["model_path"])
@@ -326,7 +293,7 @@ _vision_server = LlamaCppVisionServerManager()
 
 class VideoReviewer:
     def __init__(self):
-        self.model_id = DEFAULT_MODEL_ID
+        self.model_id = default_review_model_id() or ""
         self.model = None
         self.processor = None
         self._frame_cache: tuple | None = None

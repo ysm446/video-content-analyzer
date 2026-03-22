@@ -18,6 +18,8 @@ from pydantic import BaseModel
 os.environ["HF_HOME"] = str(Path(__file__).parent.parent / "models")
 
 from .asr import ASRProcessor
+from .model_catalog import available_review_models as scan_review_models
+from .model_catalog import available_translator_models as scan_translator_models
 from .translator import Translator, available_translator_models
 from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_output_path, split_long_segments
 from .video_reviewer import VideoReviewer, available_review_models
@@ -42,8 +44,8 @@ asr = ASRProcessor()
 translator        = Translator()  # バッチ翻訳用（翻訳完了後にアンロード）
 translator_lookup = Translator()  # 辞書検索用（常駐）
 video_reviewer    = VideoReviewer()
-_translator_model_ids = {m["id"] for m in available_translator_models() if m.get("exists")}
-_review_model_ids = {m["id"] for m in available_review_models() if m.get("exists")}
+_translator_model_ids = {m["id"] for m in scan_translator_models() if m.get("exists")}
+_review_model_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
 
 # 前回選択したモデルを復元
 _s = load_settings()
@@ -385,13 +387,6 @@ class TOCSaveRequest(BaseModel):
     data: dict
 
 
-# ---------- 利用可能なモデル ----------
-
-VL_MODELS = available_review_models()
-
-TRANSLATOR_MODELS = available_translator_models()
-
-
 # ---------- エンドポイント ----------
 
 @app.get("/health")
@@ -433,16 +428,17 @@ def post_ui_settings(req: UISettingsRequest):
 @app.get("/models")
 def get_models():
     """利用可能なモデルの一覧と現在の選択・ロード状態を返す"""
+    translator_models = available_translator_models()
     return {
         "translator": {
             "current":   translator.model_id,
             "loaded":    translator.loaded,
-            "available": TRANSLATOR_MODELS,
+            "available": translator_models,
         },
         "lookup": {
             "current":   translator_lookup.model_id,
             "loaded":    translator_lookup.loaded,
-            "available": TRANSLATOR_MODELS,
+            "available": translator_models,
         },
     }
 
@@ -450,7 +446,7 @@ def get_models():
 @app.post("/models")
 def set_models(req: SetModelRequest):
     """翻訳・辞書モデルを切り替える（ロード済みの場合は即アンロード・次回使用時に再ロード）"""
-    valid_ids = {m["id"] for m in TRANSLATOR_MODELS if m.get("exists")}
+    valid_ids = {m["id"] for m in available_translator_models() if m.get("exists")}
     to_save = {}
     if req.translator is not None:
         if req.translator not in valid_ids:
@@ -622,17 +618,18 @@ async def lookup(req: LookupRequest):
 @app.get("/review/models")
 def get_vl_models():
     """利用可能な動画レビュー用モデルの一覧と現在の選択・ロード状態を返す"""
+    review_models = available_review_models()
     return {
         "current":   video_reviewer.model_id,
         "loaded":    video_reviewer.loaded,
-        "available": VL_MODELS,
+        "available": review_models,
     }
 
 
 @app.post("/review/models")
 def set_vl_model(req: SetVLModelRequest):
     """動画レビュー用モデルを切り替える"""
-    valid_ids = {m["id"] for m in VL_MODELS if m.get("exists")}
+    valid_ids = {m["id"] for m in available_review_models() if m.get("exists")}
     if req.model_id not in valid_ids:
         raise HTTPException(400, f"無効なモデルID: {req.model_id}")
     video_reviewer.set_model_id(req.model_id)

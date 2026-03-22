@@ -10,39 +10,18 @@ from urllib import error, request
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
+from .model_catalog import (
+    available_translator_models as catalog_translator_models,
+    default_translator_model_id,
+    get_text_model_meta,
+)
 from .vram import max_memory_map
 from .video_reviewer import _vision_server
 
-MODEL_ID = "gguf:qwen3.5-9b"
 LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", r"D:\GitHub\llama-b8466-bin-win-cuda-13.1-x64"))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_PORT = int(os.environ.get("LLAMA_CPP_PORT", "8766"))
 LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "8192"))
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-
-GGUF_MODELS = {
-    "gguf:qwen3.5-2b": {
-        "label": "Qwen3.5 2B GGUF",
-        "path": MODELS_DIR / "Qwen3.5-2B-GGUF" / "Qwen3.5-2B-Q4_K_M.gguf",
-        "vram_gb": 3.0,
-        "note": "llama.cpp・辞書向け",
-        "backend": "llama.cpp",
-    },
-    "gguf:qwen3.5-9b": {
-        "label": "Qwen3.5 9B GGUF",
-        "path": MODELS_DIR / "Huihui-Qwen3.5-9B-abliterated-GGUF" / "Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf",
-        "vram_gb": 8.0,
-        "note": "llama.cpp・速い",
-        "backend": "llama.cpp",
-    },
-    "gguf:qwen3.5-35b": {
-        "label": "Qwen3.5 35B GGUF",
-        "path": MODELS_DIR / "Huihui-Qwen3.5-35B-A3B-abliterated-GGUF" / "Huihui-Qwen3.5-35B-A3B-abliterated.Q4_K_M.gguf",
-        "vram_gb": 24.0,
-        "note": "llama.cpp・高品質",
-        "backend": "llama.cpp",
-    },
-}
 
 # /no_think でthinkingモードをOFF → 字幕バッチ翻訳に最適化
 SYSTEM_PROMPT = (
@@ -63,21 +42,7 @@ LOOKUP_SYSTEM_PROMPT = (
 
 
 def available_translator_models() -> list[dict]:
-    rows: list[dict] = []
-    for model_id, meta in GGUF_MODELS.items():
-        path = Path(meta["path"])
-        rows.append(
-            {
-                "id": model_id,
-                "label": meta["label"],
-                "vram_gb": meta["vram_gb"],
-                "note": meta["note"] if path.exists() else f'{meta["note"]}・未配置',
-                "backend": meta["backend"],
-                "path": str(path),
-                "exists": path.exists(),
-            }
-        )
-    return rows
+    return catalog_translator_models()
 
 
 class LlamaCppServerManager:
@@ -125,10 +90,10 @@ class LlamaCppServerManager:
                 return False
 
     def ensure_model(self, model_id: str) -> None:
-        meta = GGUF_MODELS.get(model_id)
+        meta = get_text_model_meta(model_id)
         if meta is None:
             raise ValueError(f"未対応の翻訳モデルです: {model_id}")
-        model_path = Path(meta["path"])
+        model_path = Path(meta["model_path"])
         if not model_path.exists():
             raise FileNotFoundError(f"GGUF モデルが見つかりません: {model_path}")
 
@@ -243,7 +208,7 @@ _llama_cpp = LlamaCppServerManager()
 
 class Translator:
     def __init__(self):
-        self.model_id = MODEL_ID
+        self.model_id = default_translator_model_id() or ""
         self.model = None
         self.tokenizer = None
         self._lock = threading.RLock()
@@ -257,10 +222,11 @@ class Translator:
         return self.model is not None and self.tokenizer is not None
 
     def _is_gguf_model(self) -> bool:
-        return self.model_id in GGUF_MODELS
+        return self.model_id.startswith("gguf:") and get_text_model_meta(self.model_id) is not None
 
     def _uses_shared_vision_server(self) -> bool:
-        return self.model_id in {"gguf:qwen3.5-9b", "gguf:qwen3.5-35b"}
+        meta = get_text_model_meta(self.model_id)
+        return bool(meta and meta.get("has_mmproj"))
 
     def load(self):
         with self._lock:

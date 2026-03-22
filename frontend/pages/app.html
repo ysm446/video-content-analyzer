@@ -281,7 +281,9 @@
           </div>
         </div>        <div class="card">
           <div class="section-label">動画レビュー設定</div>
+          <div id="reviewModelList"></div>
           <div class="model-apply-row" style="margin-top:8px">
+            <button class="btn btn-ghost" id="applyReviewModelBtn" style="padding:5px 14px;font-size:13px">適用</button>
             <span class="status-dot" id="vlModelDot"></span><span id="vlModelStatusText" style="color:var(--text-dim)">接続中...</span>
             <button class="btn btn-ghost" id="unloadBtn" style="margin-left:auto;padding:4px 12px;font-size:12px" disabled>VRAM 解放</button>
           </div>
@@ -1038,7 +1040,7 @@
     function setModelStatus(dotId,textId,info,label){
       const dot=document.getElementById(dotId), text=document.getElementById(textId)
       dot.classList.toggle('loaded',info.loaded)
-      const modelLabel=info.available.find(m=>m.id===info.current)?.label ?? info.current
+      const modelLabel=(info.available.find(m=>m.id===info.current)?.label ?? info.current) || '未選択'
       text.textContent=`${label}: ${info.loaded?'ロード済み':'未ロード'}（${modelLabel}）`
     }
 
@@ -1067,13 +1069,20 @@
       try{
         const res=await fetch(`${API}/review/models`); if(!res.ok) return
         const info=await res.json()
+        renderModelList('reviewModelList','reviewModel',info.available,info.current)
         const dot=document.getElementById('vlModelDot'), text=document.getElementById('vlModelStatusText'), unloadBtn=document.getElementById('unloadBtn')
         dot.classList.toggle('loaded',info.loaded)
-        const label=info.available.find(m=>m.id===info.current)?.label ?? info.current
+        const label=(info.available.find(m=>m.id===info.current)?.label ?? info.current) || '未選択'
         text.textContent=info.loaded ? `${label} ロード済み` : `${label} 未ロード`
         unloadBtn.disabled=!info.loaded
       }catch{ document.getElementById('vlModelStatusText').textContent='バックエンド未起動' }
     }
+    document.getElementById('applyReviewModelBtn').addEventListener('click',async()=>{
+      const sel=document.querySelector('input[name="reviewModel"]:checked')
+      if(!sel) return
+      await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:sel.value})})
+      await fetchReviewModelStatus()
+    })
     document.getElementById('unloadBtn').addEventListener('click',async()=>{ await fetch(`${API}/review/unload`,{method:'POST'}); await fetchReviewModelStatus() })
 
     document.getElementById('transcribeBtn').addEventListener('click',async()=>{
