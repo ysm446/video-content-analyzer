@@ -23,8 +23,8 @@ ENV/
 node_modules/
 
 # ---------- モデルファイル（大容量） ----------
-models/hub/
-models/xet/
+models/
+models/
 !models/.gitkeep
 
 # ---------- 生成された字幕ファイル（出力物） ----------

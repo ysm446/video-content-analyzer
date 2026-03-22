@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import os
 import re
@@ -5,17 +7,39 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from threading import Thread
+from urllib import error, request
 
 import ffmpeg
 import torch
 from PIL import Image
-from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration, TextIteratorStreamer
 
-from .vram import MAX_PIXELS_PER_FRAME, max_memory_map
+from .vram import MAX_PIXELS_PER_FRAME
 
-DEFAULT_MODEL_ID = "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
+DEFAULT_MODEL_ID = "gguf:qwen3.5-9b"
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", r"D:\GitHub\llama-b8466-bin-win-cuda-13.1-x64"))
+LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
+LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
+LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "8192"))
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+
+REVIEW_MODELS = {
+    "gguf:qwen3.5-9b": {
+        "label": "Qwen3.5 9B Vision GGUF",
+        "model_path": MODELS_DIR / "Huihui-Qwen3.5-9B-abliterated-GGUF" / "Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf",
+        "mmproj_path": MODELS_DIR / "Huihui-Qwen3.5-9B-abliterated-GGUF" / "Huihui-Qwen3.5-9B-abliterated.mmproj-f16.gguf",
+        "vram_gb": 10.0,
+        "note": "llama.cpp・速い",
+        "backend": "llama.cpp",
+    },
+    "gguf:qwen3.5-35b": {
+        "label": "Qwen3.5 35B Vision GGUF",
+        "model_path": MODELS_DIR / "Huihui-Qwen3.5-35B-A3B-abliterated-GGUF" / "Huihui-Qwen3.5-35B-A3B-abliterated.Q4_K_M.gguf",
+        "mmproj_path": MODELS_DIR / "Huihui-Qwen3.5-35B-A3B-abliterated-GGUF" / "Huihui-Qwen3.5-35B-A3B-abliterated.mmproj-f16.gguf",
+        "vram_gb": 26.0,
+        "note": "llama.cpp・高品質",
+        "backend": "llama.cpp",
+    },
+}
 
 # シーン検出の閾値（0.0〜1.0、低いほど敏感）
 SCENE_THRESHOLD = 0.35
@@ -27,36 +51,36 @@ ANALYZE_SYSTEM = (
     "必要に応じて音声の書き起こしテキストを総合して動画の内容を分析します。"
 )
 
-# JSON 出力フォーマット（映像のみ・音声付き共通）
 _ANALYZE_JSON_FORMAT = (
     "{\n"
-    '  "summary": "動画全体の概要（2〜4文）",\n'
+    '  "summary": "動画全体の概要（1〜2文）",\n'
     '  "scenes": [\n'
-    '    {"timestamp": "0:00", "label": "場面のタイトル", "description": "この場面で起きていることの説明"},\n'
-    '    {"timestamp": "1:30", "label": "場面のタイトル", "description": "この場面で起きていることの説明"}\n'
-    '    ... （場面転換ごとに繰り返す）\n'
+    '    {"timestamp": "0:00", "label": "場面のタイトル", "description": "1文で短く説明"},\n'
+    '    {"timestamp": "1:30", "label": "場面のタイトル", "description": "1文で短く説明"}\n'
+    "    ... （場面転換ごとに繰り返す）\n"
     "  ],\n"
-    '  "tags": ["タグ1", "タグ2", "タグ3", "タグ4", "タグ5"],\n'
+    '  "tags": ["タグ1", "タグ2", "タグ3"],\n'
     '  "genre": "ジャンル（例：アクション映画、料理動画、講義、スポーツなど）"\n'
     "}"
 )
 
-# 指示文のみ（JSON フォーマットはプロンプト構築時に追加）
 _ANALYZE_INSTR_VISUAL = (
     "この動画からサンプリングされたフレームを分析し、"
     "以下のJSON形式のみで回答してください。"
     "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
     "scenes は映像の内容・雰囲気・場所・被写体が変化するたびに新しい場面として追加してください。"
-    "提供されたフレーム数を参考に細かく場面分けしてください（目安: 10〜15場面）。"
+    "提供されたフレーム数を参考に場面分けしてください（目安: 6〜8場面）。"
     "label には場面の内容を表す短いタイトルを付けてください。"
+    "description は各場面につき1文だけ、短く書いてください。"
 )
 
 _ANALYZE_INSTR_AUDIO = (
     "この動画からサンプリングされたフレームと、以下の音声書き起こしを総合して分析し、"
     "以下のJSON形式のみで回答してください。"
     "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
-    "scenes は映像や音声の内容・雰囲気が変わるたびに新しい場面として追加してください（目安: 10〜15場面）。"
+    "scenes は映像や音声の内容・雰囲気が変わるたびに新しい場面として追加してください（目安: 6〜8場面）。"
     "label には場面の内容を表す短いタイトルを付けてください。"
+    "description は各場面につき1文だけ、短く書いてください。"
 )
 
 QA_SYSTEM = (
@@ -66,8 +90,238 @@ QA_SYSTEM = (
     "具体的に回答してください。"
 )
 
-# 書き起こしテキストをプロンプトに含める際の最大文字数（トークン超過を防ぐ）
 _TRANSCRIPT_MAX_CHARS = 3000
+QA_MAX_NEW_TOKENS = 2048
+
+
+def available_review_models() -> list[dict]:
+    rows: list[dict] = []
+    for model_id, meta in REVIEW_MODELS.items():
+        model_path = Path(meta["model_path"])
+        mmproj_path = Path(meta["mmproj_path"])
+        exists = model_path.exists() and mmproj_path.exists()
+        rows.append(
+            {
+                "id": model_id,
+                "label": meta["label"],
+                "vram_gb": meta["vram_gb"],
+                "note": meta["note"] if exists else f'{meta["note"]}・未配置',
+                "backend": meta["backend"],
+                "path": str(model_path),
+                "mmproj_path": str(mmproj_path),
+                "exists": exists,
+            }
+        )
+    return rows
+
+
+class LlamaCppVisionServerManager:
+    def __init__(self):
+        self._process: subprocess.Popen | None = None
+        self._current_model_id: str | None = None
+        self._current_model_path: Path | None = None
+        self._current_mmproj_path: Path | None = None
+        self._clients: dict[str, str] = {}
+
+    def _base_url(self) -> str:
+        return f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_VISION_PORT}"
+
+    def _find_executable(self) -> Path:
+        candidates = [
+            LLAMA_CPP_DIR / "llama-server.exe",
+            LLAMA_CPP_DIR / "bin" / "llama-server.exe",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError(f"llama-server.exe が見つかりません: {LLAMA_CPP_DIR}")
+
+    def _request_json(self, method: str, path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
+        data = None
+        headers = {}
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = request.Request(self._base_url() + path, data=data, method=method, headers=headers)
+        with request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+        if not body:
+            return {}
+        return json.loads(body.decode("utf-8"))
+
+    def _is_ready(self) -> bool:
+        try:
+            self._request_json("GET", "/v1/models", timeout=2.0)
+            return True
+        except Exception:
+            return False
+
+    def ensure_model(self, model_id: str) -> None:
+        meta = REVIEW_MODELS.get(model_id)
+        if meta is None:
+            raise ValueError(f"未対応の動画レビュー用モデルです: {model_id}")
+        model_path = Path(meta["model_path"])
+        mmproj_path = Path(meta["mmproj_path"])
+        if not model_path.exists():
+            raise FileNotFoundError(f"GGUF モデルが見つかりません: {model_path}")
+        if not mmproj_path.exists():
+            raise FileNotFoundError(f"mmproj モデルが見つかりません: {mmproj_path}")
+
+        same_model = (
+            self._process is not None
+            and self._process.poll() is None
+            and self._current_model_id == model_id
+            and self._current_model_path == model_path
+            and self._current_mmproj_path == mmproj_path
+            and self._is_ready()
+        )
+        if same_model:
+            return
+
+        self.stop()
+        exe = self._find_executable()
+        cmd = [
+            str(exe),
+            "-m",
+            str(model_path),
+            "--mmproj",
+            str(mmproj_path),
+            "--host",
+            LLAMA_CPP_HOST,
+            "--port",
+            str(LLAMA_CPP_VISION_PORT),
+            "-c",
+            str(LLAMA_CPP_CTX),
+            "--jinja",
+            "--reasoning",
+            "off",
+            "--reasoning-budget",
+            "0",
+        ]
+        if torch.cuda.is_available():
+            cmd.extend(["-ngl", "999"])
+
+        self._process = subprocess.Popen(cmd, cwd=str(exe.parent))
+        self._current_model_id = model_id
+        self._current_model_path = model_path
+        self._current_mmproj_path = mmproj_path
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            if self._process.poll() is not None:
+                raise RuntimeError("動画レビュー用 llama-cpp サーバーが起動直後に終了しました")
+            if self._is_ready():
+                print(f"[VideoReviewer] llama.cpp vision server ready: {model_id}")
+                return
+            time.sleep(1.0)
+
+        self.stop()
+        raise TimeoutError("動画レビュー用 llama-cpp サーバーの起動がタイムアウトしました")
+
+    def stop(self) -> None:
+        proc = self._process
+        self._process = None
+        self._current_model_id = None
+        self._current_model_path = None
+        self._current_mmproj_path = None
+        self._clients = {}
+        if proc is None:
+            return
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5.0)
+
+    def loaded_for(self, model_id: str) -> bool:
+        return (
+            self._process is not None
+            and self._process.poll() is None
+            and self._current_model_id == model_id
+            and self._is_ready()
+        )
+
+    def acquire_model(self, model_id: str, client_name: str) -> None:
+        current = self._clients.get(client_name)
+        if current == model_id and self.loaded_for(model_id):
+            return
+        if current is not None and current != model_id:
+            self.release_client(client_name)
+        self.ensure_model(model_id)
+        self._clients[client_name] = model_id
+
+    def release_client(self, client_name: str) -> None:
+        if client_name in self._clients:
+            del self._clients[client_name]
+        if not self._clients:
+            self.stop()
+
+    def chat(self, model_id: str, messages: list[dict], max_tokens: int) -> str:
+        self.ensure_model(model_id)
+        payload = {
+            "messages": messages,
+            "think": False,
+            "temperature": 0,
+            "top_p": 1,
+            "max_tokens": max_tokens,
+            "cache_prompt": True,
+            "stream": False,
+        }
+        try:
+            response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=300.0)
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"動画レビュー用 llama-cpp サーバーに接続できません: {exc}") from exc
+        choices = response.get("choices") or []
+        if not choices:
+            raise RuntimeError("動画レビュー API の応答に choices がありません")
+        message = choices[0].get("message") or {}
+        return str(message.get("content", "")).strip()
+
+    def stream_chat(self, model_id: str, messages: list[dict], max_tokens: int):
+        self.ensure_model(model_id)
+        payload = {
+            "messages": messages,
+            "think": False,
+            "temperature": 0,
+            "top_p": 1,
+            "max_tokens": max_tokens,
+            "cache_prompt": True,
+            "stream": True,
+        }
+        req = request.Request(
+            self._base_url() + "/v1/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with request.urlopen(req, timeout=300.0) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    event = json.loads(data)
+                    for choice in event.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            yield content
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"動画レビュー用 llama-cpp サーバーに接続できません: {exc}") from exc
+
+
+_vision_server = LlamaCppVisionServerManager()
 
 
 class VideoReviewer:
@@ -75,9 +329,11 @@ class VideoReviewer:
         self.model_id = DEFAULT_MODEL_ID
         self.model = None
         self.processor = None
-        # フレームキャッシュ: 同じ動画・同じ設定なら再抽出しない
-        # _frame_cache = ((video_path, frame_mode, max_frames), frames, meta)
         self._frame_cache: tuple | None = None
+
+    @property
+    def loaded(self) -> bool:
+        return _vision_server.loaded_for(self.model_id)
 
     def set_model_id(self, model_id: str):
         if self.model_id != model_id:
@@ -86,95 +342,192 @@ class VideoReviewer:
             print(f"[VideoReviewer] モデルを {model_id} に変更（次回使用時にロード）")
 
     def load(self):
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.bfloat16 if device == "cuda" else torch.float32
-        mm = max_memory_map()
-        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-            self.model_id,
-            torch_dtype=dtype,
-            device_map="auto",
-            attn_implementation="sdpa",   # メモリ効率のよい Attention（O(N) instead of O(N²)）
-            **({"max_memory": mm} if mm else {}),
-        )
-        # max_pixels でフレームあたりの視覚トークン数を制限
-        # 256 * 28 * 28 = 200,704 px → 最大 256 トークン/枚（vram.py で調整可能）
-        self.processor = AutoProcessor.from_pretrained(
-            self.model_id,
-            min_pixels=64  * 28 * 28,
-            max_pixels=MAX_PIXELS_PER_FRAME,
-        )
-        print(f"[VideoReviewer] Loaded {self.model_id}")
+        _vision_server.acquire_model(self.model_id, "video_reviewer")
+        self.model = {"backend": "llama.cpp", "model_id": self.model_id}
+        self.processor = {"backend": "llama.cpp"}
 
     def unload(self):
-        if self.model is not None:
-            del self.model
-            del self.processor
-            self.model = None
-            self.processor = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            print("[VideoReviewer] モデルをアンロードしました")
-        self._frame_cache = None
+        _vision_server.release_client("video_reviewer")
+        self.model = None
+        self.processor = None
+        print("[VideoReviewer] モデルをアンロードしました")
 
-    def cache_frames(self, video_path: str, frame_mode: str, max_frames: int,
-                     frames: list, meta: dict):
-        """フレームをキャッシュして次のQ&Aで再利用できるようにする"""
-        self._frame_cache = ((video_path, frame_mode, max_frames), frames, meta)
+    def _make_cache_key(self, video_path: str, frame_mode: str, max_frames: int, min_interval: float) -> tuple:
+        p = Path(video_path)
+        stat = p.stat()
+        return (
+            str(p.resolve()),
+            int(stat.st_mtime_ns),
+            int(stat.st_size),
+            frame_mode,
+            int(max_frames),
+            round(float(min_interval), 3),
+        )
+
+    def cache_frames(self, video_path: str, frame_mode: str, max_frames: int, min_interval: float, frames: list, meta: dict):
+        key = self._make_cache_key(video_path, frame_mode, max_frames, min_interval)
+        self._frame_cache = (key, frames, meta)
         print(f"[VideoReviewer] フレームキャッシュ保存: {len(frames)}枚 ({frame_mode})")
 
-    def get_cached_frames(self, video_path: str, frame_mode: str,
-                          max_frames: int) -> tuple[list, dict] | None:
-        """キャッシュがヒットすれば (frames, meta) を返す。なければ None"""
-        if self._frame_cache is None:
-            return None
-        key, frames, meta = self._frame_cache
-        if key == (video_path, frame_mode, max_frames):
-            print(f"[VideoReviewer] フレームキャッシュヒット: {len(frames)}枚 ({frame_mode})")
-            return frames, meta
+    def get_cached_frames(self, video_path: str, frame_mode: str, max_frames: int, min_interval: float) -> tuple[list, dict] | None:
+        key = self._make_cache_key(video_path, frame_mode, max_frames, min_interval)
+        if self._frame_cache is not None:
+            mem_key, frames, meta = self._frame_cache
+            if mem_key == key:
+                print(f"[VideoReviewer] フレームキャッシュヒット: {len(frames)}枚 ({frame_mode})")
+                return frames, meta
         return None
 
     def _ensure_loaded(self):
-        if self.model is None:
+        if not self.loaded:
             self.load()
 
     @staticmethod
     def _clean_generated_text(text: str) -> str:
-        """生成文から不要な thinking ブロックを除去する"""
         cleaned = text.strip()
         if "</think>" in cleaned:
             cleaned = cleaned.split("</think>", 1)[-1].strip()
         return cleaned
 
-    # ---------- フレーム抽出 ----------
+    @staticmethod
+    def _clean_stream_prefix(text: str) -> str:
+        cleaned = text
+        if "</think>" in cleaned:
+            cleaned = cleaned.split("</think>", 1)[-1]
+        cleaned = re.sub(r"^\s*</?think>\s*", "", cleaned)
+        return cleaned
+
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        cleaned = text.strip()
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"\n?```$", "", cleaned.strip(), flags=re.MULTILINE)
+        return cleaned.strip()
+
+    @staticmethod
+    def _extract_balanced_json(text: str) -> str | None:
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        in_string = False
+        escaped = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:idx + 1]
+        return None
+
+    @staticmethod
+    def _decode_json_string(value: str) -> str:
+        try:
+            return json.loads(f'"{value}"')
+        except Exception:
+            return value
+
+    @classmethod
+    def _salvage_analysis_fields(cls, raw: str) -> dict:
+        summary = ""
+        genre = ""
+        tags: list[str] = []
+
+        if m := re.search(r'"summary"\s*:\s*"((?:\\.|[^"\\])*)"', raw, flags=re.S):
+            summary = cls._decode_json_string(m.group(1)).strip()
+        if m := re.search(r'"genre"\s*:\s*"((?:\\.|[^"\\])*)"', raw, flags=re.S):
+            genre = cls._decode_json_string(m.group(1)).strip()
+        if m := re.search(r'"tags"\s*:\s*\[(.*?)\]', raw, flags=re.S):
+            tags = [
+                cls._decode_json_string(x)
+                for x in re.findall(r'"((?:\\.|[^"\\])*)"', m.group(1))
+            ]
+
+        return {
+            "summary": summary or "分析結果のJSONを最後まで生成できませんでした。",
+            "scenes": [],
+            "tags": tags,
+            "genre": genre or "不明",
+        }
+
+    def _frame_to_data_url(self, frame: Image.Image) -> str:
+        max_side = int((MAX_PIXELS_PER_FRAME or 200704) ** 0.5)
+        image = frame.copy().convert("RGB")
+        image.thumbnail((max_side, max_side))
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=88)
+        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
+
+    def _build_messages(self, frames: list[Image.Image], system: str, prompt: str, timestamps: list[float] | None = None) -> list[dict]:
+        content: list[dict] = []
+        if timestamps and len(timestamps) == len(frames):
+            for frame, ts in zip(frames, timestamps):
+                content.append({"type": "image_url", "image_url": {"url": self._frame_to_data_url(frame)}})
+                content.append({"type": "text", "text": f"[{self._fmt_ts(ts)}]"})
+        else:
+            for frame in frames:
+                content.append({"type": "image_url", "image_url": {"url": self._frame_to_data_url(frame)}})
+        content.append({"type": "text", "text": prompt})
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
+
+    def _infer(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None) -> str:
+        messages = self._build_messages(frames, system, prompt, timestamps)
+        print(f"[VideoReviewer] 推論開始: フレーム={len(frames)}枚")
+        t0 = time.time()
+        result = _vision_server.chat(self.model_id, messages, max_new_tokens)
+        elapsed = time.time() - t0
+        print(f"[VideoReviewer] 推論完了: {elapsed:.1f}秒")
+        return self._clean_generated_text(result)
+
+    def _infer_stream(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None):
+        messages = self._build_messages(frames, system, prompt, timestamps)
+        print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚")
+        t0 = time.time()
+        prefix_buffer = ""
+        content_started = False
+        try:
+            for delta in _vision_server.stream_chat(self.model_id, messages, max_new_tokens):
+                if delta:
+                    if not content_started:
+                        prefix_buffer += delta
+                        cleaned = self._clean_stream_prefix(prefix_buffer)
+                        if not cleaned:
+                            continue
+                        content_started = True
+                        yield cleaned
+                        prefix_buffer = ""
+                    else:
+                        yield delta.replace("<think>", "").replace("</think>", "")
+        finally:
+            elapsed = time.time() - t0
+            print(f"[VideoReviewer] ストリーミング推論完了: {elapsed:.1f}秒")
 
     def _get_duration(self, video_path: str) -> float:
         probe = ffmpeg.probe(video_path)
         return float(probe["format"]["duration"])
 
-    def extract_frames_scene(
-        self,
-        video_path: str,
-        max_frames: int,
-        threshold: float = SCENE_THRESHOLD,
-    ) -> tuple[list[Image.Image], dict]:
-        """
-        ffmpeg のシーン変化検出でキーフレームを抽出して PIL.Image のリストを返す。
-        先頭フレームを常に含む。検出数が max_frames を超える場合は間引く。
-        フレームが 1 枚以下の場合は均等サンプリングにフォールバック。
-
-        Returns:
-            (frames, meta)
-            meta = {"count": int, "interval": None, "duration": float,
-                    "timestamps": list[float], "mode": "scene"}
-        """
+    def extract_frames_scene(self, video_path: str, max_frames: int, threshold: float = SCENE_THRESHOLD) -> tuple[list[Image.Image], dict]:
         duration = self._get_duration(video_path)
         frames: list[Image.Image] = []
-        timestamps: list[float] = []
 
         with tempfile.TemporaryDirectory() as tmpdir:
             outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
-            # 先頭フレーム（eq(n\,0)）＋シーン変化フレームを抽出
-            # showinfo フィルターで各フレームの pts_time を stderr に出力させる
             cmd = [
                 "ffmpeg", "-i", video_path,
                 "-vf", f"select=eq(n\\,0)+gt(scene\\,{threshold}),showinfo",
@@ -183,51 +536,33 @@ class VideoReviewer:
                 outpattern, "-y",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
-
-            # stderr から pts_time を抽出（showinfo の出力形式: "pts_time:1.234"）
             ts_pattern = re.compile(r"\bpts_time:(\d+\.?\d*)")
             raw_ts = [
                 float(m.group(1))
                 for line in result.stderr.splitlines()
                 if (m := ts_pattern.search(line))
             ]
-
-            frame_files = sorted(
-                f for f in os.listdir(tmpdir)
-                if f.startswith("frame_") and f.endswith(".jpg")
-            )
-
-            # タイムスタンプとファイル数を合わせる（ずれた場合は末尾を補完）
+            frame_files = sorted(f for f in os.listdir(tmpdir) if f.startswith("frame_") and f.endswith(".jpg"))
             if len(raw_ts) > len(frame_files):
                 raw_ts = raw_ts[:len(frame_files)]
             elif len(raw_ts) < len(frame_files):
                 step = duration / max(len(frame_files) - 1, 1)
                 raw_ts += [step * i for i in range(len(raw_ts), len(frame_files))]
-
-            # max_frames を超えたら間引く（先頭は必ず保持）
             if len(frame_files) > max_frames:
                 step = (len(frame_files) - 1) / (max_frames - 1)
-                indices = sorted(set(
-                    [0] + [min(round(i * step), len(frame_files) - 1)
-                           for i in range(1, max_frames)]
-                ))
+                indices = sorted(set([0] + [min(round(i * step), len(frame_files) - 1) for i in range(1, max_frames)]))
                 frame_files = [frame_files[i] for i in indices]
                 raw_ts = [raw_ts[i] for i in indices]
-
             for fname in frame_files:
                 frames.append(Image.open(str(Path(tmpdir) / fname)).copy())
             timestamps = raw_ts[:len(frames)]
 
-        # フレームが取れなかった場合は均等サンプリングにフォールバック
         if len(frames) <= 1:
             print("[VideoReviewer] シーン検出フレームなし → 均等サンプリングにフォールバック")
             return self.extract_frames(video_path, max_frames, 5.0)
 
         m_d, s_d = divmod(int(duration), 60)
-        print(
-            f"[VideoReviewer] シーン検出フレーム抽出完了: {len(frames)}枚"
-            f" (動画 {m_d}分{s_d}秒 / 閾値 {threshold} / 最大 {max_frames}枚指定)"
-        )
+        print(f"[VideoReviewer] シーン検出フレーム抽出完了: {len(frames)}枚 (動画 {m_d}分{s_d}秒 / 閾値 {threshold} / 最大 {max_frames}枚指定)")
         return frames, {
             "count": len(frames),
             "interval": None,
@@ -236,22 +571,7 @@ class VideoReviewer:
             "mode": "scene",
         }
 
-    def extract_frames(
-        self,
-        video_path: str,
-        max_frames: int,
-        min_interval: float,
-    ) -> tuple[list[Image.Image], dict]:
-        """
-        動画から均等にフレームをサンプリングして PIL.Image のリストを返す。
-
-        間隔 = max(動画長 / max_frames, min_interval)
-        → 短い動画では min_interval が効き、長い動画では max_frames に収まる。
-
-        Returns:
-            (frames, meta)
-            meta = {"count": int, "interval": float, "duration": float}
-        """
+    def extract_frames(self, video_path: str, max_frames: int, min_interval: float) -> tuple[list[Image.Image], dict]:
         duration = self._get_duration(video_path)
         interval = max(duration / max(max_frames, 1), min_interval)
 
@@ -267,31 +587,15 @@ class VideoReviewer:
             )
             for fname in sorted(os.listdir(tmpdir)):
                 if fname.startswith("frame_") and fname.endswith(".jpg"):
-                    img = Image.open(str(Path(tmpdir) / fname)).copy()
-                    frames.append(img)
+                    frames.append(Image.open(str(Path(tmpdir) / fname)).copy())
 
         timestamps = [round(i * interval, 1) for i in range(len(frames))]
-        meta = {"count": len(frames), "interval": interval, "duration": duration,
-                "timestamps": timestamps, "mode": "uniform"}
+        meta = {"count": len(frames), "interval": interval, "duration": duration, "timestamps": timestamps, "mode": "uniform"}
         m, s = divmod(int(duration), 60)
-        print(
-            f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚"
-            f" (動画 {m}分{s}秒 / 間隔 {interval:.1f}秒 / 最大 {max_frames}枚指定)"
-        )
+        print(f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚 (動画 {m}分{s}秒 / 間隔 {interval:.1f}秒 / 最大 {max_frames}枚指定)")
         return frames, meta
 
-    def extract_frames_between(
-        self,
-        video_path: str,
-        start_sec: float,
-        end_sec: float,
-        max_frames: int,
-        min_interval: float,
-    ) -> tuple[list[Image.Image], dict]:
-        """
-        動画の一部分 [start_sec, end_sec] だけを均等サンプリングして返す。
-        タイムスタンプは元動画の絶対時刻（秒）で返す。
-        """
+    def extract_frames_between(self, video_path: str, start_sec: float, end_sec: float, max_frames: int, min_interval: float) -> tuple[list[Image.Image], dict]:
         start = max(0.0, float(start_sec))
         end = max(start + 0.1, float(end_sec))
         duration = end - start
@@ -309,8 +613,7 @@ class VideoReviewer:
             )
             for fname in sorted(os.listdir(tmpdir)):
                 if fname.startswith("frame_") and fname.endswith(".jpg"):
-                    img = Image.open(str(Path(tmpdir) / fname)).copy()
-                    frames.append(img)
+                    frames.append(Image.open(str(Path(tmpdir) / fname)).copy())
 
         timestamps = [round(start + i * interval, 1) for i in range(len(frames))]
         meta = {
@@ -322,158 +625,22 @@ class VideoReviewer:
             "start_sec": start,
             "end_sec": end,
         }
-        print(
-            f"[VideoReviewer] 区間フレーム抽出: {len(frames)}枚 "
-            f"({self._fmt_ts(start)}-{self._fmt_ts(end)} / 間隔 {interval:.1f}秒)"
-        )
+        print(f"[VideoReviewer] 区間フレーム抽出: {len(frames)}枚 ({self._fmt_ts(start)}-{self._fmt_ts(end)} / 間隔 {interval:.1f}秒)")
         return frames, meta
-
-    # ---------- 推論 ----------
-
-    def _infer(self, frames: list[Image.Image], system: str, prompt: str,
-               max_new_tokens: int, timestamps: list[float] | None = None) -> str:
-        # タイムスタンプがある場合は各画像の直後にラベルを挿入して対応付けを明確にする
-        if timestamps and len(timestamps) == len(frames):
-            content: list[dict] = []
-            for frame, ts in zip(frames, timestamps):
-                content.append({"type": "image", "image": frame})
-                content.append({"type": "text", "text": f"[{self._fmt_ts(ts)}]"})
-            content.append({"type": "text", "text": prompt})
-        else:
-            content = [{"type": "image", "image": f} for f in frames] + [{"type": "text", "text": prompt}]
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": content},
-        ]
-        text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.model.device)
-
-        n_input_tokens = inputs.input_ids.shape[1]
-        tokens_per_frame = (n_input_tokens // len(frames)) if frames else 0
-        print(f"[VideoReviewer] 推論開始: フレーム={len(frames)}枚, "
-              f"入力トークン={n_input_tokens} (~{tokens_per_frame}トークン/枚)")
-        t0 = time.time()
-
-        with torch.no_grad():
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                repetition_penalty=1.15,
-                no_repeat_ngram_size=20,
-            )
-
-        elapsed = time.time() - t0
-        generated_ids = output_ids[0][inputs.input_ids.shape[1] :]
-        n_output = len(generated_ids)
-        print(f"[VideoReviewer] 推論完了: {elapsed:.1f}秒, 出力トークン={n_output}")
-
-        result = self.processor.batch_decode(
-            [generated_ids], skip_special_tokens=True
-        )[0].strip()
-        return self._clean_generated_text(result)
-
-    def _infer_stream(
-        self,
-        frames: list[Image.Image],
-        system: str,
-        prompt: str,
-        max_new_tokens: int,
-        timestamps: list[float] | None = None,
-    ):
-        # タイムスタンプがある場合は各画像の直後にラベルを挿入して対応付けを明確にする
-        if timestamps and len(timestamps) == len(frames):
-            content: list[dict] = []
-            for frame, ts in zip(frames, timestamps):
-                content.append({"type": "image", "image": frame})
-                content.append({"type": "text", "text": f"[{self._fmt_ts(ts)}]"})
-            content.append({"type": "text", "text": prompt})
-        else:
-            content = [{"type": "image", "image": f} for f in frames] + [{"type": "text", "text": prompt}]
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": content},
-        ]
-        text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.model.device)
-
-        n_input_tokens = inputs.input_ids.shape[1]
-        tokens_per_frame = (n_input_tokens // len(frames)) if frames else 0
-        print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚, "
-              f"入力トークン={n_input_tokens} (~{tokens_per_frame}トークン/枚)")
-
-        streamer = TextIteratorStreamer(
-            self.processor.tokenizer,
-            skip_prompt=True,
-            skip_special_tokens=True,
-        )
-        error_box: list[Exception] = []
-        t0 = time.time()
-
-        def run_generate():
-            try:
-                with torch.no_grad():
-                    self.model.generate(
-                        **inputs,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=False,
-                        repetition_penalty=1.15,
-                        no_repeat_ngram_size=20,
-                        streamer=streamer,
-                    )
-            except Exception as e:
-                error_box.append(e)
-
-        th = Thread(target=run_generate, daemon=True)
-        th.start()
-        try:
-            for chunk in streamer:
-                if chunk:
-                    yield chunk
-        finally:
-            th.join()
-            elapsed = time.time() - t0
-            print(f"[VideoReviewer] ストリーミング推論完了: {elapsed:.1f}秒")
-
-        if error_box:
-            raise error_box[0]
-
-    # ---------- プロンプト構築ヘルパー ----------
 
     @staticmethod
     def _truncate_transcript(transcript: str) -> str:
-        """長すぎる書き起こしを切り詰め、末尾に省略記号を付ける"""
         if len(transcript) <= _TRANSCRIPT_MAX_CHARS:
             return transcript
         return transcript[:_TRANSCRIPT_MAX_CHARS] + "…（以下省略）"
 
     @staticmethod
     def _fmt_ts(secs: float) -> str:
-        """秒数を m:ss 形式にフォーマット"""
         m, s = divmod(int(secs), 60)
         return f"{m}:{s:02d}"
 
     @staticmethod
     def _parse_ts(ts: str) -> float:
-        """m:ss 形式を秒に変換（パース失敗時は 0.0）"""
         try:
             parts = ts.split(":")
             if len(parts) == 2:
@@ -484,16 +651,9 @@ class VideoReviewer:
 
     @staticmethod
     def _dedup_scenes(scenes: list) -> list:
-        """
-        モデルが生成した scenes から重複タイムスタンプを除去し、時系列順に並べる。
-        同一秒（切り捨て）のシーンが複数ある場合は最初の1件のみ残す。
-        """
         if not scenes:
             return scenes
-        parsed = [
-            (VideoReviewer._parse_ts(s.get("timestamp", "")), s)
-            for s in scenes
-        ]
+        parsed = [(VideoReviewer._parse_ts(s.get("timestamp", "")), s) for s in scenes]
         parsed.sort(key=lambda x: x[0])
         result: list = []
         seen: set[int] = set()
@@ -506,21 +666,16 @@ class VideoReviewer:
 
     @staticmethod
     def _ts_hint(timestamps: list[float]) -> str:
-        """タイムスタンプ付き推論用のプロンプト補足を生成（各画像直後にラベルが付くため一覧は不要）"""
         if not timestamps:
             return ""
         return (
-            f"\n\n各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。"
+            "\n\n各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。"
             "scenes の timestamp にはその場面が始まるフレームのタイムスタンプを使用してください。"
             "\n実際に映像が変化した場面のみを記録してください。内容が変わらない場合は場面を増やさないでください。"
         )
 
     @staticmethod
-    def _build_analyze_prompt(
-        transcript: str,
-        timestamps: list[float] = [],
-        output_lang: str = "ja",
-    ) -> str:
+    def _build_analyze_prompt(transcript: str, timestamps: list[float] = [], output_lang: str = "ja") -> str:
         lang_instr = (
             "summary / scenes[].label / scenes[].description / tags / genre は日本語で記述してください。"
             if output_lang == "ja"
@@ -530,15 +685,7 @@ class VideoReviewer:
         if not transcript:
             return _ANALYZE_INSTR_VISUAL + ts_hint + "\n" + lang_instr + "\n\n" + _ANALYZE_JSON_FORMAT
         truncated = VideoReviewer._truncate_transcript(transcript)
-        return (
-            f"[音声書き起こし]\n{truncated}\n\n"
-            + _ANALYZE_INSTR_AUDIO
-            + ts_hint
-            + "\n"
-            + lang_instr
-            + "\n\n"
-            + _ANALYZE_JSON_FORMAT
-        )
+        return f"[音声書き起こし]\n{truncated}\n\n{_ANALYZE_INSTR_AUDIO}{ts_hint}\n{lang_instr}\n\n{_ANALYZE_JSON_FORMAT}"
 
     @staticmethod
     def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = []) -> str:
@@ -551,49 +698,33 @@ class VideoReviewer:
         parts.append("映像フレームと字幕テキストを参照して、日本語で具体的に回答してください。")
         return "\n\n".join(parts)
 
-    # ---------- 公開 API ----------
-
-    def analyze_frames(
-        self,
-        frames: list[Image.Image],
-        transcript: str = "",
-        timestamps: list[float] = [],
-        output_lang: str = "ja",
-    ) -> dict:
-        """フレームリストから動画を分析してサマリー・シーン・タグを返す"""
+    def analyze_frames(self, frames: list[Image.Image], transcript: str = "", timestamps: list[float] = [], output_lang: str = "ja") -> dict:
         self._ensure_loaded()
         prompt = self._build_analyze_prompt(transcript, timestamps, output_lang)
-        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=2048,
-                          timestamps=timestamps or None)
-
-        # JSON パース（コードブロック除去 → パース → 失敗時はフォールバック）
+        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=3072, timestamps=timestamps or None)
+        clean = self._strip_code_fences(raw)
         try:
-            clean = re.sub(r"^```[a-z]*\n?", "", raw.strip(), flags=re.MULTILINE)
-            clean = re.sub(r"\n?```$", "", clean.strip(), flags=re.MULTILINE)
             result = json.loads(clean.strip())
-            if isinstance(result.get("scenes"), list):
-                result["scenes"] = self._dedup_scenes(result["scenes"])
-            return result
         except Exception:
-            return {"summary": raw, "scenes": [], "tags": [], "genre": "不明"}
+            try:
+                maybe_json = self._extract_balanced_json(clean)
+                if maybe_json:
+                    result = json.loads(maybe_json)
+                else:
+                    raise ValueError("balanced JSON not found")
+            except Exception:
+                return self._salvage_analysis_fields(clean)
 
-    def qa_frames(self, frames: list[Image.Image], question: str,
-                  transcript: str = "", timestamps: list[float] = []) -> str:
-        """フレームリストと質問から回答を生成する"""
+        if isinstance(result.get("scenes"), list):
+            result["scenes"] = self._dedup_scenes(result["scenes"])
+        return result
+
+    def qa_frames(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = []) -> str:
         self._ensure_loaded()
         prompt = self._build_qa_prompt(question, transcript, timestamps)
-        return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=1024,
-                           timestamps=timestamps or None)
+        return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
 
-    def qa_frames_stream(self, frames: list[Image.Image], question: str,
-                         transcript: str = "", timestamps: list[float] = []):
-        """フレームリストと質問から回答をストリーミング生成する"""
+    def qa_frames_stream(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = []):
         self._ensure_loaded()
         prompt = self._build_qa_prompt(question, transcript, timestamps)
-        yield from self._infer_stream(
-            frames,
-            QA_SYSTEM,
-            prompt,
-            max_new_tokens=1024,
-            timestamps=timestamps or None,
-        )
+        yield from self._infer_stream(frames, QA_SYSTEM, prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)

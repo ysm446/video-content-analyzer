@@ -6,21 +6,22 @@
 
 ### 字幕生成・再生
 - **字幕生成**: Qwen3-ASR-1.7B + ForcedAligner で動画を文字起こし → 単語レベルのタイムスタンプ付き SRT 出力
-- **日本語翻訳**: Qwen3（1.7B / 4B / 8B / 14B から選択）で原文字幕を日本語に翻訳 → 日本語 SRT 出力
+- **日本語翻訳**: `llama.cpp` サーバー経由で Qwen3.5 GGUF（9B / 35B）を使って原文字幕を日本語に翻訳 → 日本語 SRT 出力
 - **2言語プレイヤー**: 原文と日本語訳を同時表示（Electron）
-- **単語ホバー辞書**: 原文字幕の単語にカーソルを乗せると日本語の品詞・意味・例文をツールチップ表示
+- **単語ホバー辞書**: 原文字幕の単語にカーソルを乗せると `Qwen3.5 2B GGUF` による日本語の品詞・意味・例文をツールチップ表示
 - **再生速度変更**: 0.5× / 0.75× / 1× / 1.25× / 1.5× をワンクリックで切り替え
 - **モデル切り替え**: 翻訳モデルと辞書モデルを UI から個別に選択・永続化（settings.json）
 
-### 動画レビュー（Qwen3-VL）
-- **内容分析**: 動画からフレームをサンプリングし、概要・シーン構成・タグ・ジャンルを JSON で出力
+### 動画レビュー（Qwen3.5 GGUF）
+- **内容分析**: 動画からフレームをサンプリングし、`llama.cpp` サーバー経由の Qwen3.5 GGUF で概要・シーン構成・タグ・ジャンルを JSON で出力
 - **フレームモード選択**: 均等サンプリング（秒間隔指定）とシーン変化検出（ffmpeg）から選択可能
 - **シーン自動検出**: 場面転換を検出して各シーンを内容ベースのタイトルで説明（可変件数）
 - **音声連携**: 「音声も解析する」チェックで ASR 書き起こしを VL 分析に組み合わせ精度向上
-- **Q&A**: 分析後にフレームを参照したまま自由質問が可能（音声書き起こしも活用）
+- **Q&A**: 分析後にフレームを参照したまま自由質問が可能（音声書き起こしも活用、出力上限 2048 トークン）
 - **目次（TOC）生成**: シーン分析結果から自動的にチャプター一覧を生成。タイトル・開始時刻・概要を編集したうえで JSON ファイルに保存できる
-- **モデル選択**: 4B（速い）/ 8B（高品質）を切り替え可能
-- **VRAM 解放**: 分析後に VL モデルを手動でアンロードできる
+- **モデル選択**: 9B（速い）/ 35B（高品質）を切り替え可能
+- **フレーム再利用**: 同じアプリ起動中は切り出し済みフレームをメモリ上にキャッシュし、再質問時に再利用
+- **VRAM 解放**: 分析後に動画レビュー用モデルを手動でアンロードできる
 
 ## 必要環境
 
@@ -50,11 +51,11 @@ conda activate main
 pip install -r requirements.txt
 ```
 
-> `transformers==4.57.6` に固定されています（Qwen3-ASR の `qwen-asr` パッケージとの互換性のため）。
+> `transformers==4.57.6` は ASR 用です。翻訳モデルは HuggingFace Transformers 版ではなく `llama.cpp` + GGUF を使用します。
 
-### 3. モデルをダウンロード
+### 3. モデルを配置
 
-初回起動時に自動ダウンロードされます。手動でダウンロードする場合:
+ASR モデルは初回起動時に自動ダウンロードされます。翻訳・動画レビュー用 GGUF は `models/` 配下に置いてください。
 
 ```bash
 set HF_HOME=./models
@@ -62,14 +63,25 @@ set HF_HOME=./models
 # ASR モデル
 python -c "from qwen_asr import Qwen3ASRModel; Qwen3ASRModel.from_pretrained('Qwen/Qwen3-ASR-1.7B', forced_aligner='Qwen/Qwen3-ForcedAligner-0.6B')"
 
-# 翻訳モデル（例: 1.7B）
-python -c "from transformers import AutoModelForCausalLM; AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-1.7B')"
-
-# VL モデル（例: 4B）
-python -c "from transformers import Qwen3VLForConditionalGeneration; Qwen3VLForConditionalGeneration.from_pretrained('huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated')"
 ```
 
-> モデルは `models/hub/` 以下に保存されます（gitignore 済み）。
+翻訳・辞書・動画レビュー用 GGUF は次の配置を前提にしています。
+
+```text
+models/
+├── Qwen3.5-2B-GGUF/
+│   └── Qwen3.5-2B-Q4_K_M.gguf
+├── Huihui-Qwen3.5-9B-abliterated-GGUF/
+│   ├── Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf
+│   └── Huihui-Qwen3.5-9B-abliterated.mmproj-f16.gguf
+└── Huihui-Qwen3.5-35B-A3B-abliterated-GGUF/
+    ├── Huihui-Qwen3.5-35B-A3B-abliterated.Q4_K_M.gguf
+    └── Huihui-Qwen3.5-35B-A3B-abliterated.mmproj-f16.gguf
+```
+
+`llama.cpp` は既定で `D:\GitHub\llama-b8466-bin-win-cuda-13.1-x64` を参照します。変更する場合は `LLAMA_CPP_DIR` 環境変数を設定してください。
+
+> HuggingFace のモデルは `models/hub/` 以下、GGUF は `models/` 直下の各フォルダ以下に保存されます。
 
 ### 4. npm パッケージをインストール
 
@@ -115,9 +127,9 @@ npm start
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| `GET` | `/review/models` | VL モデル一覧・状態 |
-| `POST` | `/review/models` | VL モデル切り替え |
-| `POST` | `/review/unload` | VL モデルを VRAM から解放 |
+| `GET` | `/review/models` | 動画レビュー用モデル一覧・状態 |
+| `POST` | `/review/models` | 動画レビュー用モデル切り替え |
+| `POST` | `/review/unload` | 動画レビュー用モデルを VRAM から解放 |
 | `POST` | `/review/analyze` | 動画分析（SSE） |
 | `POST` | `/review/qa` | 動画への質問（SSE） |
 
@@ -165,9 +177,9 @@ movie-review/
 ├── models/                    # HuggingFace モデルキャッシュ（gitignore）
 ├── backend/
 │   ├── asr.py                 # Qwen3-ASR-1.7B + ForcedAligner 推論
-│   ├── translator.py          # Qwen3 翻訳・辞書検索
+│   ├── translator.py          # Qwen3.5 GGUF 翻訳・辞書検索
 │   ├── subtitle.py            # SRT 生成・読み込みユーティリティ
-│   ├── video_reviewer.py      # Qwen3-VL 動画フレーム分析・Q&A
+│   ├── video_reviewer.py      # Qwen3.5 GGUF 動画フレーム分析・Q&A
 │   ├── vram.py                # VRAM 使用量制限ユーティリティ
 │   └── server.py              # FastAPI サーバー（全エンドポイント）
 ├── frontend/
@@ -189,12 +201,11 @@ movie-review/
 |---|---|---|
 | [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | 音声認識（多言語対応） | ~4 GB |
 | [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B) | 単語レベルのタイムスタンプ生成 | ~1 GB |
-| [Qwen/Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) | 日本語翻訳・辞書検索（省メモリ） | ~3.5 GB |
-| [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | 日本語翻訳・辞書検索（高品質） | ~8 GB |
-| [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) | 日本語翻訳・辞書検索 | ~16 GB |
-| [Qwen/Qwen3-14B](https://huggingface.co/Qwen/Qwen3-14B) | 日本語翻訳・辞書検索（最高品質） | ~28 GB |
-| [huihui-ai/Huihui-Qwen3-VL-4B](https://huggingface.co/huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated) | 動画レビュー・Q&A（速い） | ~10 GB |
-| [huihui-ai/Huihui-Qwen3-VL-8B](https://huggingface.co/huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated) | 動画レビュー・Q&A（高品質） | ~18 GB |
+| Qwen3.5 2B GGUF | 辞書検索（省メモリ） | ~3 GB |
+| Qwen3.5 9B GGUF | 日本語翻訳（速い） | ~8 GB |
+| Qwen3.5 35B GGUF | 日本語翻訳（高品質） | ~24 GB |
+| Qwen3.5 9B Vision GGUF | 動画レビュー・Q&A（速い） | ~10 GB |
+| Qwen3.5 35B Vision GGUF | 動画レビュー・Q&A（高品質） | ~26 GB |
 
 ## VRAM 管理
 
@@ -204,4 +215,4 @@ movie-review/
 - **モデル重み制限**: `max_memory` で GPU への重み配置を 90% 以内に制限
 - **視覚トークン制限**: フレーム 1 枚あたり最大 256 トークン（`vram.py` で調整可能）
 
-ASR と VL モデルは同時にロードされないよう設計されています（分析後 ASR は自動アンロード）。
+ASR と動画レビュー用モデルは同時にロードされないよう設計されています（分析後 ASR は自動アンロード）。

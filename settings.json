@@ -1,9 +1,9 @@
 {
-  "translator_model": "huihui-ai/Huihui-Qwen3-14B-abliterated-v2",
-  "lookup_model": "Qwen/Qwen3-1.7B",
-  "vl_model": "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
+  "translator_model": "gguf:qwen3.5-35b",
+  "lookup_model": "gguf:qwen3.5-2b",
+  "vl_model": "gguf:qwen3.5-35b",
   "frame_mode": "uniform",
   "analysis_mode": "balanced",
-  "volume": 0.6,
+  "volume": 0.8,
   "playback_rate": 1.0
 }

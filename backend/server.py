@@ -18,9 +18,9 @@ from pydantic import BaseModel
 os.environ["HF_HOME"] = str(Path(__file__).parent.parent / "models")
 
 from .asr import ASRProcessor
-from .translator import Translator
+from .translator import Translator, available_translator_models
 from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_output_path, split_long_segments
-from .video_reviewer import VideoReviewer
+from .video_reviewer import VideoReviewer, available_review_models
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -42,15 +42,20 @@ asr = ASRProcessor()
 translator        = Translator()  # バッチ翻訳用（翻訳完了後にアンロード）
 translator_lookup = Translator()  # 辞書検索用（常駐）
 video_reviewer    = VideoReviewer()
+_translator_model_ids = {m["id"] for m in available_translator_models() if m.get("exists")}
+_review_model_ids = {m["id"] for m in available_review_models() if m.get("exists")}
 
 # 前回選択したモデルを復元
 _s = load_settings()
 if _m := _s.get("translator_model"):
-    translator.set_model_id(_m)
+    if _m in _translator_model_ids:
+        translator.set_model_id(_m)
 if _m := _s.get("lookup_model"):
-    translator_lookup.set_model_id(_m)
+    if _m in _translator_model_ids:
+        translator_lookup.set_model_id(_m)
 if _m := _s.get("vl_model"):
-    video_reviewer.set_model_id(_m)
+    if _m in _review_model_ids:
+        video_reviewer.set_model_id(_m)
 
 
 @asynccontextmanager
@@ -59,6 +64,8 @@ async def lifespan(app: FastAPI):
     yield
     # シャットダウン時に VRAM を解放
     asr.unload()
+    translator.unload()
+    translator_lookup.unload()
     video_reviewer.unload()
 
 
@@ -380,27 +387,9 @@ class TOCSaveRequest(BaseModel):
 
 # ---------- 利用可能なモデル ----------
 
-VL_MODELS = [
-    {
-        "id":      "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
-        "label":   "Qwen3-VL 4B",
-        "vram_gb": 10,
-        "note":    "速い・省メモリ",
-    },
-    {
-        "id":      "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
-        "label":   "Qwen3-VL 8B",
-        "vram_gb": 18,
-        "note":    "高品質",
-    },
-]
+VL_MODELS = available_review_models()
 
-TRANSLATOR_MODELS = [
-    {"id": "Qwen/Qwen3-1.7B",  "label": "Qwen3-1.7B",  "vram_gb": 3.5,  "note": "速い・省メモリ"},
-    {"id": "Qwen/Qwen3-4B",    "label": "Qwen3-4B",    "vram_gb": 8.0,  "note": "高品質"},
-    {"id": "Qwen/Qwen3-8B",    "label": "Qwen3-8B",    "vram_gb": 16.0, "note": "高品質・大容量"},
-    {"id": "huihui-ai/Huihui-Qwen3-14B-abliterated-v2", "label": "Huihui Qwen3-14B v2", "vram_gb": 28.0, "note": "最高品質"},
-]
+TRANSLATOR_MODELS = available_translator_models()
 
 
 # ---------- エンドポイント ----------
@@ -447,12 +436,12 @@ def get_models():
     return {
         "translator": {
             "current":   translator.model_id,
-            "loaded":    translator.model is not None,
+            "loaded":    translator.loaded,
             "available": TRANSLATOR_MODELS,
         },
         "lookup": {
             "current":   translator_lookup.model_id,
-            "loaded":    translator_lookup.model is not None,
+            "loaded":    translator_lookup.loaded,
             "available": TRANSLATOR_MODELS,
         },
     }
@@ -461,7 +450,7 @@ def get_models():
 @app.post("/models")
 def set_models(req: SetModelRequest):
     """翻訳・辞書モデルを切り替える（ロード済みの場合は即アンロード・次回使用時に再ロード）"""
-    valid_ids = {m["id"] for m in TRANSLATOR_MODELS}
+    valid_ids = {m["id"] for m in TRANSLATOR_MODELS if m.get("exists")}
     to_save = {}
     if req.translator is not None:
         if req.translator not in valid_ids:
@@ -549,13 +538,15 @@ async def translate(req: TranslateRequest):
 
     segments = srt_file_to_segments(str(srt_path))
     total = len(segments)
+    if total == 0:
+        raise HTTPException(400, f"SRT に有効な字幕セグメントがありません: {srt_path}")
 
     async def stream():
         loop = asyncio.get_event_loop()
         translated = []
 
         # Translator が未ロードならロード（翻訳終了後に必ずアンロード）
-        if translator.model is None:
+        if not translator.loaded:
             yield sse({"status": "loading_model"})
             try:
                 await loop.run_in_executor(None, translator.load)
@@ -579,6 +570,9 @@ async def translate(req: TranslateRequest):
                 except Exception as e:
                     yield sse({"status": "error", "message": str(e)})
                     return
+
+                if not str(jp_text).strip():
+                    jp_text = seg["text"]
 
                 context_history.append((seg["text"], jp_text))
                 translated.append({**seg, "text": jp_text})
@@ -622,23 +616,23 @@ async def lookup(req: LookupRequest):
 
 
 # ================================================================
-# 動画レビュー（Qwen3-VL）
+# 動画レビュー（Qwen3.5 GGUF / llama.cpp）
 # ================================================================
 
 @app.get("/review/models")
 def get_vl_models():
-    """利用可能な VL モデルの一覧と現在の選択・ロード状態を返す"""
+    """利用可能な動画レビュー用モデルの一覧と現在の選択・ロード状態を返す"""
     return {
         "current":   video_reviewer.model_id,
-        "loaded":    video_reviewer.model is not None,
+        "loaded":    video_reviewer.loaded,
         "available": VL_MODELS,
     }
 
 
 @app.post("/review/models")
 def set_vl_model(req: SetVLModelRequest):
-    """VL モデルを切り替える"""
-    valid_ids = {m["id"] for m in VL_MODELS}
+    """動画レビュー用モデルを切り替える"""
+    valid_ids = {m["id"] for m in VL_MODELS if m.get("exists")}
     if req.model_id not in valid_ids:
         raise HTTPException(400, f"無効なモデルID: {req.model_id}")
     video_reviewer.set_model_id(req.model_id)
@@ -648,7 +642,7 @@ def set_vl_model(req: SetVLModelRequest):
 
 @app.post("/review/unload")
 async def unload_vl_model():
-    """VL モデルを手動でアンロードして VRAM を解放する"""
+    """動画レビュー用モデルを手動でアンロードして VRAM を解放する"""
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, video_reviewer.unload)
     return {"status": "ok"}
@@ -680,7 +674,7 @@ async def review_analyze(req: ReviewRequest):
         plan = _analysis_plan(req.analysis_mode, req.max_frames)
 
         try:
-            if video_reviewer.model is None:
+            if not video_reviewer.loaded:
                 yield sse({"status": "loading_model"})
                 try:
                     await loop.run_in_executor(None, video_reviewer.load)
@@ -776,7 +770,7 @@ async def review_analyze(req: ReviewRequest):
                 ],
             }
 
-            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, frames, meta)
+            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
         finally:
             await loop.run_in_executor(None, video_reviewer.unload)
@@ -806,7 +800,7 @@ async def review_qa(req: QARequest):
     async def stream():
         loop = asyncio.get_event_loop()
 
-        if video_reviewer.model is None:
+        if not video_reviewer.loaded:
             yield sse({"status": "loading_model"})
             try:
                 await loop.run_in_executor(None, video_reviewer.load)
@@ -814,7 +808,7 @@ async def review_qa(req: QARequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
-        cached = video_reviewer.get_cached_frames(str(video_path), req.frame_mode, req.max_frames)
+        cached = video_reviewer.get_cached_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval)
         if cached is not None:
             frames, meta = cached
         else:
@@ -838,6 +832,7 @@ async def review_qa(req: QARequest):
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
+            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
 
         yield sse({"status": "answering", "count": meta["count"]})
         q: queue.Queue[tuple[str, str]] = queue.Queue()
@@ -894,7 +889,7 @@ async def review_build_toc(req: TOCBuildRequest):
         loop = asyncio.get_event_loop()
         plan = _analysis_plan(req.analysis_mode, req.max_frames)
         try:
-            if video_reviewer.model is None:
+            if not video_reviewer.loaded:
                 yield sse({"status": "loading_model"})
                 try:
                     await loop.run_in_executor(None, video_reviewer.load)

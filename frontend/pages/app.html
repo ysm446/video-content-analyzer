@@ -281,8 +281,6 @@
           </div>
         </div>        <div class="card">
           <div class="section-label">動画レビュー設定</div>
-          <div style="margin-bottom:8px;font-size:12px;color:var(--text-dim)">ビジョンモデル</div>
-          <div id="vlModelList"></div>
           <div class="model-apply-row" style="margin-top:8px">
             <span class="status-dot" id="vlModelDot"></span><span id="vlModelStatusText" style="color:var(--text-dim)">接続中...</span>
             <button class="btn btn-ghost" id="unloadBtn" style="margin-left:auto;padding:4px 12px;font-size:12px" disabled>VRAM 解放</button>
@@ -1069,18 +1067,11 @@
       try{
         const res=await fetch(`${API}/review/models`); if(!res.ok) return
         const info=await res.json()
-        document.getElementById('vlModelList').innerHTML=info.available.map(m=>`<label class="model-option"><input type="radio" name="vlModel" value="${m.id}" ${m.id===info.current?'checked':''}><span>${m.label}</span><span class="model-meta">~${m.vram_gb} GB · ${m.note}</span></label>`).join('')
         const dot=document.getElementById('vlModelDot'), text=document.getElementById('vlModelStatusText'), unloadBtn=document.getElementById('unloadBtn')
         dot.classList.toggle('loaded',info.loaded)
         const label=info.available.find(m=>m.id===info.current)?.label ?? info.current
         text.textContent=info.loaded ? `${label} ロード済み` : `${label} 未ロード`
         unloadBtn.disabled=!info.loaded
-        document.querySelectorAll('input[name="vlModel"]').forEach(radio=>{
-          radio.addEventListener('change',async()=>{
-            await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:radio.value})})
-            await fetchReviewModelStatus()
-          })
-        })
       }catch{ document.getElementById('vlModelStatusText').textContent='バックエンド未起動' }
     }
     document.getElementById('unloadBtn').addEventListener('click',async()=>{ await fetch(`${API}/review/unload`,{method:'POST'}); await fetchReviewModelStatus() })
