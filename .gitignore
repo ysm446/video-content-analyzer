@@ -47,6 +47,9 @@ logs/
 Thumbs.db
 desktop.ini
 
+# ---------- バイナリ一式 ----------
+bin/
+
 # ---------- その他 ----------
 .env
 .cache/

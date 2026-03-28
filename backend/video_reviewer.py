@@ -20,7 +20,7 @@ from .model_catalog import (
 )
 from .vram import MAX_PIXELS_PER_FRAME
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", r"D:\GitHub\llama-b8466-bin-win-cuda-13.1-x64"))
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8466-bin-win-cuda-13.1-x64")))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
 LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "8192"))
