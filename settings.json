@@ -1,9 +1,0 @@
-{
-  "translator_model": "gguf:Qwen3.5-27B-GGUF/Qwen3.5-27B-Q4_K_M.gguf",
-  "lookup_model": "gguf:Qwen3.5-2B-GGUF/Qwen3.5-2B-Q4_K_M.gguf",
-  "vl_model": "gguf:Qwen3.5-27B-GGUF/Qwen3.5-27B-Q4_K_M.gguf",
-  "frame_mode": "uniform",
-  "analysis_mode": "balanced",
-  "volume": 0.45,
-  "playback_rate": 1.0
-}
