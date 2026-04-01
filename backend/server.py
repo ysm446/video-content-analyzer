@@ -9,9 +9,11 @@ from typing import Optional
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+import base64
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 # モデルロード前に HF_HOME を設定
@@ -41,9 +43,8 @@ def save_settings(data: dict) -> None:
 
 
 asr = ASRProcessor()
-translator        = Translator()  # バッチ翻訳用（翻訳完了後にアンロード）
-translator_lookup = Translator()  # 辞書検索用（常駐）
-video_reviewer    = VideoReviewer()
+translator     = Translator()
+video_reviewer = VideoReviewer()
 _translator_model_ids = {m["id"] for m in scan_translator_models() if m.get("exists")}
 _review_model_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
 
@@ -52,9 +53,6 @@ _s = load_settings()
 if _m := _s.get("translator_model"):
     if _m in _translator_model_ids:
         translator.set_model_id(_m)
-if _m := _s.get("lookup_model"):
-    if _m in _translator_model_ids:
-        translator_lookup.set_model_id(_m)
 if _m := _s.get("vl_model"):
     if _m in _review_model_ids:
         video_reviewer.set_model_id(_m)
@@ -67,7 +65,6 @@ async def lifespan(app: FastAPI):
     # シャットダウン時に VRAM を解放
     asr.unload()
     translator.unload()
-    translator_lookup.unload()
     video_reviewer.unload()
 
 
@@ -332,8 +329,7 @@ class LookupRequest(BaseModel):
 
 
 class SetModelRequest(BaseModel):
-    translator: Optional[str] = None  # バッチ翻訳モデル
-    lookup:     Optional[str] = None  # 辞書検索モデル
+    translator: Optional[str] = None
 
 
 class ReviewRequest(BaseModel):
@@ -387,6 +383,26 @@ class TOCSaveRequest(BaseModel):
     data: dict
 
 
+class CacheSaveRequest(BaseModel):
+    video_path: str
+    data: dict
+
+
+class CacheLoadRequest(BaseModel):
+    video_path: str
+
+
+class CacheThumbnailRequest(BaseModel):
+    video_path: str
+    filename: str
+    image_base64: str
+
+
+def _cache_dir(video_path: str) -> Path:
+    p = Path(video_path)
+    return p.parent / (p.stem + ".cache")
+
+
 # ---------- エンドポイント ----------
 
 @app.get("/health")
@@ -435,11 +451,6 @@ def get_models():
             "loaded":    translator.loaded,
             "available": translator_models,
         },
-        "lookup": {
-            "current":   translator_lookup.model_id,
-            "loaded":    translator_lookup.loaded,
-            "available": translator_models,
-        },
     }
 
 
@@ -453,14 +464,9 @@ def set_models(req: SetModelRequest):
             raise HTTPException(400, f"無効なモデルID: {req.translator}")
         translator.set_model_id(req.translator)
         to_save["translator_model"] = translator.model_id
-    if req.lookup is not None:
-        if req.lookup not in valid_ids:
-            raise HTTPException(400, f"無効なモデルID: {req.lookup}")
-        translator_lookup.set_model_id(req.lookup)
-        to_save["lookup_model"] = translator_lookup.model_id
     if to_save:
         save_settings(to_save)
-    return {"status": "ok", "translator": translator.model_id, "lookup": translator_lookup.model_id}
+    return {"status": "ok", "translator": translator.model_id}
 
 
 @app.post("/transcribe")
@@ -607,7 +613,7 @@ async def lookup(req: LookupRequest):
         raise HTTPException(400, "word が空です")
 
     loop = asyncio.get_event_loop()
-    definition = await loop.run_in_executor(None, translator_lookup.lookup, word)
+    definition = await loop.run_in_executor(None, translator.lookup, word)
     return {"word": word, "definition": definition}
 
 
@@ -1047,3 +1053,81 @@ def review_save_toc(req: TOCSaveRequest):
     except Exception as e:
         raise HTTPException(500, f"目次ファイルの保存に失敗: {e}")
     return {"status": "ok", "toc_path": str(toc_path)}
+
+
+# ---------- キャッシュ API ----------
+
+@app.post("/cache/save")
+def cache_save(req: CacheSaveRequest):
+    """動画キャッシュフォルダに data.json を保存する。"""
+    cache = _cache_dir(req.video_path)
+    cache.mkdir(exist_ok=True)
+    data = dict(req.data)
+    data["video"] = Path(req.video_path).name
+    data["saved_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        (cache / "data.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"キャッシュの保存に失敗: {e}")
+    return {"status": "ok", "cache_dir": str(cache)}
+
+
+@app.post("/cache/load")
+def cache_load(req: CacheLoadRequest):
+    """動画キャッシュフォルダから data.json を読み込む。"""
+    data_file = _cache_dir(req.video_path) / "data.json"
+    if not data_file.exists():
+        raise HTTPException(404, "キャッシュが見つかりません")
+    try:
+        data = json.loads(data_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"キャッシュの読み込みに失敗: {e}")
+    return {"status": "ok", "data": data}
+
+
+@app.post("/cache/thumbnail")
+def cache_thumbnail(req: CacheThumbnailRequest):
+    """base64 画像をキャッシュフォルダの thumbnails/ に保存する。"""
+    thumb_dir = _cache_dir(req.video_path) / "thumbnails"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    b64 = req.image_base64
+    if "," in b64:
+        b64 = b64.split(",", 1)[1]
+    try:
+        (thumb_dir / req.filename).write_bytes(base64.b64decode(b64))
+    except Exception as e:
+        raise HTTPException(500, f"サムネールの保存に失敗: {e}")
+    return {"status": "ok"}
+
+
+@app.post("/cache/patch")
+def cache_patch(req: CacheSaveRequest):
+    """既存の data.json に部分的なデータをマージして保存する。"""
+    cache = _cache_dir(req.video_path)
+    cache.mkdir(exist_ok=True)
+    data_file = cache / "data.json"
+    data: dict = {}
+    if data_file.exists():
+        try:
+            data = json.loads(data_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    data.update(req.data)
+    data["saved_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"キャッシュのパッチに失敗: {e}")
+    return {"status": "ok"}
+
+
+@app.get("/cache/image")
+def cache_image(video_path: str, name: str):
+    """キャッシュフォルダの画像ファイルを返す。"""
+    cache = _cache_dir(video_path).resolve()
+    img_path = (cache / name).resolve()
+    if not str(img_path).startswith(str(cache)):
+        raise HTTPException(403, "不正なパス")
+    if not img_path.exists():
+        raise HTTPException(404, "画像が見つかりません")
+    return FileResponse(img_path)

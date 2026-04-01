@@ -70,13 +70,25 @@
     .sub-toggle{width:auto;padding:0 9px;font-size:11px;font-weight:600;letter-spacing:.02em;gap:3px;opacity:1;transition:background .15s,border-color .15s,color .15s,opacity .15s,transform .1s}
     .sub-toggle.sub-off{opacity:.35;text-decoration:line-through}
 
-    .action-box{flex:1;padding:10px 12px;background:var(--surface);overflow:auto}
+    .action-box{padding:10px 12px;background:var(--surface);flex-shrink:0}
     .action-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
     .action-row .btn{justify-content:center}
-    .mini{font-size:11px;color:var(--text-dim);margin-top:8px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
-    .result-row{display:flex;gap:8px;margin-top:6px;font-size:12px;color:var(--text-dim)}
-    .elapsed-time{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
+    .result-row{display:flex;gap:6px;font-size:11px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .result-row.done{color:var(--success)} .result-row.error{color:var(--error)}
+    .elapsed-time{font-size:10px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+    .status-log{display:flex;flex-direction:column;gap:1px;margin-top:8px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+    .status-item{display:grid;grid-template-columns:8px 68px 1fr;gap:6px;align-items:center;padding:5px 8px;background:var(--surface2)}
+    .status-item+.status-item{border-top:1px solid var(--border)}
+    .status-dot-sm{width:6px;height:6px;border-radius:50%;background:var(--border);transition:background .2s;flex-shrink:0}
+    .status-dot-sm.running{background:var(--accent);animation:blink 1.2s ease-in-out infinite}
+    .status-dot-sm.done{background:var(--success)}
+    .status-dot-sm.error{background:var(--error)}
+    .status-name-sm{font-size:11px;color:var(--text-dim);white-space:nowrap}
+    .status-body{min-width:0}
+    .status-item .progress-wrap{margin-top:0}
+    .status-item .progress-bar-bg{height:3px}
+    .status-item .progress-label{margin-top:2px;font-size:11px}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
     .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);grid-area:analysis;overflow:hidden}
     .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -110,7 +122,9 @@
     .genre-tag{display:inline-block;padding:2px 10px;border-radius:99px;background:rgba(74,158,255,0.16);color:var(--accent);font-size:12px;margin-bottom:8px}
     .summary-text{font-size:13px;line-height:1.65}
     .scenes-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px}
+    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px;align-items:flex-start}
+    .scene-thumb{width:80px;height:auto;border-radius:4px;flex-shrink:0;background:#000;display:block}
+    .scene-info{display:flex;flex-direction:column;gap:3px;min-width:0}
     .scene-item[data-start]{cursor:pointer}
     .scene-item[data-start]:hover{filter:brightness(1.08)}
     .scene-time{font-size:11px;color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -193,19 +207,32 @@
               <button class="btn btn-primary" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
               <button class="btn btn-success" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
             </div>
-
-            <div class="mini">文字起こし</div>
-            <div class="progress-wrap" id="transcribeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="transcribeFill"></div></div><div class="progress-label" id="transcribeLabel">準備中...</div></div>
-            <div class="result-row" id="transcribeResult"></div>
-
-            <div class="mini">日本語字幕</div>
-            <div class="progress-wrap" id="translateProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="translateFill"></div></div><div class="progress-label" id="translateLabel">準備中...</div></div>
-            <div class="result-row" id="translateResult"></div>
-
-            <div class="mini">動画分析</div>
-            <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel">準備中...</div><div class="elapsed-time" id="analyzeElapsed"></div></div>
-            <div class="result-row" id="analyzeResult"></div>
-
+            <div class="status-log">
+              <div class="status-item">
+                <span class="status-dot-sm" id="transcribeDot"></span>
+                <span class="status-name-sm">文字起こし</span>
+                <div class="status-body">
+                  <div class="progress-wrap" id="transcribeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="transcribeFill"></div></div><div class="progress-label" id="transcribeLabel"></div></div>
+                  <div class="result-row" id="transcribeResult"></div>
+                </div>
+              </div>
+              <div class="status-item">
+                <span class="status-dot-sm" id="translateDot"></span>
+                <span class="status-name-sm">字幕生成</span>
+                <div class="status-body">
+                  <div class="progress-wrap" id="translateProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="translateFill"></div></div><div class="progress-label" id="translateLabel"></div></div>
+                  <div class="result-row" id="translateResult"></div>
+                </div>
+              </div>
+              <div class="status-item">
+                <span class="status-dot-sm" id="analyzeDot"></span>
+                <span class="status-name-sm">動画分析</span>
+                <div class="status-body">
+                  <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel"></div><div class="elapsed-time" id="analyzeElapsed"></div></div>
+                  <div class="result-row" id="analyzeResult"></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -213,9 +240,9 @@
         <aside class="analysis-column">
           <section class="analysis-pane">
             <div class="analysis-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-              <span>分析/編集</span>
+              <span>チャプター</span>
               <div style="display:flex;gap:6px">
-                <button class="btn btn-ghost" id="analysisTabBtn" style="font-size:11px;padding:3px 10px">分析</button>
+                <button class="btn btn-ghost" id="analysisTabBtn" style="font-size:11px;padding:3px 10px">概要</button>
                 <button class="btn btn-ghost" id="tocTabBtn" style="font-size:11px;padding:3px 10px">編集</button>
               </div>
             </div>
@@ -231,7 +258,7 @@
                   <div class="mini">タグ</div>
                   <div class="tags-wrap" id="tagsWrap"></div>
                 </div>
-                <div id="analysisEmpty" class="qa-placeholder" style="padding:16px">分析するとここに結果を表示します</div>
+                <div id="analysisEmpty" class="qa-placeholder" style="padding:16px">動画を分析するとチャプター概要が表示されます</div>
               </div>
               <div id="tocView" style="display:none">
                 <div class="card analysis-detail" style="display:block">
@@ -273,21 +300,11 @@
         </div>
 
         <div class="card">
-          <div class="section-label">音声・辞書モデル設定</div>
-          <div class="model-columns">
-            <div class="model-column">
-              <div class="model-group-label">翻訳モデル</div>
-              <div id="translatorModelList"></div>
-            </div>
-            <div class="model-column">
-              <div class="model-group-label">辞書モデル</div>
-              <div id="lookupModelList"></div>
-            </div>
-          </div>
+          <div class="section-label">翻訳モデル設定</div>
+          <div id="translatorModelList"></div>
           <div class="model-apply-row">
             <button class="btn btn-ghost" id="applyModelBtn" style="padding:5px 14px;font-size:13px">適用</button>
             <span class="status-dot" id="translatorDot"></span><span id="translatorStatusText" style="color:var(--text-dim)">接続中...</span>
-            <span class="status-dot" id="lookupDot" style="margin-left:8px"></span><span id="lookupStatusText" style="color:var(--text-dim)"></span>
           </div>
         </div>        <div class="card">
           <div class="section-label">動画レビュー設定</div>
@@ -375,6 +392,8 @@
     }
 
     function resetSection(kind){
+      const dot=document.getElementById(`${kind}Dot`)
+      if(dot) dot.className='status-dot-sm'
       document.getElementById(`${kind}Progress`).style.display='none'
       document.getElementById(`${kind}Fill`).style.width='0%'
       document.getElementById(`${kind}Result`).innerHTML=''
@@ -385,7 +404,10 @@
       }
     }
     function setProgress(kind,pct,label){
+      const dot=document.getElementById(`${kind}Dot`)
+      if(dot) dot.className='status-dot-sm running'
       document.getElementById(`${kind}Progress`).style.display='block'
+      document.getElementById(`${kind}Result`).innerHTML=''
       document.getElementById(`${kind}Fill`).style.width=pct+'%'
       document.getElementById(`${kind}Label`).textContent=label
     }
@@ -408,6 +430,10 @@
       document.getElementById('analyzeElapsed').textContent=`完了: ${s}秒`
     }
     function setResult(kind,ok,text){
+      const dot=document.getElementById(`${kind}Dot`)
+      if(dot) dot.className='status-dot-sm '+(ok?'done':'error')
+      const prog=document.getElementById(`${kind}Progress`)
+      if(prog) prog.style.display='none'
       const el=document.getElementById(`${kind}Result`)
       el.className='result-row '+(ok?'done':'error')
       el.innerHTML = ok ? `<span>✓</span><span>${text}</span>` : `<span>✗</span><span>${text}</span>`
@@ -482,15 +508,76 @@
       document.getElementById('analysisEmpty').style.display = 'none'
       document.getElementById('genreTag').textContent = result.genre || '不明'
       document.getElementById('summaryText').textContent = result.summary || ''
-      document.getElementById('scenesList').innerHTML = (result.scenes || []).map(s=>{
+      document.getElementById('scenesList').innerHTML = (result.scenes || []).map((s,i)=>{
         const start = Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp)
         const tsText = s.timestamp || (Number.isFinite(start) ? fmtTs(start) : '')
         const ts = tsText ? `<span class="scene-time">${escHtml(tsText)}</span>` : ''
         const label = s.label ? `${escHtml(s.label)}: ` : ''
         const attr = Number.isFinite(start) ? ` data-start="${start}"` : ''
-        return `<div class="scene-item"${attr}>${ts}<span class="scene-text">${label}${escHtml(s.description || '')}</span></div>`
+        const thumb = Number.isFinite(start) ? `<img class="scene-thumb" id="scene-thumb-${i}">` : ''
+        return `<div class="scene-item"${attr}>${thumb}<div class="scene-info">${ts}<span class="scene-text">${label}${escHtml(s.description || '')}</span></div></div>`
       }).join('')
       document.getElementById('tagsWrap').innerHTML = (result.tags || []).map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')
+    }
+
+    async function captureSceneThumbnails(scenes, analysisResult){
+      const video = document.getElementById('video')
+      if(!video.src || !video.duration) return
+      const savedTime = video.currentTime
+      const wasPaused = video.paused
+      if(!wasPaused) video.pause()
+      const canvas = document.createElement('canvas')
+      const aspect = video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 16/9
+      canvas.width = 160; canvas.height = Math.round(160 / aspect)
+      const ctx = canvas.getContext('2d')
+      const enriched = []
+      const thumbSaves = []
+      for(let i=0;i<scenes.length;i++){
+        const s = scenes[i]
+        const start = Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp)
+        const img = document.getElementById(`scene-thumb-${i}`)
+        const scene = {id: s.id||`scene_${i}`, start_sec: start, end_sec: s.end_sec??null, label: s.label||'', description: s.description||'', source:'auto'}
+        if(!Number.isFinite(start) || !img){ enriched.push(scene); continue }
+        const dataUrl = await new Promise(resolve=>{
+          video.addEventListener('seeked',()=>{ ctx.drawImage(video,0,0,canvas.width,canvas.height); resolve(canvas.toDataURL('image/jpeg',0.8)) },{once:true})
+          video.currentTime = Math.min(start, video.duration - 0.1)
+        })
+        img.src = dataUrl
+        const filename = `scene_${i}.jpg`
+        scene.thumbnail = `thumbnails/${filename}`
+        enriched.push(scene)
+        thumbSaves.push({filename, dataUrl})
+      }
+      video.currentTime = savedTime
+      if(!wasPaused) video.play()
+      if(!state.videoPath) return
+      for(const {filename, dataUrl} of thumbSaves){
+        fetch(`${API}/cache/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,filename,image_base64:dataUrl})}).catch(()=>{})
+      }
+      if(analysisResult){
+        const cacheData = {
+          duration: video.duration,
+          transcript: state.origTranscript||'',
+          meta: {genre: analysisResult.genre||'', summary: analysisResult.summary||'', tags: analysisResult.tags||[]},
+          scenes: enriched,
+          toc: state.tocData?.toc||[],
+          bookmarks: state.tocData?.bookmarks||[]
+        }
+        fetch(`${API}/cache/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:cacheData})}).catch(()=>{})
+      }
+    }
+
+    function patchCache(patch){
+      if(!state.videoPath) return
+      fetch(`${API}/cache/patch`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:patch})}).catch(()=>{})
+    }
+
+    function loadCacheThumbnails(scenes, videoPath){
+      scenes.forEach((s,i)=>{
+        if(!s.thumbnail) return
+        const img = document.getElementById(`scene-thumb-${i}`)
+        if(img) img.src = `${API}/cache/image?video_path=${encodeURIComponent(videoPath)}&name=${encodeURIComponent(s.thumbnail)}`
+      })
     }
 
     function renderTocDetail(data){
@@ -807,7 +894,22 @@
       }
     }
 
-    async function tryAutoLoadToc(videoFilePath){
+    async function tryAutoLoadCache(videoFilePath){
+      // 新キャッシュ (video.cache/data.json) を優先、なければ旧 .toc.json にフォールバック
+      try{
+        const res=await fetch(`${API}/cache/load`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:videoFilePath})})
+        if(res.ok){
+          const {data}=await res.json()
+          if(data.transcript) state.origTranscript=data.transcript
+          const analysisResult={genre:data.meta?.genre, summary:data.meta?.summary, tags:data.meta?.tags||[], scenes:data.scenes||[]}
+          renderAnalysisDetail(analysisResult)
+          loadCacheThumbnails(data.scenes||[], videoFilePath)
+          renderTocDetail({...data, toc:data.toc||[], bookmarks:data.bookmarks||[]})
+          setResult('toc',true,'キャッシュから読み込み済み')
+          return
+        }
+      }catch{}
+      // フォールバック: 旧 .toc.json
       try{
         const res=await fetch(`${API}/review/toc/load`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:videoFilePath})})
         if(!res.ok) return
@@ -825,7 +927,7 @@
       setCurrentVideo(p)
       loadVideo(p)
       await tryAutoLoadSrt(p)
-      await tryAutoLoadToc(p)
+      await tryAutoLoadCache(p)
     }
 
     document.getElementById('loadVideoBtn').addEventListener('click',selectVideo)
@@ -871,6 +973,10 @@
         state.tocPath=body.toc_path
         renderAnalysisDetail(analysisFromTocData(data))
         setResult('toc',true,state.tocPath)
+        // キャッシュにも反映
+        const video=document.getElementById('video')
+        const cacheData={duration:video.duration||0, meta:data.meta||{}, scenes:(data.toc||[]).map((ch,i)=>({id:ch.id||`scene_${i}`,start_sec:ch.start_sec,end_sec:ch.end_sec,label:ch.title||'',description:ch.summary||'',source:'manual'})), toc:data.toc||[], bookmarks:data.bookmarks||[]}
+        fetch(`${API}/cache/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:cacheData})}).catch(()=>{})
       }catch(e){
         setResult('toc',false,`接続エラー: ${e.message}`)
       }
@@ -1057,11 +1163,9 @@
     async function fetchLanguageModels(){
       try{
         const res=await fetch(`${API}/models`); if(!res.ok) return
-        const {translator:tInfo,lookup:lInfo}=await res.json()
+        const {translator:tInfo}=await res.json()
         renderModelList('translatorModelList','translatorModel',tInfo.available,tInfo.current)
-        renderModelList('lookupModelList','lookupModel',lInfo.available,lInfo.current)
         setModelStatus('translatorDot','translatorStatusText',tInfo,'翻訳')
-        setModelStatus('lookupDot','lookupStatusText',lInfo,'辞書')
       }catch{
         document.getElementById('translatorStatusText').textContent='バックエンド未起動'
       }
@@ -1069,8 +1173,7 @@
 
     document.getElementById('applyModelBtn').addEventListener('click',async()=>{
       const tSel=document.querySelector('input[name="translatorModel"]:checked')
-      const lSel=document.querySelector('input[name="lookupModel"]:checked')
-      const body={}; if(tSel) body.translator=tSel.value; if(lSel) body.lookup=lSel.value
+      const body={}; if(tSel) body.translator=tSel.value
       await fetch(`${API}/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       await fetchLanguageModels()
     })
@@ -1105,7 +1208,7 @@
           if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
           else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
           else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
-          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; loadSrt(state.origSrtPath,'orig') }
+          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
           else if(event.status==='error') setResult('transcribe',false,event.message)
         })
       }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`) }
@@ -1142,8 +1245,9 @@
           else if(event.status==='done'){
             stopAnalyzeTimer()
             setProgress('analyze',100,'完了')
-            setResult('analyze',true,'分析完了（編集タブに目次下書きを作成）')
+            setResult('analyze',true,'分析完了（チャプター編集タブに下書きを作成）')
             renderAnalysisDetail(event.result)
+            captureSceneThumbnails(event.result?.scenes||[], event.result)
             state.tocPath=null
             renderTocDetail(buildTocFromAnalysis(event.result))
             setResult('toc',true,'未保存（保存ボタンでJSON保存）')
