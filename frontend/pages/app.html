@@ -29,6 +29,8 @@
     .model-pill.off{background:linear-gradient(135deg,#2b2f38 0%,#232830 100%);color:#bfc7d6;box-shadow:none}
     .model-pill.off:hover{filter:none;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset}
     .model-pill.loading{background:linear-gradient(135deg,#3f8ef0 0%,var(--accent-hover) 100%)}
+    .model-pill-icon{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
+    .model-pill-icon svg.lucide{width:15px;height:15px;stroke-width:1.8}
     .model-pill-text{min-width:0;flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
     .model-pill-caret{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
     .model-pill-caret svg.lucide{width:16px;height:16px;stroke-width:1.8}
@@ -124,10 +126,6 @@
     .modal-loaded-badge{font-size:10px;padding:2px 8px;border-radius:99px;background:rgba(72,199,142,.15);color:var(--success);flex-shrink:0;margin-left:auto}
     .modal-footer-row{display:flex;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--border)}
     .modal-status-text{font-size:12px;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .model-status-dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.45);border:1.5px solid rgba(255,255,255,.24);transition:background .2s,border-color .2s;flex-shrink:0}
-    .model-pill.off .model-status-dot{background:#5d6675;border-color:#3f4652}
-    .model-status-dot.loaded{background:var(--success)}
-    .model-status-dot.loading{background:var(--accent);animation:blink 1.2s ease-in-out infinite}
 
     .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);grid-area:analysis;overflow:hidden}
     .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -195,7 +193,7 @@
     </div>
     <div class="sidebar-center">
       <button class="model-pill" id="modelStatusBtn" title="モデル未ロード">
-        <span class="model-status-dot" id="sidebarModelDot"></span>
+        <span class="model-pill-icon"><i data-lucide="cpu"></i></span>
         <span class="model-pill-text" id="modelStatusLabel">モデルをロードしてください</span>
         <span class="model-pill-caret"><i data-lucide="chevron-down"></i></span>
       </button>
@@ -1225,12 +1223,10 @@
 
     // ---------- モデル管理モーダル ----------
     function updateModelStatusUi(info){
-      const dot=document.getElementById('sidebarModelDot')
       const btn=document.getElementById('modelStatusBtn')
       const labelEl=document.getElementById('modelStatusLabel')
       const unloadBtn=document.getElementById('topbarModelUnloadBtn')
-      if(!dot||!btn||!labelEl||!unloadBtn) return
-      dot.className='model-status-dot'+(info.loaded?' loaded':'')
+      if(!btn||!labelEl||!unloadBtn) return
       const label=info.available?.find(m=>m.id===info.current)?.label ?? info.current ?? ''
       labelEl.textContent = info.loaded ? (label || 'ロード済みモデル') : 'モデルをロードしてください'
       btn.title = info.loaded ? `ロード済み: ${label}` : (label ? `モデルをロードしてください: ${label}` : 'モデルをロードしてください')
@@ -1299,7 +1295,6 @@
       // 明示的にロード
       document.getElementById('modalLoadBtn').disabled=true
       document.getElementById('modalStatusText').textContent='ロード中...'
-      document.getElementById('sidebarModelDot').className='model-status-dot loading'
       document.getElementById('modelStatusBtn').classList.add('loading')
       await fetch(`${API}/review/load`,{method:'POST'})
       await refreshModalModelList()
