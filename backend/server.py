@@ -793,8 +793,14 @@ async def review_analyze(req: ReviewRequest):
                         )
                         refined_entries.extend(rel_entries)
                     except Exception as e:
-                        yield sse({"status": "error", "message": f"refine失敗: {e}"})
-                        return
+                        yield sse({
+                            "status": "refine_warning",
+                            "message": f"refine失敗のため coarse 結果で継続します: {e}",
+                            "current": idx,
+                            "total": len(targets),
+                            "range": {"start_sec": start, "end_sec": end},
+                        })
+                        continue
                 entries = _merge_toc_entries(entries + refined_entries, duration)
             entries = _ground_entries_with_transcript(entries, transcript, duration, req.output_lang)
 
@@ -1017,8 +1023,14 @@ async def review_build_toc(req: TOCBuildRequest):
                         )
                         refined_entries.extend(rel_entries)
                     except Exception as e:
-                        yield sse({"status": "error", "message": f"refine失敗: {e}"})
-                        return
+                        yield sse({
+                            "status": "refine_warning",
+                            "message": f"refine失敗のため coarse 結果で継続します: {e}",
+                            "current": idx,
+                            "total": len(targets),
+                            "range": {"start_sec": start, "end_sec": end},
+                        })
+                        continue
                 entries = _merge_toc_entries(entries + refined_entries, duration)
             entries = _ground_entries_with_transcript(entries, req.transcript, duration, req.output_lang)
             toc_doc = {

@@ -429,8 +429,9 @@ class VideoReviewer:
             "genre": genre or "不明",
         }
 
-    def _frame_to_data_url(self, frame: Image.Image) -> str:
-        max_side = int((MAX_PIXELS_PER_FRAME or 200704) ** 0.5)
+    def _frame_to_data_url(self, frame: Image.Image, max_pixels: int | None = None) -> str:
+        pixel_limit = int(max_pixels or MAX_PIXELS_PER_FRAME or 200704)
+        max_side = max(32, int(pixel_limit ** 0.5))
         image = frame.copy().convert("RGB")
         image.thumbnail((max_side, max_side))
         buf = io.BytesIO()
@@ -438,15 +439,15 @@ class VideoReviewer:
         encoded = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:image/jpeg;base64,{encoded}"
 
-    def _build_messages(self, frames: list[Image.Image], system: str, prompt: str, timestamps: list[float] | None = None) -> list[dict]:
+    def _build_messages(self, frames: list[Image.Image], system: str, prompt: str, timestamps: list[float] | None = None, max_pixels: int | None = None) -> list[dict]:
         content: list[dict] = []
         if timestamps and len(timestamps) == len(frames):
             for frame, ts in zip(frames, timestamps):
-                content.append({"type": "image_url", "image_url": {"url": self._frame_to_data_url(frame)}})
+                content.append({"type": "image_url", "image_url": {"url": self._frame_to_data_url(frame, max_pixels=max_pixels)}})
                 content.append({"type": "text", "text": f"[{self._fmt_ts(ts)}]"})
         else:
             for frame in frames:
-                content.append({"type": "image_url", "image_url": {"url": self._frame_to_data_url(frame)}})
+                content.append({"type": "image_url", "image_url": {"url": self._frame_to_data_url(frame, max_pixels=max_pixels)}})
         content.append({"type": "text", "text": prompt})
         return [
             {"role": "system", "content": system},
@@ -454,10 +455,30 @@ class VideoReviewer:
         ]
 
     def _infer(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None) -> str:
-        messages = self._build_messages(frames, system, prompt, timestamps)
         print(f"[VideoReviewer] 推論開始: フレーム={len(frames)}枚")
         t0 = time.time()
-        result = _vision_server.chat(self.model_id, messages, max_new_tokens)
+        try:
+            messages = self._build_messages(frames, system, prompt, timestamps)
+            result = _vision_server.chat(self.model_id, messages, max_new_tokens)
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "failed to process image" not in msg:
+                raise
+            retry_pixels = min(int(MAX_PIXELS_PER_FRAME or 200704), 128 * 28 * 28)
+            retry_frames = frames[: min(len(frames), 12)]
+            retry_timestamps = timestamps[:len(retry_frames)] if timestamps else None
+            print(
+                f"[VideoReviewer] 画像処理エラーのため縮小再試行: "
+                f"frames={len(retry_frames)}/{len(frames)}, max_pixels={retry_pixels}"
+            )
+            messages = self._build_messages(
+                retry_frames,
+                system,
+                prompt,
+                retry_timestamps,
+                max_pixels=retry_pixels,
+            )
+            result = _vision_server.chat(self.model_id, messages, max_new_tokens)
         elapsed = time.time() - t0
         print(f"[VideoReviewer] 推論完了: {elapsed:.1f}秒")
         return self._clean_generated_text(result)
