@@ -55,9 +55,15 @@
     .video-wrap{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0}
     #video{max-width:100%;max-height:100%;display:block;cursor:pointer}
     .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim)}
-    .subtitle-area{background:#111;border-top:1px solid var(--border);padding:12px 20px}
-    #subtitleOrig{font-size:17px;color:#d0d0d0;min-height:24px;font-family:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif;text-align:center}
-    #subtitleJp{font-size:19px;color:#fff;min-height:26px;font-family:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif;text-align:center}
+    .subtitle-area{background:#111;border-top:1px solid var(--border);padding:12px 20px;--subtitle-font:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif}
+    .subtitle-overlay-host{position:absolute;left:0;right:0;bottom:42px;pointer-events:none;z-index:3}
+    .subtitle-area.overlay{padding:0 22px;background:transparent;border-top:none;pointer-events:none}
+    .subtitle-area.overlay #subtitleOrig,
+    .subtitle-area.overlay #subtitleJp{max-width:min(92%,920px);margin:0 auto;padding:4px 14px;background:transparent;border-radius:0;text-shadow:0 1px 2px rgba(0,0,0,.95),0 3px 10px rgba(0,0,0,.72)}
+    .subtitle-area.overlay #subtitleOrig{color:#e2e2e2}
+    .subtitle-area.overlay #subtitleJp{margin-top:8px}
+    #subtitleOrig{font-size:17px;color:#d0d0d0;min-height:24px;font-family:var(--subtitle-font);text-align:center}
+    #subtitleJp{font-size:19px;color:#fff;min-height:26px;font-family:var(--subtitle-font);text-align:center}
     #subtitleOrig .sub-word{display:inline-block;border-radius:3px;padding:0 1px;transition:color .12s,background .12s}
     #subtitleOrig .sub-word-active{color:#fff;background:rgba(70,70,70,.62)}
     #dictTooltip{position:fixed;display:none;background:#1f2530;border:1px solid #4a5568;border-radius:8px;padding:10px 12px;max-width:320px;font-size:13px;line-height:1.6;color:#dbe6ff;box-shadow:0 6px 24px rgba(0,0,0,.65);z-index:9999;pointer-events:none;white-space:pre-wrap}
@@ -153,13 +159,35 @@
     .model-apply-row{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
     .status-dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim)} .status-dot.loaded{background:var(--success)}
     .frame-setting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    .frame-slider{accent-color:var(--accent);min-width:180px}
+    .frame-slider{-webkit-appearance:none;appearance:none;width:220px;min-width:120px;height:20px;border-radius:99px;background:transparent;outline:none;cursor:pointer;accent-color:var(--accent)}
+    .frame-slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--accent);cursor:pointer;margin-top:-3.5px}
+    .frame-slider::-webkit-slider-runnable-track{height:5px;border-radius:99px;background:var(--surface2)}
     .frame-hint{font-size:12px;color:var(--text-dim);margin-top:6px}
     .analysis-detail{margin:0;border:none;background:transparent;border-radius:0;padding:0}
+    .analysis-section{padding:8px 0}
+    .analysis-section+.analysis-section{border-top:1px solid var(--border)}
+    .analysis-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0;background:none;border:none;color:var(--text);cursor:pointer;text-align:left}
+    .analysis-toggle:hover{color:#fff}
+    .analysis-toggle-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+    .analysis-toggle-icon{display:inline-flex;align-items:center;justify-content:center;color:var(--text-dim);transition:transform .15s ease}
+    .analysis-toggle[aria-expanded="false"] .analysis-toggle-icon{transform:rotate(-90deg)}
+    .analysis-section-body{margin-top:8px}
     .genre-tag{display:inline-block;padding:2px 10px;border-radius:99px;background:rgba(74,158,255,0.16);color:var(--accent);font-size:12px;margin-bottom:8px}
     .summary-text{font-size:13px;line-height:1.65}
     .scenes-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
     .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px;align-items:stretch}
+    .scene-actions{position:relative;display:flex;align-items:flex-start;margin-left:auto}
+    .scene-menu-btn{width:28px;height:28px;border:none;background:none;color:var(--text-dim);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+    .scene-menu-btn:hover{background:rgba(255,255,255,.06);color:var(--text)}
+    .scene-menu-btn svg.lucide{width:16px;height:16px;stroke-width:1.8}
+    .scene-menu{position:absolute;top:32px;right:0;min-width:108px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.34);display:flex;flex-direction:column;gap:4px;z-index:8}
+    .scene-menu-item{width:100%;padding:7px 10px;border:none;background:none;border-radius:6px;color:var(--text);text-align:left;cursor:pointer;font-size:12px}
+    .scene-menu-item:hover{background:var(--surface2)}
+    .scene-edit{display:flex;flex-direction:column;gap:8px;width:100%}
+    .scene-edit-grid{display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px}
+    .scene-edit input,.scene-edit textarea{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px}
+    .scene-edit textarea{min-height:72px;resize:vertical}
+    .scene-edit-actions{display:flex;gap:6px;justify-content:flex-end}
     .scene-thumb-wrap{width:112px;min-height:84px;border-radius:4px;flex-shrink:0;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
     .scene-thumb{width:100%;height:100%;border-radius:4px;display:block;object-fit:contain}
     .scene-info{display:flex;flex-direction:column;gap:3px;min-width:0}
@@ -225,10 +253,13 @@
                 <button class="btn btn-primary" id="loadVideoBtn2"><i data-lucide="folder-open"></i> 動画を選択</button>
               </div>
               <video id="video" style="display:none"></video>
+              <div class="subtitle-overlay-host" id="subtitleOverlayHost"></div>
             </div>
+            <div id="subtitleBelowHost">
             <div class="subtitle-area">
               <div id="subtitleOrig"></div>
               <div id="subtitleJp"></div>
+            </div>
             </div>
             <div class="controls">
               <button class="ctrl-btn" id="prevSubBtn" title="前の字幕へ"><i data-lucide="skip-back"></i></button>
@@ -292,36 +323,41 @@
           <section class="analysis-pane">
             <div class="analysis-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span>チャプター</span>
-              <div style="display:flex;gap:6px">
-                <button class="btn btn-ghost" id="analysisTabBtn" style="font-size:11px;padding:3px 10px">概要</button>
-                <button class="btn btn-ghost" id="tocTabBtn" style="font-size:11px;padding:3px 10px">編集</button>
-              </div>
             </div>
             <div class="analysis-scroll">
               <div id="analysisView">
                 <div class="card analysis-detail" id="analysisDetail" style="display:none">
-                  <span class="genre-tag" id="genreTag"></span>
-                  <div class="summary-text" id="summaryText"></div>
-                  <hr class="divider">
-                  <div class="mini">シーン</div>
-                  <div class="scenes-list" id="scenesList"></div>
-                  <hr class="divider">
-                  <div class="mini">タグ</div>
-                  <div class="tags-wrap" id="tagsWrap"></div>
+                  <section class="analysis-section">
+                    <button class="analysis-toggle" id="summaryToggleBtn" type="button" aria-expanded="true">
+                      <span class="analysis-toggle-label">概要</span>
+                      <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
+                    </button>
+                    <div class="analysis-section-body" id="summarySectionBody">
+                      <span class="genre-tag" id="genreTag"></span>
+                      <div class="summary-text" id="summaryText"></div>
+                    </div>
+                  </section>
+                  <section class="analysis-section">
+                    <button class="analysis-toggle" id="tagsToggleBtn" type="button" aria-expanded="true">
+                      <span class="analysis-toggle-label">タグ</span>
+                      <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
+                    </button>
+                    <div class="analysis-section-body" id="tagsSectionBody">
+                      <div class="tags-wrap" id="tagsWrap"></div>
+                    </div>
+                  </section>
+                  <section class="analysis-section">
+                    <button class="analysis-toggle" id="scenesToggleBtn" type="button" aria-expanded="true">
+                      <span class="analysis-toggle-label">シーン</span>
+                      <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
+                    </button>
+                    <div class="analysis-section-body" id="scenesSectionBody">
+                      <div class="result-row" id="tocResult" style="margin-bottom:8px"></div>
+                      <div class="scenes-list" id="scenesList"></div>
+                    </div>
+                  </section>
                 </div>
                 <div id="analysisEmpty" class="qa-placeholder" style="padding:16px">動画を分析するとチャプター概要が表示されます</div>
-              </div>
-              <div id="tocView" style="display:none">
-                <div class="card analysis-detail" style="display:block">
-                  <div class="model-apply-row" style="margin-top:0">
-                    <button class="btn btn-ghost" id="tocAddBtn" style="padding:4px 10px;font-size:12px"><i data-lucide="plus"></i> チャプター追加</button>
-                    <button class="btn btn-primary" id="tocSaveBtn" style="margin-left:auto;padding:4px 12px;font-size:12px">保存</button>
-                  </div>
-                  <div class="result-row" id="tocResult" style="margin-top:8px"></div>
-                  <div class="mini">チャプター</div>
-                  <div id="tocEditList" class="scenes-list"></div>
-                  <div id="tocEmpty" class="qa-placeholder" style="padding:16px;display:none">目次データがありません</div>
-                </div>
               </div>
             </div>
           </section>
@@ -385,6 +421,22 @@
               <option value="en">英語</option>
             </select>
           </div>
+          <div class="frame-setting" style="margin-top:8px">
+            <label>字幕表示：</label>
+            <select id="subtitleDisplay" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+              <option value="below" selected>下部表示</option>
+              <option value="overlay">動画に重ねる</option>
+            </select>
+          </div>
+          <div class="frame-setting" style="margin-top:8px">
+            <label>字幕フォント：</label>
+            <select id="subtitleFont" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+              <option value="noto" selected>Noto Sans JP</option>
+              <option value="biz">BIZ UDPGothic</option>
+              <option value="yugothic">Yu Gothic UI</option>
+              <option value="meiryo">Meiryo</option>
+            </select>
+          </div>
           <div class="frame-hint" id="frameHint"></div>
         </div>
       </main>
@@ -418,7 +470,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, showAnalysisPanel:true, showQaPanel:true }
+    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{summary:true,tags:true,scenes:true} }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
@@ -444,7 +496,6 @@
         resetSection('translate')
         document.getElementById('translateBtn').disabled = true
         clearAnalysisDetail()
-        renderTocEditor()
       }
       setQAEnabled(!!path)
     }
@@ -531,20 +582,39 @@
     function clearAnalysisDetail(){
       document.getElementById('analysisDetail').style.display = 'none'
       document.getElementById('analysisEmpty').style.display = 'flex'
+      state.openSceneMenuId = null
+      state.editingSceneId = null
       document.getElementById('genreTag').textContent = ''
       document.getElementById('summaryText').textContent = ''
       document.getElementById('scenesList').innerHTML = ''
       document.getElementById('tagsWrap').innerHTML = ''
     }
 
+    function setAnalysisSectionExpanded(name, expanded){
+      const btn=document.getElementById(`${name}ToggleBtn`)
+      const body=document.getElementById(`${name}SectionBody`)
+      if(!btn||!body) return
+      state.analysisExpanded[name] = !!expanded
+      btn.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+      body.style.display = expanded ? '' : 'none'
+    }
+
+    function toggleAnalysisSection(name){
+      const btn=document.getElementById(`${name}ToggleBtn`)
+      if(!btn) return
+      const expanded=btn.getAttribute('aria-expanded') !== 'false'
+      const next=!expanded
+      setAnalysisSectionExpanded(name, next)
+      const keyMap={
+        summary:'analysis_summary_expanded',
+        tags:'analysis_tags_expanded',
+        scenes:'analysis_scenes_expanded',
+      }
+      saveUiSettings({[keyMap[name]]:next})
+    }
+
     function switchAnalysisPane(name){
-      const isToc=name==='toc'
-      document.getElementById('analysisView').style.display=isToc?'none':''
-      document.getElementById('tocView').style.display=isToc?'':'none'
-      document.getElementById('analysisTabBtn').classList.toggle('btn-primary',!isToc)
-      document.getElementById('analysisTabBtn').classList.toggle('btn-ghost',isToc)
-      document.getElementById('tocTabBtn').classList.toggle('btn-primary',isToc)
-      document.getElementById('tocTabBtn').classList.toggle('btn-ghost',!isToc)
+      document.getElementById('analysisView').style.display=''
     }
 
     function parseTsToSec(ts){
@@ -564,18 +634,50 @@
       if(!result) return
       document.getElementById('analysisDetail').style.display = 'block'
       document.getElementById('analysisEmpty').style.display = 'none'
+      setAnalysisSectionExpanded('summary', state.analysisExpanded.summary !== false)
+      setAnalysisSectionExpanded('tags', state.analysisExpanded.tags !== false)
+      setAnalysisSectionExpanded('scenes', state.analysisExpanded.scenes !== false)
       document.getElementById('genreTag').textContent = result.genre || '不明'
       document.getElementById('summaryText').textContent = result.summary || ''
-      document.getElementById('scenesList').innerHTML = (result.scenes || []).map((s,i)=>{
+      const tocRows=Array.isArray(state.tocData?.toc) ? state.tocData.toc : []
+      const sceneRows=(tocRows.length ? tocRows.map(ch=>({
+        id: ch.id || '',
+        timestamp: ch.timestamp || fmtTs(ch.start_sec||0),
+        label: ch.title || '',
+        description: ch.summary || '',
+        start_sec: ch.start_sec,
+      })) : (result.scenes || []))
+      document.getElementById('scenesList').innerHTML = sceneRows.map((s,i)=>{
         const start = Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp)
         const tsText = s.timestamp || (Number.isFinite(start) ? fmtTs(start) : '')
         const ts = tsText ? `<span class="scene-time">${escHtml(tsText)}</span>` : ''
         const label = s.label ? `${escHtml(s.label)}: ` : ''
         const attr = Number.isFinite(start) ? ` data-start="${start}"` : ''
+        const sceneId = escHtml(s.id || `scene_${i}`)
         const thumb = Number.isFinite(start) ? `<div class="scene-thumb-wrap"><img class="scene-thumb" id="scene-thumb-${i}"></div>` : ''
-        return `<div class="scene-item"${attr}>${thumb}<div class="scene-info">${ts}<span class="scene-text">${label}${escHtml(s.description || '')}</span></div></div>`
+        const editing = state.editingSceneId === (s.id || `scene_${i}`)
+        const menuOpen = state.openSceneMenuId === (s.id || `scene_${i}`)
+        const editor = editing ? `
+          <div class="scene-edit" data-scene-id="${sceneId}">
+            <div class="scene-edit-grid">
+              <input class="scene-edit-start" type="number" min="0" step="0.1" value="${Number.isFinite(start)?start:0}">
+              <input class="scene-edit-title" type="text" value="${escHtml(s.label || '')}" placeholder="タイトル">
+            </div>
+            <textarea class="scene-edit-summary" placeholder="概要">${escHtml(s.description || '')}</textarea>
+            <div class="scene-edit-actions">
+              <button class="btn btn-ghost scene-edit-cancel" type="button" style="padding:5px 10px;font-size:12px">キャンセル</button>
+              <button class="btn btn-primary scene-edit-save" type="button" style="padding:5px 12px;font-size:12px">保存</button>
+            </div>
+          </div>` : `${ts}<span class="scene-text">${label}${escHtml(s.description || '')}</span>`
+        const menu = tocRows.length ? `
+          <div class="scene-actions">
+            <button class="scene-menu-btn" type="button" data-scene-menu="${sceneId}" title="操作"><i data-lucide="ellipsis"></i></button>
+            ${menuOpen ? `<div class="scene-menu"><button class="scene-menu-item" type="button" data-scene-edit="${sceneId}">編集</button><button class="scene-menu-item" type="button" data-scene-delete="${sceneId}">削除</button></div>` : ''}
+          </div>` : ''
+        return `<div class="scene-item"${attr} data-scene-id="${sceneId}">${thumb}<div class="scene-info">${editor}</div>${menu}</div>`
       }).join('')
       document.getElementById('tagsWrap').innerHTML = (result.tags || []).map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')
+      lucide.createIcons({nodes:[document.getElementById('scenesList')]})
     }
 
     async function captureSceneThumbnails(scenes, analysisResult){
@@ -641,7 +743,7 @@
     function renderTocDetail(data){
       if(!data) return
       state.tocData=data
-      renderTocEditor()
+      renderAnalysisDetail(analysisFromTocData(data))
     }
 
     function analysisFromTocData(data){
@@ -702,58 +804,53 @@
       return state.tocData
     }
 
-    function renderTocEditor(){
-      const list=document.getElementById('tocEditList')
-      const empty=document.getElementById('tocEmpty')
-      const data=normalizeTocData()
-      const rows=data.toc
-      if(rows.length===0){
-        list.innerHTML=''
-        empty.style.display='flex'
-        return
-      }
-      empty.style.display='none'
-      list.innerHTML=rows.map((ch,idx)=>{
-        const start=Number(ch.start_sec||0)
-        return `<div class="toc-row" data-idx="${idx}">
-          <div>
-            <div class="mini" style="margin:0 0 4px">開始秒</div>
-            <input class="toc-start" type="number" min="0" step="0.1" value="${Number.isFinite(start)?start:0}">
-          </div>
-          <div>
-            <input class="toc-title" type="text" value="${escHtml(ch.title||'')}" placeholder="タイトル">
-            <textarea class="toc-summary" placeholder="概要">${escHtml(ch.summary||'')}</textarea>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <button class="btn btn-ghost toc-jump" type="button" style="padding:6px 8px;font-size:12px">移動</button>
-            <button class="btn btn-ghost toc-del" type="button">削除</button>
-          </div>
-        </div>`
-      }).join('')
-    }
-
-    function collectTocFromEditor(){
-      const data=normalizeTocData()
-      const rows=[...document.querySelectorAll('#tocEditList .toc-row')].map((row,idx)=>{
-        const start=Math.max(0,Number(row.querySelector('.toc-start').value||0))
-        const title=(row.querySelector('.toc-title').value||'').trim()||`チャプター${idx+1}`
-        const summary=(row.querySelector('.toc-summary').value||'').trim()
+    function normalizeTocRows(rows){
+      const next=(rows||[]).map((row,idx)=>{
+        const start=Math.max(0, Number(row.start_sec||0))
         return {
-          id: `ch${idx+1}`,
-          start_sec: start,
-          end_sec: start,
-          timestamp: fmtTs(start),
-          title,
-          summary,
-          confidence: 0.8,
+          id: row.id || `ch${String(idx+1).padStart(3,'0')}`,
+          start_sec:start,
+          end_sec:start,
+          timestamp: row.timestamp || fmtTs(start),
+          title:(row.title||`チャプター${idx+1}`).trim(),
+          summary:(row.summary||'').trim(),
+          confidence: row.confidence ?? 0.8,
         }
       }).sort((a,b)=>a.start_sec-b.start_sec)
-      for(let i=0;i<rows.length;i++){
-        rows[i].id=`ch${String(i+1).padStart(3,'0')}`
-        rows[i].end_sec=i+1<rows.length?rows[i+1].start_sec:(rows[i].start_sec+1)
+      for(let i=0;i<next.length;i++){
+        next[i].id=`ch${String(i+1).padStart(3,'0')}`
+        next[i].timestamp=fmtTs(next[i].start_sec)
+        next[i].end_sec=i+1<next.length?next[i+1].start_sec:(next[i].start_sec+1)
       }
-      data.toc=rows
-      return data
+      return next
+    }
+
+    async function persistTocData(data, successText){
+      if(!state.videoPath){ setResult('toc',false,'先に動画を読み込んでください'); return false }
+      const next=normalizeTocData()
+      next.meta=data.meta||next.meta||{}
+      next.bookmarks=Array.isArray(data.bookmarks)?data.bookmarks:(next.bookmarks||[])
+      next.toc=normalizeTocRows(data.toc||[])
+      try{
+        const res=await fetch(`${API}/review/toc/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:next})})
+        if(!res.ok){
+          const t=await res.text()
+          setResult('toc',false,`保存失敗: ${t}`)
+          return false
+        }
+        const body=await res.json()
+        state.tocData=next
+        state.tocPath=body.toc_path
+        renderAnalysisDetail(analysisFromTocData(next))
+        setResult('toc',true,successText || state.tocPath)
+        const video=document.getElementById('video')
+        const cacheData={duration:video.duration||0, meta:next.meta||{}, scenes:(next.toc||[]).map((ch,i)=>({id:ch.id||`scene_${i}`,start_sec:ch.start_sec,end_sec:ch.end_sec,label:ch.title||'',description:ch.summary||'',source:'manual'})), toc:next.toc||[], bookmarks:next.bookmarks||[]}
+        fetch(`${API}/cache/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:cacheData})}).catch(()=>{})
+        return true
+      }catch(e){
+        setResult('toc',false,`接続エラー: ${e.message}`)
+        return false
+      }
     }
 
     const video=document.getElementById('video')
@@ -1012,68 +1109,73 @@
       const p=await window.electronAPI.openSrt(); if(!p) return
       state.jpSrtPath=p; await loadSrt(p,'jp'); setResult('translate',true,p)
     })
-    document.getElementById('analysisTabBtn').addEventListener('click',()=>switchAnalysisPane('analysis'))
-    document.getElementById('tocTabBtn').addEventListener('click',()=>switchAnalysisPane('toc'))
-    document.getElementById('tocAddBtn').addEventListener('click',()=>{
-      const data=collectTocFromEditor()
-      data.toc.push({
-        id:`ch${String(data.toc.length+1).padStart(3,'0')}`,
-        start_sec:0,
-        end_sec:1,
-        timestamp:'0:00',
-        title:`チャプター${data.toc.length+1}`,
-        summary:'',
-        confidence:0.8,
-      })
-      renderTocEditor()
-    })
-    document.getElementById('tocSaveBtn').addEventListener('click',async()=>{
-      if(!state.videoPath){ setResult('toc',false,'先に動画を読み込んでください'); return }
-      const data=collectTocFromEditor()
-      renderTocEditor()
-      try{
-        const res=await fetch(`${API}/review/toc/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data})})
-        if(!res.ok){
-          const t=await res.text()
-          setResult('toc',false,`保存失敗: ${t}`)
-          return
-        }
-        const body=await res.json()
-        state.tocPath=body.toc_path
-        renderAnalysisDetail(analysisFromTocData(data))
-        setResult('toc',true,state.tocPath)
-        // キャッシュにも反映
-        const video=document.getElementById('video')
-        const cacheData={duration:video.duration||0, meta:data.meta||{}, scenes:(data.toc||[]).map((ch,i)=>({id:ch.id||`scene_${i}`,start_sec:ch.start_sec,end_sec:ch.end_sec,label:ch.title||'',description:ch.summary||'',source:'manual'})), toc:data.toc||[], bookmarks:data.bookmarks||[]}
-        fetch(`${API}/cache/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:cacheData})}).catch(()=>{})
-      }catch(e){
-        setResult('toc',false,`接続エラー: ${e.message}`)
-      }
-    })
-    document.getElementById('tocEditList').addEventListener('click',e=>{
-      const row=e.target.closest('.toc-row')
-      if(!row) return
-      const idx=Number(row.dataset.idx)
-      if(!Number.isInteger(idx) || idx<0) return
-      if(e.target.closest('.toc-del')){
-        const data=collectTocFromEditor()
-        data.toc.splice(idx,1)
-        renderTocEditor()
+    document.getElementById('summaryToggleBtn').addEventListener('click',()=>toggleAnalysisSection('summary'))
+    document.getElementById('tagsToggleBtn').addEventListener('click',()=>toggleAnalysisSection('tags'))
+    document.getElementById('scenesToggleBtn').addEventListener('click',()=>toggleAnalysisSection('scenes'))
+    document.getElementById('scenesList').addEventListener('click',e=>{
+      const menuBtn=e.target.closest('[data-scene-menu]')
+      if(menuBtn){
+        e.stopPropagation()
+        const id=menuBtn.dataset.sceneMenu
+        state.openSceneMenuId = state.openSceneMenuId===id ? null : id
+        renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
         return
       }
-      if(e.target.closest('.toc-jump')){
-        const t=Number(row.querySelector('.toc-start').value||0)
-        if(Number.isFinite(t) && video && !isNaN(video.duration)){
-          video.currentTime=Math.max(0,Math.min(video.duration,t))
-          updateSubtitles()
-        }
+      const editBtn=e.target.closest('[data-scene-edit]')
+      if(editBtn){
+        e.stopPropagation()
+        state.openSceneMenuId = null
+        state.editingSceneId = editBtn.dataset.sceneEdit
+        renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
+        return
       }
-    })
-    document.getElementById('scenesList').addEventListener('click',e=>{
+      const deleteBtn=e.target.closest('[data-scene-delete]')
+      if(deleteBtn){
+        e.stopPropagation()
+        const id=deleteBtn.dataset.sceneDelete
+        const data=normalizeTocData()
+        data.toc=(data.toc||[]).filter(ch=>ch.id!==id)
+        state.openSceneMenuId = null
+        state.editingSceneId = null
+        persistTocData(data,'チャプターを削除しました')
+        return
+      }
+      const cancelBtn=e.target.closest('.scene-edit-cancel')
+      if(cancelBtn){
+        e.stopPropagation()
+        state.editingSceneId = null
+        renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
+        return
+      }
+      const saveBtn=e.target.closest('.scene-edit-save')
+      if(saveBtn){
+        e.stopPropagation()
+        const card=e.target.closest('.scene-item')
+        const id=card?.dataset.sceneId
+        if(!card||!id) return
+        const data=normalizeTocData()
+        const idx=data.toc.findIndex(ch=>ch.id===id)
+        if(idx<0) return
+        data.toc[idx].start_sec=Math.max(0,Number(card.querySelector('.scene-edit-start')?.value||0))
+        data.toc[idx].title=(card.querySelector('.scene-edit-title')?.value||'').trim() || data.toc[idx].title || `チャプター${idx+1}`
+        data.toc[idx].summary=(card.querySelector('.scene-edit-summary')?.value||'').trim()
+        state.editingSceneId = null
+        persistTocData(data,'チャプターを保存しました')
+        return
+      }
+      if(e.target.closest('.scene-actions') || e.target.closest('.scene-edit')) return
       const row=e.target.closest('.scene-item[data-start]')
       if(!row || !video || isNaN(video.duration)) return
       const t=parseFloat(row.dataset.start)
       if(Number.isFinite(t)){ video.currentTime=Math.max(0,Math.min(video.duration,t)); updateSubtitles() }
+    })
+    document.addEventListener('click',e=>{
+      if(!e.target.closest('.scene-actions')){
+        if(state.openSceneMenuId){
+          state.openSceneMenuId = null
+          renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
+        }
+      }
     })
 
     subOrigEl.addEventListener('mouseover',e=>{
@@ -1166,9 +1268,33 @@
 
     const slider=document.getElementById('maxFrames')
     const outputLangSel=document.getElementById('outputLang')
+    const subtitleDisplaySel=document.getElementById('subtitleDisplay')
+    const subtitleFontSel=document.getElementById('subtitleFont')
+    const subtitleArea=document.querySelector('.subtitle-area')
+    const subtitleBelowHost=document.getElementById('subtitleBelowHost')
+    const subtitleOverlayHost=document.getElementById('subtitleOverlayHost')
     function getFrameMode(){ return document.querySelector('input[name="frameMode"]:checked').value }
     function getAnalysisMode(){ return document.querySelector('input[name="analysisMode"]:checked').value }
     function getOutputLang(){ return outputLangSel.value==='en'?'en':'ja' }
+    function getSubtitleDisplay(){ return subtitleDisplaySel.value==='overlay' ? 'overlay' : 'below' }
+    function getSubtitleFont(){ return ['noto','biz','yugothic','meiryo'].includes(subtitleFontSel.value) ? subtitleFontSel.value : 'noto' }
+    function applySubtitleFont(mode){
+      const fonts={
+        noto:"'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif",
+        biz:"'BIZ UDPGothic','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif",
+        yugothic:"'Yu Gothic UI','Noto Sans JP','Hiragino Sans','Segoe UI',sans-serif",
+        meiryo:"'Meiryo','Yu Gothic UI','Noto Sans JP',sans-serif"
+      }
+      subtitleArea.style.setProperty('--subtitle-font', fonts[mode] || fonts.noto)
+    }
+    function applySubtitleDisplay(mode){
+      const overlay = mode==='overlay'
+      subtitleArea.classList.toggle('overlay', overlay)
+      const targetHost = overlay ? subtitleOverlayHost : subtitleBelowHost
+      if(subtitleArea.parentElement !== targetHost){
+        targetHost.appendChild(subtitleArea)
+      }
+    }
     function updateFrameHint(){
       document.getElementById('maxFramesValue').textContent=slider.value+' 枚'
       const frameHint=getFrameMode()==='scene'
@@ -1188,6 +1314,16 @@
       updateFrameHint(); saveUiSettings({analysis_mode:getAnalysisMode()})
     }))
     outputLangSel.addEventListener('change',()=>saveUiSettings({output_lang:getOutputLang()}))
+    subtitleDisplaySel.addEventListener('change',()=>{
+      const mode=getSubtitleDisplay()
+      applySubtitleDisplay(mode)
+      saveUiSettings({subtitle_display:mode})
+    })
+    subtitleFontSel.addEventListener('change',()=>{
+      const mode=getSubtitleFont()
+      applySubtitleFont(mode)
+      saveUiSettings({subtitle_font:mode})
+    })
 
 
     async function saveUiSettings(data){
@@ -1216,7 +1352,14 @@
         }
         state.showAnalysisPanel = s.show_analysis_panel !== false
         state.showQaPanel = s.show_qa_panel !== false
+        state.analysisExpanded.summary = s.analysis_summary_expanded !== false
+        state.analysisExpanded.tags = s.analysis_tags_expanded !== false
+        state.analysisExpanded.scenes = s.analysis_scenes_expanded !== false
         outputLangSel.value=(s.output_lang==='en')?'en':'ja'
+        subtitleDisplaySel.value = s.subtitle_display === 'overlay' ? 'overlay' : 'below'
+        subtitleFontSel.value = ['noto','biz','yugothic','meiryo'].includes(s.subtitle_font) ? s.subtitle_font : 'noto'
+        applySubtitleDisplay(subtitleDisplaySel.value)
+        applySubtitleFont(subtitleFontSel.value)
         updateFrameHint()
         updatePanelLayout()
       }catch{}
@@ -1354,19 +1497,22 @@
       try{
         const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang()})})
         await readSSE(res,event=>{
-          if(event.status==='loading_model') setProgress('analyze',15,'モデルをロード中...')
+          if(event.status==='loading_model'){
+            document.getElementById('modelStatusBtn').classList.add('loading')
+            setProgress('analyze',15,'モデルをロード中...')
+          }
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
           else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
           else if(event.status==='done'){
             stopAnalyzeTimer()
             setProgress('analyze',100,'完了')
-            setResult('analyze',true,'分析完了（チャプター編集タブに下書きを作成）')
-            renderAnalysisDetail(event.result)
-            captureSceneThumbnails(event.result?.scenes||[], event.result)
+            setResult('analyze',true,'分析完了')
             state.tocPath=null
             renderTocDetail(buildTocFromAnalysis(event.result))
-            setResult('toc',true,'未保存（保存ボタンでJSON保存）')
-            switchAnalysisPane('analysis')
+            renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
+            captureSceneThumbnails(event.result?.scenes||[], event.result)
+            setResult('toc',true,'未保存（カードメニューから編集できます）')
+            fetchReviewModelStatus()
           }
           else if(event.status==='error'){ stopAnalyzeTimer(); setResult('analyze',false,event.message) }
         })
@@ -1604,7 +1750,6 @@
     loadUiSettings()
     setQAEnabled(false)
     syncSubtitleToggleButtons()
-    renderTocEditor()
     switchAnalysisPane('analysis')
     updatePanelLayout()
     lucide.createIcons()

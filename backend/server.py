@@ -361,6 +361,11 @@ class UISettingsRequest(BaseModel):
     volume: Optional[float] = None
     playback_rate: Optional[float] = None
     output_lang: Optional[str] = None  # "ja" | "en"
+    subtitle_display: Optional[str] = None  # "below" | "overlay"
+    subtitle_font: Optional[str] = None  # "noto" | "biz" | "yugothic" | "meiryo"
+    analysis_summary_expanded: Optional[bool] = None
+    analysis_tags_expanded: Optional[bool] = None
+    analysis_scenes_expanded: Optional[bool] = None
     show_analysis_panel: Optional[bool] = None
     show_qa_panel: Optional[bool] = None
 
@@ -421,6 +426,11 @@ def get_ui_settings():
         "volume": s.get("volume", 1.0),
         "playback_rate": s.get("playback_rate", 1.0),
         "output_lang": s.get("output_lang", "ja"),
+        "subtitle_display": s.get("subtitle_display", "below"),
+        "subtitle_font": s.get("subtitle_font", "noto"),
+        "analysis_summary_expanded": s.get("analysis_summary_expanded", True),
+        "analysis_tags_expanded": s.get("analysis_tags_expanded", True),
+        "analysis_scenes_expanded": s.get("analysis_scenes_expanded", True),
         "show_analysis_panel": s.get("show_analysis_panel", True),
         "show_qa_panel": s.get("show_qa_panel", True),
     }
@@ -439,6 +449,16 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["playback_rate"] = val if val in allowed else 1.0
     if req.output_lang is not None:
         to_save["output_lang"] = req.output_lang if req.output_lang in {"ja", "en"} else "ja"
+    if req.subtitle_display is not None:
+        to_save["subtitle_display"] = req.subtitle_display if req.subtitle_display in {"below", "overlay"} else "below"
+    if req.subtitle_font is not None:
+        to_save["subtitle_font"] = req.subtitle_font if req.subtitle_font in {"noto", "biz", "yugothic", "meiryo"} else "noto"
+    if req.analysis_summary_expanded is not None:
+        to_save["analysis_summary_expanded"] = bool(req.analysis_summary_expanded)
+    if req.analysis_tags_expanded is not None:
+        to_save["analysis_tags_expanded"] = bool(req.analysis_tags_expanded)
+    if req.analysis_scenes_expanded is not None:
+        to_save["analysis_scenes_expanded"] = bool(req.analysis_scenes_expanded)
     if req.show_analysis_panel is not None:
         to_save["show_analysis_panel"] = bool(req.show_analysis_panel)
     if req.show_qa_panel is not None:
@@ -795,9 +815,6 @@ async def review_analyze(req: ReviewRequest):
 
             video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
-        finally:
-            await loop.run_in_executor(None, video_reviewer.unload)
-
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
@@ -1028,9 +1045,6 @@ async def review_build_toc(req: TOCBuildRequest):
             toc_path = video_path.with_suffix(".toc.json")
             toc_path.write_text(json.dumps(toc_doc, ensure_ascii=False, indent=2), encoding="utf-8")
             yield sse({"status": "done", "toc_path": str(toc_path), "data": toc_doc})
-        finally:
-            await loop.run_in_executor(None, video_reviewer.unload)
-
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
