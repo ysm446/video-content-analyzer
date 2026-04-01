@@ -22,15 +22,13 @@
     .tab-btn:hover{background:var(--surface2);color:var(--text)}
     .tab-btn.active{color:var(--accent);background:rgba(74,158,255,0.12)}
     .topbar-divider{width:1px;height:20px;background:var(--border);margin:0 3px}
-    .model-pill{min-width:min(32vw,360px);max-width:min(42vw,500px);height:32px;display:flex;align-items:center;gap:8px;padding:0 14px;border:none;border-radius:10px;background:linear-gradient(135deg,#5961ff 0%,#6b5bff 100%);color:#fff;cursor:pointer;box-shadow:none;transition:filter .15s,transform .1s,background .15s,color .15s}
+    .model-pill{min-width:min(32vw,360px);max-width:min(42vw,500px);height:32px;display:flex;align-items:center;gap:10px;padding:0 14px;border:none;border-radius:10px;background:linear-gradient(135deg,var(--accent) 0%,var(--accent-hover) 100%);color:#fff;cursor:pointer;box-shadow:none;transition:filter .15s,transform .1s,background .15s,color .15s}
     .model-pill:hover{filter:brightness(1.04);box-shadow:none}
     .model-pill:active{transform:scale(.99)}
     .model-pill:focus-visible{outline:2px solid #9ba4ff;outline-offset:2px}
     .model-pill.off{background:linear-gradient(135deg,#2b2f38 0%,#232830 100%);color:#bfc7d6;box-shadow:none}
     .model-pill.off:hover{filter:none;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset}
-    .model-pill.loading{background:linear-gradient(135deg,#4b57df 0%,#5b67ff 100%)}
-    .model-pill-icon{display:inline-flex;align-items:center;justify-content:center}
-    .model-pill-icon svg.lucide{width:16px;height:16px;stroke-width:1.8}
+    .model-pill.loading{background:linear-gradient(135deg,#3f8ef0 0%,var(--accent-hover) 100%)}
     .model-pill-text{min-width:0;flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
     .model-pill-caret{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
     .model-pill-caret svg.lucide{width:16px;height:16px;stroke-width:1.8}
@@ -56,10 +54,10 @@
     #video{max-width:100%;max-height:100%;display:block;cursor:pointer}
     .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim)}
     .subtitle-area{background:#111;border-top:1px solid var(--border);padding:12px 20px}
-    #subtitleOrig{font-size:17px;color:#d0d0d0;min-height:24px}
-    #subtitleJp{font-size:19px;color:#fff;min-height:26px}
+    #subtitleOrig{font-size:17px;color:#d0d0d0;min-height:24px;font-family:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif;text-align:center}
+    #subtitleJp{font-size:19px;color:#fff;min-height:26px;font-family:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif;text-align:center}
     #subtitleOrig .sub-word{display:inline-block;border-radius:3px;padding:0 1px;transition:color .12s,background .12s}
-    #subtitleOrig .sub-word-active{color:#fff;background:rgba(255,215,0,.36)}
+    #subtitleOrig .sub-word-active{color:#fff;background:rgba(70,70,70,.62)}
     #dictTooltip{position:fixed;display:none;background:#1f2530;border:1px solid #4a5568;border-radius:8px;padding:10px 12px;max-width:320px;font-size:13px;line-height:1.6;color:#dbe6ff;box-shadow:0 6px 24px rgba(0,0,0,.65);z-index:9999;pointer-events:none;white-space:pre-wrap}
     #dictTooltip .dict-word{font-size:14px;font-weight:700;color:#ffd86b;margin-bottom:4px}
     #dictTooltip .dict-body{color:#dbe6ff}
@@ -163,8 +161,9 @@
     .genre-tag{display:inline-block;padding:2px 10px;border-radius:99px;background:rgba(74,158,255,0.16);color:var(--accent);font-size:12px;margin-bottom:8px}
     .summary-text{font-size:13px;line-height:1.65}
     .scenes-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px;align-items:flex-start}
-    .scene-thumb{width:80px;height:auto;border-radius:4px;flex-shrink:0;background:#000;display:block}
+    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px;align-items:stretch}
+    .scene-thumb-wrap{width:112px;min-height:84px;border-radius:4px;flex-shrink:0;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .scene-thumb{width:100%;height:100%;border-radius:4px;display:block;object-fit:contain}
     .scene-info{display:flex;flex-direction:column;gap:3px;min-width:0}
     .scene-item[data-start]{cursor:pointer}
     .scene-item[data-start]:hover{filter:brightness(1.08)}
@@ -197,7 +196,6 @@
     <div class="sidebar-center">
       <button class="model-pill" id="modelStatusBtn" title="モデル未ロード">
         <span class="model-status-dot" id="sidebarModelDot"></span>
-        <span class="model-pill-icon"><i data-lucide="bot"></i></span>
         <span class="model-pill-text" id="modelStatusLabel">モデルをロードしてください</span>
         <span class="model-pill-caret"><i data-lucide="chevron-down"></i></span>
       </button>
@@ -578,7 +576,7 @@
         const ts = tsText ? `<span class="scene-time">${escHtml(tsText)}</span>` : ''
         const label = s.label ? `${escHtml(s.label)}: ` : ''
         const attr = Number.isFinite(start) ? ` data-start="${start}"` : ''
-        const thumb = Number.isFinite(start) ? `<img class="scene-thumb" id="scene-thumb-${i}">` : ''
+        const thumb = Number.isFinite(start) ? `<div class="scene-thumb-wrap"><img class="scene-thumb" id="scene-thumb-${i}"></div>` : ''
         return `<div class="scene-item"${attr}>${thumb}<div class="scene-info">${ts}<span class="scene-text">${label}${escHtml(s.description || '')}</span></div></div>`
       }).join('')
       document.getElementById('tagsWrap').innerHTML = (result.tags || []).map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')

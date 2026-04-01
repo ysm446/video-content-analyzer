@@ -11,11 +11,7 @@ def _is_model_dir(path: Path) -> bool:
 
 
 def _model_label(model_path: Path) -> str:
-    parent = model_path.parent.name
-    stem = model_path.stem
-    if stem.lower().startswith(parent.lower()):
-        return parent
-    return f"{parent} / {stem}"
+    return model_path.stem
 
 
 def _model_id(model_path: Path) -> str:
