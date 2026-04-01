@@ -17,18 +17,20 @@
 - **フレームモード選択**: 均等サンプリングとシーン変化検出（ffmpeg）から選択可能
 - **音声連携**: ASR 書き起こしを VL 分析に組み合わせて精度向上
 - **Q&A**: 分析後にフレームを参照したまま自由質問が可能
+- **チャプター下書き**: 分析直後は一時的な下書きとして保持し、保存ボタンを押したときだけ `.toc.json` とキャッシュに書き込み
 - **チャプター編集**: シーン分析結果から自動生成したチャプター一覧をタイトル・時刻・概要を編集して保存
 
 ### キャッシュ
 - 動画ファイルと同じ場所に `{動画名}.cache/` フォルダを作成
 - `data.json` にシーン・メタ情報・文字起こしテキストを保存
 - `thumbnails/` にシーンサムネール画像を保存
-- 次回同じ動画を開いたとき自動復元
+- チャプター保存後、次回同じ動画を開いたとき自動復元
 
 ### UI
 - 左サイドバーによるページ切り替え（プレイヤー / 設定）
 - サイドバー下部の CPU アイコンからモデル管理ポップアップを開いてロード・アンロード
-- コンパクトなステータスログ（文字起こし・字幕生成・動画分析の状態を1行ずつ表示）
+- 下部ステータスバーに文字起こし・字幕生成・動画分析・Q&A の進捗を集約表示
+- プレイヤー上部に動画 / 字幕 / 文字起こし / 字幕生成ボタン、チャプター上部に動画分析 / 保存ボタンを配置
 
 ## 必要環境
 
@@ -95,6 +97,12 @@ npm install
 start.bat
 ```
 
+VRAM が解放されず残ったときは、補助スクリプトで llama.cpp / バックエンドを停止できます。
+
+```bat
+release_vram.bat
+```
+
 または手動で：
 
 ```bash
@@ -132,7 +140,7 @@ npm start
 | `POST` | `/review/analyze` | 動画分析（SSE） |
 | `POST` | `/review/qa` | 動画への質問（SSE） |
 | `POST` | `/review/toc/build` | 動画分析→チャプター生成（SSE） |
-| `POST` | `/review/toc/save` | チャプター JSON 保存（旧形式） |
+| `POST` | `/review/toc/save` | チャプター JSON 保存 |
 | `POST` | `/review/toc/load` | チャプター JSON 読み込み（旧形式） |
 
 ### キャッシュ
@@ -158,8 +166,9 @@ npm start
 video.mp4
 ├── video.original.srt       # 文字起こし結果
 ├── video.japanese.srt       # 日本語翻訳字幕
+├── video.toc.json           # 保存したチャプター情報
 └── video.cache/
-    ├── data.json            # シーン・メタ・文字起こしキャッシュ
+    ├── data.json            # 保存後のシーン・メタ・文字起こしキャッシュ
     └── thumbnails/
         ├── scene_0.jpg
         ├── scene_1.jpg
@@ -189,6 +198,7 @@ video-content-analyzer/
 ├── settings.json              # 永続化設定（自動生成）
 ├── run_backend.py             # uvicorn 起動エントリーポイント
 ├── start.bat                  # Windows 起動スクリプト
+├── release_vram.bat           # VRAM 解放補助スクリプト
 └── requirements.txt
 ```
 
