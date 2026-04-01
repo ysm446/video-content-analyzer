@@ -41,13 +41,25 @@
     .model-eject-btn svg.lucide{width:17px;height:17px;stroke-width:1.9}
     .tab-panels{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;min-width:0}
     .tab-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+    .status-bar{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;font-size:12px;color:var(--text-dim)}
+    .status-bar-dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);flex-shrink:0}
+    .status-bar-dot.running{background:var(--accent);animation:blink 1.2s ease-in-out infinite}
+    .status-bar-dot.done{background:var(--success)}
+    .status-bar-dot.error{background:var(--error)}
+    .status-bar-label{color:var(--text);white-space:nowrap}
+    .status-bar-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-    .player-shell{flex:1;display:grid;grid-template-columns:minmax(0,2fr) 8px minmax(0,1fr) minmax(0,1fr);grid-template-areas:"player divider analysis qa";min-height:0;overflow:hidden}
+    .player-shell{flex:1;display:grid;grid-template-columns:minmax(0,2fr) 1px minmax(0,1fr) minmax(0,1fr);grid-template-areas:"player divider analysis qa";min-height:0;overflow:hidden}
     .player-left{min-width:0;display:flex;flex-direction:column;grid-area:player}
-    .panel-resizer{background:var(--surface);border-left:1px solid var(--border);cursor:col-resize;user-select:none;grid-area:divider}
-    .panel-resizer:hover{border-left-color:var(--accent)}
-    .player-top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap}
+    .panel-resizer{position:relative;background:var(--border);border-bottom:1px solid var(--border);cursor:col-resize;user-select:none;grid-area:divider}
+    .panel-resizer::before{content:'';position:absolute;top:0;bottom:0;left:-5px;right:-5px}
+    .panel-resizer:hover{background:var(--accent)}
+    .player-top{display:flex;align-items:center;gap:8px;padding:10px 12px;min-height:56px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap}
     .video-name{font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:220px}
+    .player-top-btn{padding:5px 12px;font-size:12px;letter-spacing:0}
+    .player-top-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+    .player-top-action-btn{padding:5px 12px;font-size:12px;letter-spacing:0}
+    .player-top-action-btn.running{background:rgba(74,158,255,.14);border-color:rgba(74,158,255,.28);color:#dcecff}
 
     .player-layout{flex:0 0 clamp(320px,70vh,640px);display:flex;flex-direction:column;min-height:0;background:#000}
     .vertical-resizer{height:8px;background:var(--surface);border-top:1px solid var(--border);cursor:row-resize;user-select:none}
@@ -97,10 +109,7 @@
     .sub-toggle{width:auto;padding:0 9px;font-size:11px;font-weight:600;letter-spacing:.02em;gap:3px;opacity:1;transition:background .15s,border-color .15s,color .15s,opacity .15s,transform .1s}
     .sub-toggle.sub-off{opacity:.35;text-decoration:line-through}
 
-    .action-box{padding:10px 12px;background:var(--surface);flex-shrink:0}
-    .action-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-    .action-row .btn{justify-content:center}
-    .result-row{display:flex;gap:6px;font-size:11px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .result-row{display:none;gap:6px;font-size:11px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .result-row.done{color:var(--success)} .result-row.error{color:var(--error)}
     .elapsed-time{font-size:10px;color:var(--text-dim);font-variant-numeric:tabular-nums}
     .status-log{display:flex;flex-direction:column;gap:1px;margin-top:8px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
@@ -134,11 +143,13 @@
     .modal-status-text{font-size:12px;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
     .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);grid-area:analysis;overflow:hidden}
-    .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column}
-    .analysis-header{padding:12px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
-    .analysis-scroll{flex:1;overflow-y:auto;padding:10px 12px}
+    .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column;height:100%}
+    .analysis-header{padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+    .analysis-header-actions{display:flex;align-items:center;gap:8px}
+    .analysis-run-btn{padding:5px 12px;font-size:12px;letter-spacing:0;text-transform:none}
+    .analysis-scroll{flex:1;min-height:0;overflow-y:auto;padding:12px}
     .qa-panel{min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);grid-area:qa;overflow:hidden}
-    .qa-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
+    .qa-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
     .qa-title{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
     .qa-history{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
     .qa-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;text-align:center}
@@ -175,7 +186,7 @@
     .genre-tag{display:inline-block;padding:2px 10px;border-radius:99px;background:rgba(74,158,255,0.16);color:var(--accent);font-size:12px;margin-bottom:8px}
     .summary-text{font-size:13px;line-height:1.65}
     .scenes-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-left:2px solid var(--accent);border-radius:6px;align-items:stretch}
+    .scene-item{display:flex;gap:8px;padding:8px 10px;background:var(--surface2);border-radius:6px;align-items:stretch}
     .scene-actions{position:relative;display:flex;align-items:flex-start;margin-left:auto}
     .scene-menu-btn{width:28px;height:28px;border:none;background:none;color:var(--text-dim);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
     .scene-menu-btn:hover{background:rgba(255,255,255,.06);color:var(--text)}
@@ -239,10 +250,14 @@
       <div class="player-shell">
         <div class="player-left">
           <div class="player-top">
-            <button class="btn btn-ghost" id="loadVideoBtn" style="padding:6px 12px;font-size:13px"><i data-lucide="folder-open"></i> 動画</button>
-            <button class="btn btn-ghost" id="toggleOrigSrtBtn" style="padding:6px 12px;font-size:13px"><i data-lucide="file-text"></i> 原文SRT</button>
-            <button class="btn btn-ghost" id="toggleJpSrtBtn" style="padding:6px 12px;font-size:13px"><i data-lucide="languages"></i> 日本語SRT</button>
+            <button class="btn btn-ghost player-top-btn" id="loadVideoBtn"><i data-lucide="folder-open"></i> 動画</button>
+            <button class="btn btn-ghost player-top-btn" id="toggleOrigSrtBtn"><i data-lucide="file-text"></i> 原文SRT</button>
+            <button class="btn btn-ghost player-top-btn" id="toggleJpSrtBtn"><i data-lucide="languages"></i> 日本語SRT</button>
             <div class="video-name" id="currentVideoName">動画未選択</div>
+            <div class="player-top-actions">
+              <button class="btn btn-primary player-top-action-btn" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
+              <button class="btn btn-primary player-top-action-btn" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
+            </div>
           </div>
 
           <div class="player-layout">
@@ -283,39 +298,6 @@
           </div>
           <div class="vertical-resizer" id="verticalResizer" aria-label="動画エリア高さを調整" role="separator"></div>
 
-          <div class="action-box">
-            <div class="action-row">
-              <button class="btn btn-primary" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
-              <button class="btn btn-primary" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
-              <button class="btn btn-success" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
-            </div>
-            <div class="status-log">
-              <div class="status-item">
-                <span class="status-dot-sm" id="transcribeDot"></span>
-                <span class="status-name-sm">文字起こし</span>
-                <div class="status-body">
-                  <div class="progress-wrap" id="transcribeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="transcribeFill"></div></div><div class="progress-label" id="transcribeLabel"></div></div>
-                  <div class="result-row" id="transcribeResult"></div>
-                </div>
-              </div>
-              <div class="status-item">
-                <span class="status-dot-sm" id="translateDot"></span>
-                <span class="status-name-sm">字幕生成</span>
-                <div class="status-body">
-                  <div class="progress-wrap" id="translateProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="translateFill"></div></div><div class="progress-label" id="translateLabel"></div></div>
-                  <div class="result-row" id="translateResult"></div>
-                </div>
-              </div>
-              <div class="status-item">
-                <span class="status-dot-sm" id="analyzeDot"></span>
-                <span class="status-name-sm">動画分析</span>
-                <div class="status-body">
-                  <div class="progress-wrap" id="analyzeProgress" style="display:none"><div class="progress-bar-bg"><div class="progress-bar-fill" id="analyzeFill"></div></div><div class="progress-label" id="analyzeLabel"></div><div class="elapsed-time" id="analyzeElapsed"></div></div>
-                  <div class="result-row" id="analyzeResult"></div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div class="panel-resizer" id="panelResizer" aria-label="レイアウト幅を調整" role="separator"></div>
@@ -323,6 +305,9 @@
           <section class="analysis-pane">
             <div class="analysis-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span>チャプター</span>
+              <div class="analysis-header-actions">
+                <button class="btn btn-success analysis-run-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
+              </div>
             </div>
             <div class="analysis-scroll">
               <div id="analysisView">
@@ -443,6 +428,12 @@
     </section>
   </div>
 
+  <div class="status-bar">
+    <span class="status-bar-dot" id="globalStatusDot"></span>
+    <span class="status-bar-label" id="globalStatusLabel">ステータス</span>
+    <span class="status-bar-text" id="globalStatusText">待機中</span>
+  </div>
+
   <div id="modelModal" class="model-modal" style="display:none">
     <div class="model-modal-bg" id="modelModalBg"></div>
     <div class="model-modal-panel">
@@ -478,6 +469,36 @@
     }
     document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)))
 
+    function updateProcessButtons(runningKind=null){
+      const transcribeBtn=document.getElementById('transcribeBtn')
+      const translateBtn=document.getElementById('translateBtn')
+      if(!transcribeBtn || !translateBtn) return
+
+      const transcribeReady=!!state.origSrtPath
+      const translateReady=!!state.jpSrtPath
+
+      transcribeBtn.classList.toggle('ready', transcribeReady && runningKind!=='transcribe')
+      transcribeBtn.classList.toggle('running', runningKind==='transcribe')
+      translateBtn.classList.toggle('ready', translateReady && runningKind!=='translate')
+      translateBtn.classList.toggle('running', runningKind==='translate')
+
+      transcribeBtn.innerHTML = transcribeReady && runningKind!=='transcribe'
+        ? '<i data-lucide="check"></i> 文字起こし済み'
+        : runningKind==='transcribe'
+          ? '<i data-lucide="loader-circle"></i> 文字起こし中'
+          : '<i data-lucide="mic"></i> 文字起こし'
+
+      translateBtn.innerHTML = translateReady && runningKind!=='translate'
+        ? '<i data-lucide="check"></i> 字幕生成済み'
+        : runningKind==='translate'
+          ? '<i data-lucide="loader-circle"></i> 字幕生成中'
+          : '<i data-lucide="languages"></i> 字幕生成'
+
+      transcribeBtn.title = transcribeReady ? '文字起こし済みです。再実行もできます' : '動画を文字起こしします'
+      translateBtn.title = translateReady ? '字幕生成済みです。再実行もできます' : '日本語字幕を生成します'
+      lucide.createIcons({nodes:[transcribeBtn, translateBtn]})
+    }
+
 
     function setCurrentVideo(path){
       state.videoPath = path
@@ -497,28 +518,47 @@
         document.getElementById('translateBtn').disabled = true
         clearAnalysisDetail()
       }
+      updateProcessButtons()
       setQAEnabled(!!path)
     }
 
     function resetSection(kind){
       const dot=document.getElementById(`${kind}Dot`)
       if(dot) dot.className='status-dot-sm'
-      document.getElementById(`${kind}Progress`).style.display='none'
-      document.getElementById(`${kind}Fill`).style.width='0%'
-      document.getElementById(`${kind}Result`).innerHTML=''
+      const progress=document.getElementById(`${kind}Progress`)
+      const fill=document.getElementById(`${kind}Fill`)
+      const result=document.getElementById(`${kind}Result`)
+      if(progress) progress.style.display='none'
+      if(fill) fill.style.width='0%'
+      if(result) result.innerHTML=''
       if(kind==='analyze'){
         if(_analyzeTimer){ clearInterval(_analyzeTimer); _analyzeTimer=null }
         const el=document.getElementById('analyzeElapsed')
         if(el) el.textContent=''
       }
     }
+    function updateGlobalStatus(kind,stateName,text){
+      const labelMap={transcribe:'文字起こし',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',qa:'チャット',app:'ステータス'}
+      const dot=document.getElementById('globalStatusDot')
+      const label=document.getElementById('globalStatusLabel')
+      const body=document.getElementById('globalStatusText')
+      dot.className='status-bar-dot'+(stateName?` ${stateName}`:'')
+      label.textContent=labelMap[kind]||'ステータス'
+      body.textContent=text||'待機中'
+    }
     function setProgress(kind,pct,label){
       const dot=document.getElementById(`${kind}Dot`)
       if(dot) dot.className='status-dot-sm running'
-      document.getElementById(`${kind}Progress`).style.display='block'
-      document.getElementById(`${kind}Result`).innerHTML=''
-      document.getElementById(`${kind}Fill`).style.width=pct+'%'
-      document.getElementById(`${kind}Label`).textContent=label
+      const progress=document.getElementById(`${kind}Progress`)
+      const result=document.getElementById(`${kind}Result`)
+      const fill=document.getElementById(`${kind}Fill`)
+      const labelEl=document.getElementById(`${kind}Label`)
+      if(progress) progress.style.display='block'
+      if(result) result.innerHTML=''
+      if(fill) fill.style.width=pct+'%'
+      if(labelEl) labelEl.textContent=label
+      const statusText=typeof pct === 'number' ? `${label} (${Math.max(0, Math.round(pct))}%)` : label
+      updateGlobalStatus(kind,'running',statusText)
     }
 
     // 分析経過時間タイマー
@@ -526,17 +566,18 @@
     function startAnalyzeTimer(){
       _analyzeStart=Date.now()
       const el=document.getElementById('analyzeElapsed')
-      el.textContent=''
+      if(el) el.textContent=''
       if(_analyzeTimer) clearInterval(_analyzeTimer)
       _analyzeTimer=setInterval(()=>{
         const s=Math.floor((Date.now()-_analyzeStart)/1000)
-        el.textContent=`経過: ${s}秒`
+        if(el) el.textContent=`経過: ${s}秒`
       },1000)
     }
     function stopAnalyzeTimer(){
       if(_analyzeTimer){ clearInterval(_analyzeTimer); _analyzeTimer=null }
       const s=Math.floor((Date.now()-_analyzeStart)/1000)
-      document.getElementById('analyzeElapsed').textContent=`完了: ${s}秒`
+      const el=document.getElementById('analyzeElapsed')
+      if(el) el.textContent=`完了: ${s}秒`
     }
     function setResult(kind,ok,text){
       const dot=document.getElementById(`${kind}Dot`)
@@ -544,8 +585,11 @@
       const prog=document.getElementById(`${kind}Progress`)
       if(prog) prog.style.display='none'
       const el=document.getElementById(`${kind}Result`)
-      el.className='result-row '+(ok?'done':'error')
-      el.innerHTML = ok ? `<span>✓</span><span>${text}</span>` : `<span>✗</span><span>${text}</span>`
+      if(el){
+        el.className='result-row '+(ok?'done':'error')
+        el.innerHTML = ok ? `<span>✓</span><span>${text}</span>` : `<span>✗</span><span>${text}</span>`
+      }
+      updateGlobalStatus(kind, ok?'done':'error', text)
     }
     function setQAEnabled(enabled){
       state.analysisReady = enabled
@@ -640,12 +684,14 @@
       document.getElementById('genreTag').textContent = result.genre || '不明'
       document.getElementById('summaryText').textContent = result.summary || ''
       const tocRows=Array.isArray(state.tocData?.toc) ? state.tocData.toc : []
-      const sceneRows=(tocRows.length ? tocRows.map(ch=>({
+      const cachedScenes=Array.isArray(state.tocData?.scenes) ? state.tocData.scenes : []
+      const sceneRows=(tocRows.length ? tocRows.map((ch,idx)=>({
         id: ch.id || '',
         timestamp: ch.timestamp || fmtTs(ch.start_sec||0),
         label: ch.title || '',
         description: ch.summary || '',
         start_sec: ch.start_sec,
+        thumbnail: cachedScenes[idx]?.thumbnail || '',
       })) : (result.scenes || []))
       document.getElementById('scenesList').innerHTML = sceneRows.map((s,i)=>{
         const start = Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp)
@@ -678,6 +724,7 @@
       }).join('')
       document.getElementById('tagsWrap').innerHTML = (result.tags || []).map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')
       lucide.createIcons({nodes:[document.getElementById('scenesList')]})
+      if(state.videoPath) loadCacheThumbnails(sceneRows, state.videoPath)
     }
 
     async function captureSceneThumbnails(scenes, analysisResult){
@@ -885,6 +932,7 @@
       toggleJpSrtBtn.innerHTML = hasJp ? '<i data-lucide="x"></i> 日本語解除' : '<i data-lucide="languages"></i> 日本語SRT'
       toggleJpSrtBtn.title = hasJp ? '日本語SRTを解除' : '日本語SRTを読み込む'
       lucide.createIcons({nodes:[toggleOrigSrtBtn, toggleJpSrtBtn]})
+      updateProcessButtons()
     }
 
     function parseSRT(content){
@@ -1062,9 +1110,8 @@
           const {data}=await res.json()
           if(data.transcript) state.origTranscript=data.transcript
           const analysisResult={genre:data.meta?.genre, summary:data.meta?.summary, tags:data.meta?.tags||[], scenes:data.scenes||[]}
-          renderAnalysisDetail(analysisResult)
-          loadCacheThumbnails(data.scenes||[], videoFilePath)
           renderTocDetail({...data, toc:data.toc||[], bookmarks:data.bookmarks||[]})
+          renderAnalysisDetail(analysisResult)
           setResult('toc',true,'キャッシュから読み込み済み')
           return
         }
@@ -1459,6 +1506,7 @@
     document.getElementById('transcribeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('transcribe',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('transcribeBtn'); btn.disabled=true
+      updateProcessButtons('transcribe')
       resetSection('transcribe'); setProgress('transcribe',5,'準備中...')
       try{
         const res=await fetch(`${API}/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,language:null})})
@@ -1466,27 +1514,30 @@
           if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
           else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
           else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
-          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
-          else if(event.status==='error') setResult('transcribe',false,event.message)
+          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
+          else if(event.status==='error'){ setResult('transcribe',false,event.message); updateProcessButtons() }
         })
-      }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`) }
+      }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`); updateProcessButtons() }
       btn.disabled=!state.videoPath
+      updateProcessButtons()
     })
 
     document.getElementById('translateBtn').addEventListener('click',async()=>{
       if(!state.origSrtPath){ setResult('translate',false,'先に文字起こしを実行してください'); return }
       const btn=document.getElementById('translateBtn'); btn.disabled=true
+      updateProcessButtons('translate')
       resetSection('translate'); setProgress('translate',0,'準備中...')
       try{
         const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:state.origSrtPath})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
           else if(event.status==='translating'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('translate',pct,`翻訳中 ${event.current}/${event.total}`) }
-          else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); loadSrt(state.jpSrtPath,'jp') }
-          else if(event.status==='error') setResult('translate',false,event.message)
+          else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); updateProcessButtons(); loadSrt(state.jpSrtPath,'jp') }
+          else if(event.status==='error'){ setResult('translate',false,event.message); updateProcessButtons() }
         })
-      }catch(e){ setResult('translate',false,`接続エラー: ${e.message}`) }
+      }catch(e){ setResult('translate',false,`接続エラー: ${e.message}`); updateProcessButtons() }
       btn.disabled=false
+      updateProcessButtons()
     })
 
     document.getElementById('analyzeBtn').addEventListener('click',async()=>{
@@ -1559,8 +1610,8 @@
       try{
         const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode()})})
         await readSSE(res,event=>{
-          if(event.status==='extracting_frames') thinking.textContent='フレーム抽出中...'
-          else if(event.status==='answering') thinking.textContent='回答生成中...'
+          if(event.status==='extracting_frames'){ thinking.textContent='フレーム抽出中...'; updateGlobalStatus('qa','running','フレーム抽出中...') }
+          else if(event.status==='answering'){ thinking.textContent='回答生成中...'; updateGlobalStatus('qa','running','回答生成中...') }
           else if(event.status==='answer_delta'){
             if(ans.style.display==='none'){
               ans.style.display=''
@@ -1576,10 +1627,11 @@
               thinking.style.display='none'
             }
             stopQaTimer('完了')
+            updateGlobalStatus('qa','done','回答を生成しました')
           }
-          else if(event.status==='error'){ thinking.textContent='❌ '+event.message; stopQaTimer('エラー') }
+          else if(event.status==='error'){ thinking.textContent='❌ '+event.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',event.message) }
         })
-      }catch(e){ thinking.textContent='❌ 接続エラー: '+e.message; stopQaTimer('エラー') }
+      }catch(e){ thinking.textContent='❌ 接続エラー: '+e.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',`接続エラー: ${e.message}`) }
 
       qaBtn.disabled=false
     }
@@ -1646,15 +1698,15 @@
         playerShell.style.gridTemplateRows = ''
         if(showAnalysis && showQa){
           panelResizer.style.display = ''
-          playerShell.style.gridTemplateColumns = `${leftWidth} 8px minmax(0,1fr) minmax(0,1fr)`
+          playerShell.style.gridTemplateColumns = `${leftWidth} 1px minmax(0,1fr) minmax(0,1fr)`
           playerShell.style.gridTemplateAreas = '"player divider analysis qa"'
         }else if(showAnalysis){
           panelResizer.style.display = ''
-          playerShell.style.gridTemplateColumns = `${leftWidth} 8px minmax(320px,1fr)`
+          playerShell.style.gridTemplateColumns = `${leftWidth} 1px minmax(320px,1fr)`
           playerShell.style.gridTemplateAreas = '"player divider analysis"'
         }else if(showQa){
           panelResizer.style.display = ''
-          playerShell.style.gridTemplateColumns = `${leftWidth} 8px minmax(320px,1fr)`
+          playerShell.style.gridTemplateColumns = `${leftWidth} 1px minmax(320px,1fr)`
           playerShell.style.gridTemplateAreas = '"player divider qa"'
         }else{
           panelResizer.style.display = 'none'
@@ -1670,7 +1722,7 @@
       const sideCount = (state.showAnalysisPanel ? 1 : 0) + (state.showQaPanel ? 1 : 0)
       if(sideCount === 0) return
       const rect = playerShell.getBoundingClientRect()
-      const divider = 8
+      const divider = 1
       const minLeft = 280
       const minRight = sideCount === 2 ? 520 : 320
       let left = clientX - rect.left

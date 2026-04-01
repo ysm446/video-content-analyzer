@@ -815,6 +815,9 @@ async def review_analyze(req: ReviewRequest):
 
             video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
+        except Exception as e:
+            yield sse({"status": "error", "message": str(e)})
+            return
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
@@ -1045,6 +1048,9 @@ async def review_build_toc(req: TOCBuildRequest):
             toc_path = video_path.with_suffix(".toc.json")
             toc_path.write_text(json.dumps(toc_doc, ensure_ascii=False, indent=2), encoding="utf-8")
             yield sse({"status": "done", "toc_path": str(toc_path), "data": toc_doc})
+        except Exception as e:
+            yield sse({"status": "error", "message": str(e)})
+            return
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
