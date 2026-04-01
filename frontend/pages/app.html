@@ -5,24 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Content Analyzer</title>
   <link rel="stylesheet" href="../css/common.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <style>
+    svg.lucide{width:14px;height:14px;stroke-width:1.75;vertical-align:-2px;flex-shrink:0}
+    .sidebar svg.lucide{width:20px;height:20px;stroke-width:1.5}
+    .no-video svg.lucide{width:48px;height:48px;stroke-width:1}
+    .ctrl-btn svg.lucide{width:15px;height:15px}
     html,body{height:100%}
-    body{display:flex;flex-direction:column;overflow:hidden}
-    .tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 14px;gap:4px;flex-shrink:0}
-    .tab-btn{background:none;border:none;color:var(--text-dim);padding:12px 16px;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;margin-bottom:-1px}
-    .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
-    .tab-panels,.tab-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+    body{display:flex;flex-direction:row;overflow:hidden}
+    .sidebar{width:48px;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;padding:8px 0;gap:4px;align-items:center}
+    .tab-btn{background:none;border:none;color:var(--text-dim);width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;border-radius:8px;transition:background .15s,color .15s}
+    .tab-btn:hover{background:var(--surface2);color:var(--text)}
+    .tab-btn.active{color:var(--accent);background:rgba(74,158,255,0.12)}
+    .tab-panels{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+    .tab-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 
     .player-shell{flex:1;display:grid;grid-template-columns:minmax(0,2fr) 8px minmax(0,1fr) minmax(0,1fr);grid-template-areas:"player divider analysis qa";min-height:0;overflow:hidden}
     .player-left{min-width:0;display:flex;flex-direction:column;grid-area:player}
-    .panel-resizer{background:var(--border);cursor:col-resize;user-select:none;grid-area:divider}
-    .panel-resizer:hover{background:var(--accent)}
+    .panel-resizer{background:var(--surface);border-left:1px solid var(--border);cursor:col-resize;user-select:none;grid-area:divider}
+    .panel-resizer:hover{border-left-color:var(--accent)}
     .player-top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap}
     .video-name{font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:220px}
 
     .player-layout{flex:0 0 clamp(320px,70vh,640px);display:flex;flex-direction:column;min-height:0;background:#000}
-    .vertical-resizer{height:8px;background:var(--border);cursor:row-resize;user-select:none}
-    .vertical-resizer:hover{background:var(--accent)}
+    .vertical-resizer{height:8px;background:var(--surface);border-top:1px solid var(--border);cursor:row-resize;user-select:none}
+    .vertical-resizer:hover{border-top-color:var(--accent)}
     .video-wrap{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0}
     #video{max-width:100%;max-height:100%;display:block;cursor:pointer}
     .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim)}
@@ -60,7 +67,7 @@
     .sub-toggle{width:auto;padding:0 9px;font-size:11px;font-weight:600;letter-spacing:.02em;gap:3px;opacity:1;transition:background .15s,border-color .15s,color .15s,opacity .15s,transform .1s}
     .sub-toggle.sub-off{opacity:.35;text-decoration:line-through}
 
-    .action-box{flex:1;border-top:1px solid var(--border);padding:10px 12px;background:var(--surface);overflow:auto}
+    .action-box{flex:1;padding:10px 12px;background:var(--surface);overflow:auto}
     .action-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
     .action-row .btn{justify-content:center}
     .mini{font-size:11px;color:var(--text-dim);margin-top:8px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
@@ -68,7 +75,7 @@
     .elapsed-time{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
     .result-row.done{color:var(--success)} .result-row.error{color:var(--error)}
 
-    .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);grid-area:analysis;overflow:hidden}
+    .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);grid-area:analysis;overflow:hidden}
     .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column}
     .analysis-header{padding:12px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
     .analysis-scroll{flex:1;overflow-y:auto;padding:10px 12px}
@@ -124,9 +131,9 @@
   </style>
 </head>
 <body>
-  <nav class="tab-bar">
-    <button class="tab-btn active" data-tab="player">▶ プレイヤー</button>
-    <button class="tab-btn" data-tab="settings">⚙ 設定</button>
+  <nav class="sidebar">
+    <button class="tab-btn active" data-tab="player" title="プレイヤー"><i data-lucide="play"></i></button>
+    <button class="tab-btn" data-tab="settings" title="設定"><i data-lucide="settings"></i></button>
   </nav>
 
   <div class="tab-panels">
@@ -134,20 +141,20 @@
       <div class="player-shell">
         <div class="player-left">
           <div class="player-top">
-            <button class="btn btn-ghost" id="loadVideoBtn" style="padding:6px 12px;font-size:13px">📂 動画</button>
-            <button class="btn btn-ghost" id="loadOrigBtn" style="padding:6px 12px;font-size:13px">📄 原文SRT</button>
-            <button class="btn btn-ghost" id="clearOrigBtn" style="padding:6px 12px;font-size:13px" disabled>✖ 原文解除</button>
-            <button class="btn btn-ghost" id="loadJpBtn" style="padding:6px 12px;font-size:13px">🇯🇵 日本語SRT</button>
-            <button class="btn btn-ghost" id="clearJpBtn" style="padding:6px 12px;font-size:13px" disabled>✖ 日本語解除</button>
+            <button class="btn btn-ghost" id="loadVideoBtn" style="padding:6px 12px;font-size:13px"><i data-lucide="folder-open"></i> 動画</button>
+            <button class="btn btn-ghost" id="loadOrigBtn" style="padding:6px 12px;font-size:13px"><i data-lucide="file-text"></i> 原文SRT</button>
+            <button class="btn btn-ghost" id="clearOrigBtn" style="padding:6px 12px;font-size:13px" disabled><i data-lucide="x"></i> 原文解除</button>
+            <button class="btn btn-ghost" id="loadJpBtn" style="padding:6px 12px;font-size:13px"><i data-lucide="languages"></i> 日本語SRT</button>
+            <button class="btn btn-ghost" id="clearJpBtn" style="padding:6px 12px;font-size:13px" disabled><i data-lucide="x"></i> 日本語解除</button>
             <div class="video-name" id="currentVideoName">動画未選択</div>
           </div>
 
           <div class="player-layout">
             <div class="video-wrap" id="videoWrap">
               <div class="no-video" id="noVideo">
-                <div style="font-size:44px">🎬</div>
+                <i data-lucide="film"></i>
                 <div>動画ファイルを読み込んでください</div>
-                <button class="btn btn-primary" id="loadVideoBtn2">📂 動画を選択</button>
+                <button class="btn btn-primary" id="loadVideoBtn2"><i data-lucide="folder-open"></i> 動画を選択</button>
               </div>
               <video id="video" style="display:none"></video>
             </div>
@@ -156,12 +163,12 @@
               <div id="subtitleJp"></div>
             </div>
             <div class="controls">
-              <button class="ctrl-btn" id="prevSubBtn" title="前の字幕へ">←</button>
-              <button class="ctrl-btn" id="playBtn">▶</button>
-              <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ">→</button>
+              <button class="ctrl-btn" id="prevSubBtn" title="前の字幕へ"><i data-lucide="skip-back"></i></button>
+              <button class="ctrl-btn" id="playBtn"><i data-lucide="play"></i></button>
+              <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ"><i data-lucide="skip-forward"></i></button>
               <span class="time-label" id="timeLabel">0:00 / 0:00</span>
               <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
-              <label class="time-label" for="speedSelect">⏩</label>
+              <label class="time-label" for="speedSelect"><i data-lucide="gauge"></i></label>
               <select id="speedSelect" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
                 <option value="0.5">0.5x</option>
                 <option value="0.75">0.75x</option>
@@ -169,7 +176,7 @@
                 <option value="1.25">1.25x</option>
                 <option value="1.5">1.5x</option>
               </select>
-              <span class="time-label">🔊</span>
+              <span class="time-label"><i data-lucide="volume-2"></i></span>
               <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1" style="width:100px">
               <button class="ctrl-btn sub-toggle" id="toggleOrigBtn" title="原文字幕の表示/非表示">原文</button>
               <button class="ctrl-btn sub-toggle" id="toggleJpBtn" title="日本語字幕の表示/非表示">日本語</button>
@@ -179,9 +186,9 @@
 
           <div class="action-box">
             <div class="action-row">
-              <button class="btn btn-primary" id="transcribeBtn" disabled>🎙️ 文字起こし</button>
-              <button class="btn btn-primary" id="translateBtn" disabled>🇯🇵 字幕生成</button>
-              <button class="btn btn-success" id="analyzeBtn" disabled>🔍 動画分析</button>
+              <button class="btn btn-primary" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
+              <button class="btn btn-primary" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
+              <button class="btn btn-success" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
             </div>
 
             <div class="mini">文字起こし</div>
@@ -226,7 +233,7 @@
               <div id="tocView" style="display:none">
                 <div class="card analysis-detail" style="display:block">
                   <div class="model-apply-row" style="margin-top:0">
-                    <button class="btn btn-ghost" id="tocAddBtn" style="padding:4px 10px;font-size:12px">＋ チャプター追加</button>
+                    <button class="btn btn-ghost" id="tocAddBtn" style="padding:4px 10px;font-size:12px"><i data-lucide="plus"></i> チャプター追加</button>
                     <button class="btn btn-primary" id="tocSaveBtn" style="margin-left:auto;padding:4px 12px;font-size:12px">保存</button>
                   </div>
                   <div class="result-row" id="tocResult" style="margin-top:8px"></div>
@@ -925,8 +932,8 @@
         timeLabel.textContent=`${m}:${s} / ${dm}:${ds}`
       }
     })
-    video.addEventListener('play',()=>playBtn.textContent='⏸')
-    video.addEventListener('pause',()=>playBtn.textContent='▶')
+    video.addEventListener('play',()=>{ playBtn.innerHTML='<i data-lucide="pause"></i>'; lucide.createIcons({nodes:[playBtn]}) })
+    video.addEventListener('pause',()=>{ playBtn.innerHTML='<i data-lucide="play"></i>'; lucide.createIcons({nodes:[playBtn]}) })
     playBtn.addEventListener('click',()=> video.paused ? video.play() : video.pause())
     video.addEventListener('click',()=>{ if(video.src) video.paused ? video.play() : video.pause() })
     prevSubBtn.addEventListener('click',()=>{
@@ -1296,6 +1303,7 @@
     syncSubtitleClearButtons()
     renderTocEditor()
     switchAnalysisPane('analysis')
+    lucide.createIcons()
   </script>
 </body>
 </html>

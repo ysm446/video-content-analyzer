@@ -121,6 +121,14 @@ function createMainWindow() {
     backgroundColor: '#111111',
   })
   win.loadFile(path.join(__dirname, 'pages', 'app.html'))
+
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if ((input.control && input.key === 'r') || input.key === 'F5') {
+      win.webContents.reload()
+      event.preventDefault()
+    }
+  })
 }
 
 app.whenReady().then(async () => {
