@@ -362,6 +362,8 @@ class UISettingsRequest(BaseModel):
     volume: Optional[float] = None
     playback_rate: Optional[float] = None
     output_lang: Optional[str] = None  # "ja" | "en"
+    show_analysis_panel: Optional[bool] = None
+    show_qa_panel: Optional[bool] = None
 
 
 class TOCBuildRequest(BaseModel):
@@ -420,6 +422,8 @@ def get_ui_settings():
         "volume": s.get("volume", 1.0),
         "playback_rate": s.get("playback_rate", 1.0),
         "output_lang": s.get("output_lang", "ja"),
+        "show_analysis_panel": s.get("show_analysis_panel", True),
+        "show_qa_panel": s.get("show_qa_panel", True),
     }
 
 
@@ -436,6 +440,10 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["playback_rate"] = val if val in allowed else 1.0
     if req.output_lang is not None:
         to_save["output_lang"] = req.output_lang if req.output_lang in {"ja", "en"} else "ja"
+    if req.show_analysis_panel is not None:
+        to_save["show_analysis_panel"] = bool(req.show_analysis_panel)
+    if req.show_qa_panel is not None:
+        to_save["show_qa_panel"] = bool(req.show_qa_panel)
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}

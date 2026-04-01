@@ -13,11 +13,12 @@
     .no-video svg.lucide{width:48px;height:48px;stroke-width:1}
     .ctrl-btn svg.lucide{width:15px;height:15px}
     html,body{height:100%}
-    body{display:flex;flex-direction:row;overflow:hidden}
-    .sidebar{width:48px;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;padding:8px 0;gap:4px;align-items:center}
+    body{display:flex;flex-direction:column;overflow:hidden}
+    .sidebar{height:48px;width:100%;display:flex;flex-direction:row;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;padding:0 8px;gap:4px;align-items:center}
     .tab-btn{background:none;border:none;color:var(--text-dim);width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;border-radius:8px;transition:background .15s,color .15s}
     .tab-btn:hover{background:var(--surface2);color:var(--text)}
     .tab-btn.active{color:var(--accent);background:rgba(74,158,255,0.12)}
+    .topbar-divider{width:1px;height:24px;background:var(--border);margin:0 4px}
     .tab-panels{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;min-width:0}
     .tab-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 
@@ -171,6 +172,9 @@
     <button class="tab-btn active" data-tab="player" title="プレイヤー"><i data-lucide="play"></i></button>
     <button class="tab-btn" data-tab="settings" title="設定"><i data-lucide="settings"></i></button>
     <div style="flex:1"></div>
+    <div class="topbar-divider" aria-hidden="true"></div>
+    <button class="tab-btn active" id="toggleAnalysisPanelBtn" title="チャプターを表示/非表示"><i data-lucide="book-open"></i></button>
+    <button class="tab-btn active" id="toggleQaPanelBtn" title="チャットを表示/非表示"><i data-lucide="messages-square"></i></button>
     <button class="tab-btn" id="modelStatusBtn" title="モデル未ロード" style="position:relative">
       <i data-lucide="cpu"></i>
       <span class="model-status-dot" id="sidebarModelDot"></span>
@@ -399,13 +403,13 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null }
+    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, showAnalysisPanel:true, showQaPanel:true }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
-      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name))
+      document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.classList.toggle('active', b.dataset.tab===name))
     }
-    document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)))
+    document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)))
 
 
     function setCurrentVideo(path){
@@ -1184,8 +1188,11 @@
           speedSelect.value=String(r)
           video.playbackRate=r
         }
+        state.showAnalysisPanel = s.show_analysis_panel !== false
+        state.showQaPanel = s.show_qa_panel !== false
         outputLangSel.value=(s.output_lang==='en')?'en':'ja'
         updateFrameHint()
+        updatePanelLayout()
       }catch{}
     }
 
@@ -1433,21 +1440,90 @@
     const playerShell = document.querySelector('.player-shell')
     const panelResizer = document.getElementById('panelResizer')
     const playerLeft = document.querySelector('.player-left')
+    const analysisColumn = document.querySelector('.analysis-column')
+    const qaPanel = document.querySelector('.qa-panel')
     const verticalResizer = document.getElementById('verticalResizer')
     const playerLayoutEl = document.querySelector('.player-layout')
+    const toggleAnalysisPanelBtn = document.getElementById('toggleAnalysisPanelBtn')
+    const toggleQaPanelBtn = document.getElementById('toggleQaPanelBtn')
     let resizing = false
     let verticalResizing = false
+
+    function updatePanelToggleButtons(){
+      toggleAnalysisPanelBtn.classList.toggle('active', state.showAnalysisPanel)
+      toggleQaPanelBtn.classList.toggle('active', state.showQaPanel)
+      toggleAnalysisPanelBtn.setAttribute('aria-pressed', state.showAnalysisPanel ? 'true' : 'false')
+      toggleQaPanelBtn.setAttribute('aria-pressed', state.showQaPanel ? 'true' : 'false')
+      toggleAnalysisPanelBtn.title = state.showAnalysisPanel ? 'チャプターを非表示' : 'チャプターを表示'
+      toggleQaPanelBtn.title = state.showQaPanel ? 'チャットを非表示' : 'チャットを表示'
+    }
+
+    function updatePanelLayout(){
+      const compact = window.innerWidth <= 1100
+      const showAnalysis = state.showAnalysisPanel
+      const showQa = state.showQaPanel
+      const leftWidth = playerShell.dataset.leftWidth || 'minmax(0,2fr)'
+
+      analysisColumn.style.display = showAnalysis ? '' : 'none'
+      qaPanel.style.display = showQa ? '' : 'none'
+
+      if(compact){
+        panelResizer.style.display = 'none'
+        if(showAnalysis && showQa){
+          playerShell.style.gridTemplateColumns = '1fr 1fr'
+          playerShell.style.gridTemplateRows = '1fr 260px'
+          playerShell.style.gridTemplateAreas = '"player player" "analysis qa"'
+        }else if(showAnalysis){
+          playerShell.style.gridTemplateColumns = '1fr'
+          playerShell.style.gridTemplateRows = '1fr 260px'
+          playerShell.style.gridTemplateAreas = '"player" "analysis"'
+        }else if(showQa){
+          playerShell.style.gridTemplateColumns = '1fr'
+          playerShell.style.gridTemplateRows = '1fr 260px'
+          playerShell.style.gridTemplateAreas = '"player" "qa"'
+        }else{
+          playerShell.style.gridTemplateColumns = '1fr'
+          playerShell.style.gridTemplateRows = '1fr'
+          playerShell.style.gridTemplateAreas = '"player"'
+        }
+      }else{
+        playerShell.style.gridTemplateRows = ''
+        if(showAnalysis && showQa){
+          panelResizer.style.display = ''
+          playerShell.style.gridTemplateColumns = `${leftWidth} 8px minmax(0,1fr) minmax(0,1fr)`
+          playerShell.style.gridTemplateAreas = '"player divider analysis qa"'
+        }else if(showAnalysis){
+          panelResizer.style.display = ''
+          playerShell.style.gridTemplateColumns = `${leftWidth} 8px minmax(320px,1fr)`
+          playerShell.style.gridTemplateAreas = '"player divider analysis"'
+        }else if(showQa){
+          panelResizer.style.display = ''
+          playerShell.style.gridTemplateColumns = `${leftWidth} 8px minmax(320px,1fr)`
+          playerShell.style.gridTemplateAreas = '"player divider qa"'
+        }else{
+          panelResizer.style.display = 'none'
+          playerShell.style.gridTemplateColumns = 'minmax(0,1fr)'
+          playerShell.style.gridTemplateAreas = '"player"'
+        }
+      }
+
+      updatePanelToggleButtons()
+    }
+
     function setSplitByX(clientX){
+      const sideCount = (state.showAnalysisPanel ? 1 : 0) + (state.showQaPanel ? 1 : 0)
+      if(sideCount === 0) return
       const rect = playerShell.getBoundingClientRect()
       const divider = 8
       const minLeft = 280
-      const minRight = 400
+      const minRight = sideCount === 2 ? 520 : 320
       let left = clientX - rect.left
       left = Math.max(minLeft, Math.min(left, rect.width - minRight - divider))
-      playerShell.style.gridTemplateColumns = `${left}px ${divider}px 1fr 1fr`
+      playerShell.dataset.leftWidth = `${left}px`
+      updatePanelLayout()
     }
     panelResizer.addEventListener('pointerdown', e=>{
-      if(window.innerWidth <= 1100) return
+      if(window.innerWidth <= 1100 || (!state.showAnalysisPanel && !state.showQaPanel)) return
       resizing = true
       panelResizer.setPointerCapture(e.pointerId)
       document.body.style.cursor = 'col-resize'
@@ -1463,7 +1539,8 @@
       document.body.style.userSelect = ''
     })
     panelResizer.addEventListener('dblclick', ()=>{
-      playerShell.style.gridTemplateColumns = ''
+      delete playerShell.dataset.leftWidth
+      updatePanelLayout()
     })
 
     function setVideoHeightByY(clientY){
@@ -1499,6 +1576,18 @@
       playerLayoutEl.style.flex = '0 0 clamp(320px,52vh,580px)'
     })
 
+    toggleAnalysisPanelBtn.addEventListener('click', ()=>{
+      state.showAnalysisPanel = !state.showAnalysisPanel
+      updatePanelLayout()
+      saveUiSettings({show_analysis_panel:state.showAnalysisPanel})
+    })
+    toggleQaPanelBtn.addEventListener('click', ()=>{
+      state.showQaPanel = !state.showQaPanel
+      updatePanelLayout()
+      saveUiSettings({show_qa_panel:state.showQaPanel})
+    })
+    window.addEventListener('resize', updatePanelLayout)
+
     switchTab('player')
     updateFrameHint()
     fetchLanguageModels()
@@ -1508,6 +1597,7 @@
     syncSubtitleClearButtons()
     renderTocEditor()
     switchAnalysisPane('analysis')
+    updatePanelLayout()
     lucide.createIcons()
   </script>
 </body>
