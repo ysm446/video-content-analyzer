@@ -90,6 +90,25 @@
     .status-item .progress-label{margin-top:2px;font-size:11px}
     @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
+    /* モデル管理モーダル */
+    .model-modal{position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center}
+    .model-modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+    .model-modal-panel{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:10px;width:480px;max-height:78vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+    .model-modal-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);font-size:14px;font-weight:600;flex-shrink:0}
+    .model-modal-body{overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+    .modal-section-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+    .modal-model-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--radius);cursor:pointer;border:1px solid transparent}
+    .modal-model-item:hover{background:var(--surface2)}
+    .modal-model-item.selected{background:rgba(74,158,255,.08);border-color:rgba(74,158,255,.3)}
+    .modal-model-name{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .modal-model-meta{font-size:11px;color:var(--text-dim);margin-top:2px}
+    .modal-loaded-badge{font-size:10px;padding:2px 8px;border-radius:99px;background:rgba(72,199,142,.15);color:var(--success);flex-shrink:0;margin-left:auto}
+    .modal-footer-row{display:flex;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--border)}
+    .modal-status-text{font-size:12px;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .model-status-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--border);border:1.5px solid var(--surface);transition:background .2s;pointer-events:none}
+    .model-status-dot.loaded{background:var(--success)}
+    .model-status-dot.loading{background:var(--accent);animation:blink 1.2s ease-in-out infinite}
+
     .analysis-column{min-width:0;display:flex;flex-direction:column;background:var(--surface);grid-area:analysis;overflow:hidden}
     .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column}
     .analysis-header{padding:12px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
@@ -151,6 +170,11 @@
   <nav class="sidebar">
     <button class="tab-btn active" data-tab="player" title="プレイヤー"><i data-lucide="play"></i></button>
     <button class="tab-btn" data-tab="settings" title="設定"><i data-lucide="settings"></i></button>
+    <div style="flex:1"></div>
+    <button class="tab-btn" id="modelStatusBtn" title="モデル未ロード" style="position:relative">
+      <i data-lucide="cpu"></i>
+      <span class="model-status-dot" id="sidebarModelDot"></span>
+    </button>
   </nav>
 
   <div class="tab-panels">
@@ -300,24 +324,7 @@
         </div>
 
         <div class="card">
-          <div class="section-label">翻訳モデル設定</div>
-          <div id="translatorModelList"></div>
-          <div class="model-apply-row">
-            <button class="btn btn-ghost" id="applyModelBtn" style="padding:5px 14px;font-size:13px">適用</button>
-            <span class="status-dot" id="translatorDot"></span><span id="translatorStatusText" style="color:var(--text-dim)">接続中...</span>
-          </div>
-        </div>        <div class="card">
-          <div class="section-label">動画レビュー設定</div>
-          <div id="reviewModelList"></div>
-          <div class="model-apply-row" style="margin-top:8px">
-            <button class="btn btn-ghost" id="applyReviewModelBtn" style="padding:5px 14px;font-size:13px">適用</button>
-            <span class="status-dot" id="vlModelDot"></span><span id="vlModelStatusText" style="color:var(--text-dim)">接続中...</span>
-            <button class="btn btn-ghost" id="unloadBtn" style="margin-left:auto;padding:4px 12px;font-size:12px" disabled>VRAM 解放</button>
-          </div>
-
-          <hr class="divider">
-
-          <div class="section-label" style="margin-bottom:6px">サンプリング設定</div>
+          <div class="section-label">サンプリング設定</div>
           <div style="display:flex;gap:16px;margin-bottom:10px">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
               <input type="radio" name="frameMode" value="uniform" checked style="accent-color:var(--accent)"> 均等サンプリング
@@ -355,6 +362,38 @@
         </div>
       </main>
     </section>
+  </div>
+
+  <div id="modelModal" class="model-modal" style="display:none">
+    <div class="model-modal-bg" id="modelModalBg"></div>
+    <div class="model-modal-panel">
+      <div class="model-modal-header">
+        <span>モデル管理</span>
+        <button class="ctrl-btn" id="modelModalClose" style="width:28px;height:28px;font-size:13px"><i data-lucide="x"></i></button>
+      </div>
+      <div class="model-modal-body">
+        <div>
+          <div class="modal-section-label">動画レビューモデル（GGUF）</div>
+          <div id="modalModelList"></div>
+          <div class="modal-footer-row" style="margin-top:10px">
+            <span class="modal-status-text" id="modalStatusText">未ロード</span>
+            <div style="display:flex;gap:6px;margin-left:auto;flex-shrink:0">
+              <button class="btn btn-primary" id="modalLoadBtn" style="padding:5px 14px;font-size:12px"><i data-lucide="download"></i> ロード</button>
+              <button class="btn btn-ghost" id="modalUnloadBtn" style="padding:5px 14px;font-size:12px" disabled><i data-lucide="trash-2"></i> アンロード</button>
+            </div>
+          </div>
+        </div>
+        <hr class="divider" style="margin:0">
+        <div>
+          <div class="modal-section-label">翻訳モデル</div>
+          <div id="modalTranslatorList"></div>
+          <div class="modal-footer-row" style="margin-top:10px">
+            <span class="modal-status-text" id="modalTranslatorStatus">接続中...</span>
+            <button class="btn btn-ghost" id="modalApplyTranslatorBtn" style="padding:5px 14px;font-size:12px;margin-left:auto"><i data-lucide="check"></i> 適用</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -1164,17 +1203,17 @@
       try{
         const res=await fetch(`${API}/models`); if(!res.ok) return
         const {translator:tInfo}=await res.json()
-        renderModelList('translatorModelList','translatorModel',tInfo.available,tInfo.current)
-        setModelStatus('translatorDot','translatorStatusText',tInfo,'翻訳')
-      }catch{
-        document.getElementById('translatorStatusText').textContent='バックエンド未起動'
-      }
+        renderModelList('modalTranslatorList','translatorModel',tInfo.available,tInfo.current)
+        const loaded=tInfo.loaded
+        const label=tInfo.available?.find(m=>m.id===tInfo.current)?.label??tInfo.current??''
+        document.getElementById('modalTranslatorStatus').textContent=loaded?`ロード済み: ${label}`:`選択中: ${label}`
+      }catch{}
     }
 
-    document.getElementById('applyModelBtn').addEventListener('click',async()=>{
+    document.getElementById('modalApplyTranslatorBtn').addEventListener('click',async()=>{
       const tSel=document.querySelector('input[name="translatorModel"]:checked')
-      const body={}; if(tSel) body.translator=tSel.value
-      await fetch(`${API}/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      if(!tSel) return
+      await fetch(`${API}/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({translator:tSel.value})})
       await fetchLanguageModels()
     })
 
@@ -1182,21 +1221,80 @@
       try{
         const res=await fetch(`${API}/review/models`); if(!res.ok) return
         const info=await res.json()
-        renderModelList('reviewModelList','reviewModel',info.available,info.current)
-        const dot=document.getElementById('vlModelDot'), text=document.getElementById('vlModelStatusText'), unloadBtn=document.getElementById('unloadBtn')
-        dot.classList.toggle('loaded',info.loaded)
-        const label=(info.available.find(m=>m.id===info.current)?.label ?? info.current) || '未選択'
-        text.textContent=info.loaded ? `${label} ロード済み` : `${label} 未ロード`
-        unloadBtn.disabled=!info.loaded
-      }catch{ document.getElementById('vlModelStatusText').textContent='バックエンド未起動' }
+        updateSidebarModelDot(info)
+      }catch{}
     }
-    document.getElementById('applyReviewModelBtn').addEventListener('click',async()=>{
-      const sel=document.querySelector('input[name="reviewModel"]:checked')
-      if(!sel) return
-      await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:sel.value})})
+
+    // ---------- モデル管理モーダル ----------
+    function updateSidebarModelDot(info){
+      const dot=document.getElementById('sidebarModelDot')
+      const btn=document.getElementById('modelStatusBtn')
+      if(!dot||!btn) return
+      dot.className='model-status-dot'+(info.loaded?' loaded':'')
+      const label=info.available?.find(m=>m.id===info.current)?.label ?? info.current ?? ''
+      btn.title=info.loaded ? `ロード済み: ${label}` : 'モデル未ロード'
+    }
+
+    let _modalSelectedId=null
+    const modelModal=document.getElementById('modelModal')
+
+    async function openModelModal(){
+      modelModal.style.display='flex'
+      lucide.createIcons({nodes:[modelModal]})
+      await refreshModalModelList()
+    }
+
+    async function refreshModalModelList(){
+      const res=await fetch(`${API}/review/models`)
+      if(!res.ok) return
+      const info=await res.json()
+      updateSidebarModelDot(info)
+      if(!_modalSelectedId) _modalSelectedId=info.current
+      const list=document.getElementById('modalModelList')
+      list.innerHTML=(info.available||[]).map(m=>`
+        <div class="modal-model-item${_modalSelectedId===m.id?' selected':''}" data-id="${escHtml(m.id)}">
+          <div style="min-width:0;flex:1">
+            <div class="modal-model-name">${escHtml(m.label||m.id)}</div>
+            <div class="modal-model-meta">${m.vram_gb?m.vram_gb+' GB · ':''}${escHtml(m.note||'')}</div>
+          </div>
+          ${info.loaded&&info.current===m.id?'<span class="modal-loaded-badge">ロード済み</span>':''}
+        </div>`).join('')
+      list.querySelectorAll('.modal-model-item').forEach(el=>{
+        el.addEventListener('click',()=>{
+          _modalSelectedId=el.dataset.id
+          list.querySelectorAll('.modal-model-item').forEach(e=>e.classList.toggle('selected',e===el))
+        })
+      })
+      const label=info.available?.find(m=>m.id===info.current)?.label??info.current??''
+      document.getElementById('modalStatusText').textContent=info.loaded?`ロード済み: ${label}`:'未ロード'
+      document.getElementById('modalUnloadBtn').disabled=!info.loaded
+      document.getElementById('modalLoadBtn').disabled=false
+    }
+
+    document.getElementById('modelStatusBtn').addEventListener('click',openModelModal)
+    document.getElementById('modelModalClose').addEventListener('click',()=>modelModal.style.display='none')
+    document.getElementById('modelModalBg').addEventListener('click',()=>modelModal.style.display='none')
+
+    document.getElementById('modalLoadBtn').addEventListener('click',async()=>{
+      if(!_modalSelectedId) return
+      // まずモデルIDを設定
+      await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:_modalSelectedId})})
+      // 明示的にロード
+      document.getElementById('modalLoadBtn').disabled=true
+      document.getElementById('modalStatusText').textContent='ロード中...'
+      document.getElementById('sidebarModelDot').className='model-status-dot loading'
+      await fetch(`${API}/review/load`,{method:'POST'})
+      await refreshModalModelList()
       await fetchReviewModelStatus()
     })
-    document.getElementById('unloadBtn').addEventListener('click',async()=>{ await fetch(`${API}/review/unload`,{method:'POST'}); await fetchReviewModelStatus() })
+
+    document.getElementById('modalUnloadBtn').addEventListener('click',async()=>{
+      document.getElementById('modalUnloadBtn').disabled=true
+      document.getElementById('modalStatusText').textContent='アンロード中...'
+      await fetch(`${API}/review/unload`,{method:'POST'})
+      await refreshModalModelList()
+      await fetchReviewModelStatus()
+    })
 
     document.getElementById('transcribeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('transcribe',false,'先に動画を読み込んでください'); return }

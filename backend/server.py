@@ -643,6 +643,16 @@ def set_vl_model(req: SetVLModelRequest):
     return {"status": "ok", "model_id": video_reviewer.model_id}
 
 
+@app.post("/review/load")
+async def load_vl_model():
+    """選択中のVLモデルを明示的にVRAMへロードする。"""
+    if not video_reviewer.model_id:
+        raise HTTPException(400, "モデルが選択されていません")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, video_reviewer.load)
+    return {"status": "ok", "model_id": video_reviewer.model_id, "loaded": video_reviewer.loaded}
+
+
 @app.post("/review/unload")
 async def unload_vl_model():
     """動画レビュー用モデルを手動でアンロードして VRAM を解放する"""
