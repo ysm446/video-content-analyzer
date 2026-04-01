@@ -484,24 +484,58 @@ class VideoReviewer:
         return self._clean_generated_text(result)
 
     def _infer_stream(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None):
-        messages = self._build_messages(frames, system, prompt, timestamps)
         print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚")
         t0 = time.time()
         prefix_buffer = ""
         content_started = False
         try:
-            for delta in _vision_server.stream_chat(self.model_id, messages, max_new_tokens):
-                if delta:
-                    if not content_started:
-                        prefix_buffer += delta
-                        cleaned = self._clean_stream_prefix(prefix_buffer)
-                        if not cleaned:
-                            continue
-                        content_started = True
-                        yield cleaned
-                        prefix_buffer = ""
-                    else:
-                        yield delta.replace("<think>", "").replace("</think>", "")
+            try:
+                messages = self._build_messages(frames, system, prompt, timestamps)
+                stream_iter = _vision_server.stream_chat(self.model_id, messages, max_new_tokens)
+                for delta in stream_iter:
+                    if delta:
+                        if not content_started:
+                            prefix_buffer += delta
+                            cleaned = self._clean_stream_prefix(prefix_buffer)
+                            if not cleaned:
+                                continue
+                            content_started = True
+                            yield cleaned
+                            prefix_buffer = ""
+                        else:
+                            yield delta.replace("<think>", "").replace("</think>", "")
+            except RuntimeError as exc:
+                msg = str(exc)
+                if "failed to process image" not in msg:
+                    raise
+                retry_pixels = min(int(MAX_PIXELS_PER_FRAME or 200704), 128 * 28 * 28)
+                retry_frames = frames[: min(len(frames), 12)]
+                retry_timestamps = timestamps[:len(retry_frames)] if timestamps else None
+                print(
+                    f"[VideoReviewer] ストリーミング画像処理エラーのため縮小再試行: "
+                    f"frames={len(retry_frames)}/{len(frames)}, max_pixels={retry_pixels}"
+                )
+                prefix_buffer = ""
+                content_started = False
+                messages = self._build_messages(
+                    retry_frames,
+                    system,
+                    prompt,
+                    retry_timestamps,
+                    max_pixels=retry_pixels,
+                )
+                for delta in _vision_server.stream_chat(self.model_id, messages, max_new_tokens):
+                    if delta:
+                        if not content_started:
+                            prefix_buffer += delta
+                            cleaned = self._clean_stream_prefix(prefix_buffer)
+                            if not cleaned:
+                                continue
+                            content_started = True
+                            yield cleaned
+                            prefix_buffer = ""
+                        else:
+                            yield delta.replace("<think>", "").replace("</think>", "")
         finally:
             elapsed = time.time() - t0
             print(f"[VideoReviewer] ストリーミング推論完了: {elapsed:.1f}秒")

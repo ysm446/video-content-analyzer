@@ -146,12 +146,13 @@
     .analysis-pane{flex:1;min-height:0;display:flex;flex-direction:column;height:100%}
     .analysis-header{padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
     .analysis-header-actions{display:flex;align-items:center;gap:8px}
+    .analysis-save-btn{padding:5px 12px;font-size:12px;letter-spacing:0;text-transform:none}
     .analysis-run-btn{padding:5px 12px;font-size:12px;letter-spacing:0;text-transform:none}
     .analysis-scroll{flex:1;min-height:0;overflow-y:auto;padding:12px}
     .qa-panel{min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);grid-area:qa;overflow:hidden}
     .qa-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
     .qa-title{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
-    .qa-history{flex:1;overflow-y:auto;padding:12px 8px;display:flex;flex-direction:column;gap:10px}
+    .qa-history{flex:1;overflow-y:auto;padding:4px 8px 12px;display:flex;flex-direction:column;gap:10px}
     .qa-pair{display:flex;flex-direction:column;gap:6px}
     .qa-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;text-align:center}
     .qa-question{align-self:flex-end;background:var(--accent);color:#fff;padding:8px 12px;border-radius:12px 12px 4px 12px;max-width:85%}
@@ -307,6 +308,7 @@
             <div class="analysis-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span>チャプター</span>
               <div class="analysis-header-actions">
+                <button class="btn btn-ghost analysis-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
                 <button class="btn btn-success analysis-run-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
               </div>
             </div>
@@ -462,7 +464,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{summary:true,tags:true,scenes:true} }
+    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{summary:true,tags:true,scenes:true} }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
@@ -514,6 +516,7 @@
         state.origTranscript = ''
         state.tocPath = null
         state.tocData = null
+        state.tocDirty = false
         resetSection('transcribe')
         resetSection('translate')
         document.getElementById('translateBtn').disabled = true
@@ -633,6 +636,21 @@
       document.getElementById('summaryText').textContent = ''
       document.getElementById('scenesList').innerHTML = ''
       document.getElementById('tagsWrap').innerHTML = ''
+      updateTocSaveButton()
+    }
+
+    function updateTocSaveButton(){
+      const btn=document.getElementById('saveTocBtn')
+      if(!btn) return
+      const hasDraft=Array.isArray(state.tocData?.toc) && state.tocData.toc.length>0
+      btn.disabled=!hasDraft || !state.tocDirty
+      btn.title = !hasDraft ? '保存できるチャプターがありません' : (state.tocDirty ? 'チャプター下書きを保存' : '保存済みです')
+    }
+
+    function markTocDraftDirty(message='未保存（保存ボタンで保存できます）'){
+      state.tocDirty = true
+      updateTocSaveButton()
+      setResult('toc',true,message)
     }
 
     function setAnalysisSectionExpanded(name, expanded){
@@ -739,7 +757,6 @@
       canvas.width = 160; canvas.height = Math.round(160 / aspect)
       const ctx = canvas.getContext('2d')
       const enriched = []
-      const thumbSaves = []
       for(let i=0;i<scenes.length;i++){
         const s = scenes[i]
         const start = Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp)
@@ -751,28 +768,55 @@
           video.currentTime = Math.min(start, video.duration - 0.1)
         })
         img.src = dataUrl
-        const filename = `scene_${i}.jpg`
-        scene.thumbnail = `thumbnails/${filename}`
+        scene.thumbnail = dataUrl
         enriched.push(scene)
-        thumbSaves.push({filename, dataUrl})
       }
       video.currentTime = savedTime
       if(!wasPaused) video.play()
-      if(!state.videoPath) return
-      for(const {filename, dataUrl} of thumbSaves){
-        fetch(`${API}/cache/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,filename,image_base64:dataUrl})}).catch(()=>{})
+      if(analysisResult && state.tocData){
+        state.tocData.scenes = enriched
+        renderAnalysisDetail(analysisFromTocData(state.tocData))
+        markTocDraftDirty()
       }
-      if(analysisResult){
-        const cacheData = {
-          duration: video.duration,
-          transcript: state.origTranscript||'',
-          meta: {genre: analysisResult.genre||'', summary: analysisResult.summary||'', tags: analysisResult.tags||[]},
-          scenes: enriched,
-          toc: state.tocData?.toc||[],
-          bookmarks: state.tocData?.bookmarks||[]
+    }
+
+    async function saveDraftArtifacts(){
+      if(!state.videoPath || !state.tocData) return null
+      const video=document.getElementById('video')
+      const draftScenes=Array.isArray(state.tocData.scenes) ? state.tocData.scenes : []
+      const persistedScenes=[]
+      for(let i=0;i<draftScenes.length;i++){
+        const scene={...draftScenes[i]}
+        const thumb=scene.thumbnail || ''
+        if(typeof thumb === 'string' && thumb.startsWith('data:')){
+          const filename = `scene_${i}.jpg`
+          await fetch(`${API}/cache/thumbnail`,{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({video_path:state.videoPath,filename,image_base64:thumb})
+          })
+          scene.thumbnail = `thumbnails/${filename}`
         }
-        fetch(`${API}/cache/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:cacheData})}).catch(()=>{})
+        persistedScenes.push(scene)
       }
+      const cacheData={
+        duration:video.duration||0,
+        transcript:state.origTranscript||'',
+        meta:state.tocData.meta||{},
+        scenes:persistedScenes,
+        toc:state.tocData.toc||[],
+        bookmarks:state.tocData.bookmarks||[]
+      }
+      const res=await fetch(`${API}/cache/save`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({video_path:state.videoPath,data:cacheData})
+      })
+      if(!res.ok){
+        throw new Error(await res.text())
+      }
+      state.tocData.scenes = persistedScenes
+      return cacheData
     }
 
     function patchCache(patch){
@@ -784,13 +828,20 @@
       scenes.forEach((s,i)=>{
         if(!s.thumbnail) return
         const img = document.getElementById(`scene-thumb-${i}`)
-        if(img) img.src = `${API}/cache/image?video_path=${encodeURIComponent(videoPath)}&name=${encodeURIComponent(s.thumbnail)}`
+        if(!img) return
+        if(typeof s.thumbnail === 'string' && s.thumbnail.startsWith('data:')){
+          img.src = s.thumbnail
+        }else{
+          img.src = `${API}/cache/image?video_path=${encodeURIComponent(videoPath)}&name=${encodeURIComponent(s.thumbnail)}`
+        }
       })
     }
 
     function renderTocDetail(data){
       if(!data) return
       state.tocData=data
+      if(!Array.isArray(state.tocData.scenes)) state.tocData.scenes=[]
+      updateTocSaveButton()
       renderAnalysisDetail(analysisFromTocData(data))
     }
 
@@ -844,10 +895,11 @@
 
     function normalizeTocData(){
       if(!state.tocData || typeof state.tocData!=='object'){
-        state.tocData={version:1,video_path:state.videoPath||'',meta:{},toc:[],bookmarks:[]}
+        state.tocData={version:1,video_path:state.videoPath||'',meta:{},toc:[],bookmarks:[],scenes:[]}
       }
       if(!Array.isArray(state.tocData.toc)) state.tocData.toc=[]
       if(!Array.isArray(state.tocData.bookmarks)) state.tocData.bookmarks=[]
+      if(!Array.isArray(state.tocData.scenes)) state.tocData.scenes=[]
       if(!state.tocData.meta || typeof state.tocData.meta!=='object') state.tocData.meta={}
       return state.tocData
     }
@@ -873,12 +925,26 @@
       return next
     }
 
+    function applyTocDraft(data, successText){
+      const next=normalizeTocData()
+      next.meta=data.meta||next.meta||{}
+      next.bookmarks=Array.isArray(data.bookmarks)?data.bookmarks:(next.bookmarks||[])
+      next.toc=normalizeTocRows(data.toc||[])
+      next.scenes=Array.isArray(data.scenes)?data.scenes:(Array.isArray(next.scenes)?next.scenes:[])
+      state.tocData=next
+      state.tocPath=null
+      renderAnalysisDetail(analysisFromTocData(next))
+      markTocDraftDirty(successText || '未保存（保存ボタンで保存できます）')
+      return true
+    }
+
     async function persistTocData(data, successText){
       if(!state.videoPath){ setResult('toc',false,'先に動画を読み込んでください'); return false }
       const next=normalizeTocData()
       next.meta=data.meta||next.meta||{}
       next.bookmarks=Array.isArray(data.bookmarks)?data.bookmarks:(next.bookmarks||[])
       next.toc=normalizeTocRows(data.toc||[])
+      next.scenes=Array.isArray(data.scenes)?data.scenes:(Array.isArray(next.scenes)?next.scenes:[])
       try{
         const res=await fetch(`${API}/review/toc/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:next})})
         if(!res.ok){
@@ -889,11 +955,11 @@
         const body=await res.json()
         state.tocData=next
         state.tocPath=body.toc_path
+        state.tocDirty=false
+        await saveDraftArtifacts()
         renderAnalysisDetail(analysisFromTocData(next))
         setResult('toc',true,successText || state.tocPath)
-        const video=document.getElementById('video')
-        const cacheData={duration:video.duration||0, meta:next.meta||{}, scenes:(next.toc||[]).map((ch,i)=>({id:ch.id||`scene_${i}`,start_sec:ch.start_sec,end_sec:ch.end_sec,label:ch.title||'',description:ch.summary||'',source:'manual'})), toc:next.toc||[], bookmarks:next.bookmarks||[]}
-        fetch(`${API}/cache/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:cacheData})}).catch(()=>{})
+        updateTocSaveButton()
         return true
       }catch(e){
         setResult('toc',false,`接続エラー: ${e.message}`)
@@ -1113,6 +1179,8 @@
           const analysisResult={genre:data.meta?.genre, summary:data.meta?.summary, tags:data.meta?.tags||[], scenes:data.scenes||[]}
           renderTocDetail({...data, toc:data.toc||[], bookmarks:data.bookmarks||[]})
           renderAnalysisDetail(analysisResult)
+          state.tocDirty=false
+          updateTocSaveButton()
           setResult('toc',true,'キャッシュから読み込み済み')
           return
         }
@@ -1125,6 +1193,8 @@
         state.tocPath=body.toc_path
         renderTocDetail(body.data)
         renderAnalysisDetail(analysisFromTocData(body.data))
+        state.tocDirty=false
+        updateTocSaveButton()
         setResult('toc',true,state.tocPath)
       }catch{}
     }
@@ -1185,7 +1255,7 @@
         data.toc=(data.toc||[]).filter(ch=>ch.id!==id)
         state.openSceneMenuId = null
         state.editingSceneId = null
-        persistTocData(data,'チャプターを削除しました')
+        applyTocDraft(data,'チャプターを更新しました（保存ボタンで保存できます）')
         return
       }
       const cancelBtn=e.target.closest('.scene-edit-cancel')
@@ -1208,7 +1278,7 @@
         data.toc[idx].title=(card.querySelector('.scene-edit-title')?.value||'').trim() || data.toc[idx].title || `チャプター${idx+1}`
         data.toc[idx].summary=(card.querySelector('.scene-edit-summary')?.value||'').trim()
         state.editingSceneId = null
-        persistTocData(data,'チャプターを保存しました')
+        applyTocDraft(data,'チャプターを更新しました（保存ボタンで保存できます）')
         return
       }
       if(e.target.closest('.scene-actions') || e.target.closest('.scene-edit')) return
@@ -1560,16 +1630,22 @@
             setProgress('analyze',100,'完了')
             setResult('analyze',true,'分析完了')
             state.tocPath=null
+            state.tocDirty=true
             renderTocDetail(buildTocFromAnalysis(event.result))
             renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
             captureSceneThumbnails(event.result?.scenes||[], event.result)
-            setResult('toc',true,'未保存（カードメニューから編集できます）')
+            markTocDraftDirty()
             fetchReviewModelStatus()
           }
           else if(event.status==='error'){ stopAnalyzeTimer(); setResult('analyze',false,event.message) }
         })
       }catch(e){ stopAnalyzeTimer(); setResult('analyze',false,`接続エラー: ${e.message}`) }
       btn.disabled=!state.videoPath
+    })
+
+    document.getElementById('saveTocBtn').addEventListener('click',async()=>{
+      if(!state.tocData || !state.tocDirty) return
+      await persistTocData(state.tocData,'チャプターを保存しました')
     })
 
     const qaInput=document.getElementById('qaInput')
