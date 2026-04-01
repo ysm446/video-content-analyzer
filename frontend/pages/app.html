@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <style>
     svg.lucide{width:14px;height:14px;stroke-width:1.75;vertical-align:-2px;flex-shrink:0}
+    .time-label svg.lucide{vertical-align:0}
     .sidebar svg.lucide{width:20px;height:20px;stroke-width:1.5}
     .no-video svg.lucide{width:48px;height:48px;stroke-width:1}
     .ctrl-btn svg.lucide{width:15px;height:15px}
@@ -44,8 +45,10 @@
     #dictTooltip .dict-loading{color:#9aa4b2;font-style:italic}
 
     .controls{background:var(--surface);border-top:1px solid var(--border);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .controls input[type='range']{accent-color:var(--accent)}
-    .time-label{font-size:12px;color:var(--text-dim)}
+    .controls input[type='range']{-webkit-appearance:none;appearance:none;height:20px;border-radius:99px;background:transparent;outline:none;cursor:pointer;accent-color:var(--accent)}
+    .controls input[type='range']::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--accent);cursor:pointer;margin-top:-3.5px}
+    .controls input[type='range']::-webkit-slider-runnable-track{height:5px;border-radius:99px;background:var(--surface2)}
+    .time-label{font-size:12px;color:var(--text-dim);display:inline-flex;align-items:center}
     .ctrl-btn{
       width:34px;
       height:34px;
@@ -168,7 +171,7 @@
               <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ"><i data-lucide="skip-forward"></i></button>
               <span class="time-label" id="timeLabel">0:00 / 0:00</span>
               <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
-              <label class="time-label" for="speedSelect"><i data-lucide="gauge"></i></label>
+              <label class="time-label" for="speedSelect"><i data-lucide="zap"></i></label>
               <select id="speedSelect" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
                 <option value="0.5">0.5x</option>
                 <option value="0.75">0.75x</option>
