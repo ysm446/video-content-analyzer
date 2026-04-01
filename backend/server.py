@@ -45,17 +45,16 @@ def save_settings(data: dict) -> None:
 asr = ASRProcessor()
 translator     = Translator()
 video_reviewer = VideoReviewer()
-_translator_model_ids = {m["id"] for m in scan_translator_models() if m.get("exists")}
 _review_model_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
 
 # 前回選択したモデルを復元
 _s = load_settings()
-if _m := _s.get("translator_model"):
-    if _m in _translator_model_ids:
-        translator.set_model_id(_m)
 if _m := _s.get("vl_model"):
     if _m in _review_model_ids:
         video_reviewer.set_model_id(_m)
+        translator.set_model_id(_m)
+elif _m := _s.get("translator_model"):
+    translator.set_model_id(_m)
 
 
 @asynccontextmanager
@@ -636,6 +635,7 @@ def get_vl_models():
     return {
         "current":   video_reviewer.model_id,
         "loaded":    video_reviewer.loaded,
+        "translator_model_id": translator.model_id,
         "available": review_models,
     }
 
@@ -647,8 +647,9 @@ def set_vl_model(req: SetVLModelRequest):
     if req.model_id not in valid_ids:
         raise HTTPException(400, f"無効なモデルID: {req.model_id}")
     video_reviewer.set_model_id(req.model_id)
-    save_settings({"vl_model": video_reviewer.model_id})
-    return {"status": "ok", "model_id": video_reviewer.model_id}
+    translator.set_model_id(req.model_id)
+    save_settings({"vl_model": video_reviewer.model_id, "translator_model": translator.model_id})
+    return {"status": "ok", "model_id": video_reviewer.model_id, "translator_model_id": translator.model_id}
 
 
 @app.post("/review/load")
@@ -666,6 +667,7 @@ async def unload_vl_model():
     """動画レビュー用モデルを手動でアンロードして VRAM を解放する"""
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, video_reviewer.unload)
+    await loop.run_in_executor(None, translator.unload)
     return {"status": "ok"}
 
 
