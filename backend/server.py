@@ -174,20 +174,72 @@ def _analysis_plan(mode: str, max_frames: int) -> dict:
             "refine_limit": 0,
             "refine_min_span": 999999.0,
             "refine_frames": 0,
+            "max_chapter_span": 999999.0,
         }
     if mode == "balanced":
         return {
             "coarse_frames": max(8, min(18, max_frames // 2 or 8)),
-            "refine_limit": 3,
+            "refine_limit": 4,
             "refine_min_span": 180.0,
             "refine_frames": max(8, min(18, max_frames // 2 or 8)),
+            "max_chapter_span": 0.0,
         }
     return {
         "coarse_frames": max(10, min(22, max_frames // 2 or 10)),
-        "refine_limit": 6,
+        "refine_limit": 8,
         "refine_min_span": 120.0,
         "refine_frames": max(10, min(24, (max_frames * 2) // 3 or 10)),
+        "max_chapter_span": 0.0,
     }
+
+
+def _auto_max_chapter_span(duration: float) -> float:
+    return max(90.0, min(480.0, float(duration) * 0.12))
+
+
+def _select_refine_targets(entries: list[dict], duration: float, plan: dict) -> list[dict]:
+    if not entries or int(plan.get("refine_limit", 0)) <= 0:
+        return []
+
+    refine_min_span = float(plan.get("refine_min_span", 0.0))
+    auto_max_span = _auto_max_chapter_span(duration)
+    configured_max_span = float(plan.get("max_chapter_span") or 0.0)
+    max_chapter_span = configured_max_span if configured_max_span > 0 else auto_max_span
+    refine_limit = int(plan.get("refine_limit", 0))
+
+    annotated = []
+    for idx, entry in enumerate(entries):
+        start = float(entry.get("start_sec", 0.0))
+        end = float(entry.get("end_sec", start))
+        span = max(0.0, end - start)
+        if span < 10.0:
+            continue
+        annotated.append((idx, span, entry))
+
+    forced = [row for row in annotated if row[1] >= max_chapter_span]
+    optional = [row for row in annotated if row[1] >= refine_min_span and row[1] < max_chapter_span]
+
+    forced.sort(key=lambda row: (-row[1], row[0]))
+    optional.sort(key=lambda row: (-row[1], row[0]))
+
+    selected: list[tuple[int, float, dict]] = []
+    seen: set[int] = set()
+    for row in forced:
+        if row[0] in seen:
+            continue
+        selected.append(row)
+        seen.add(row[0])
+
+    for row in optional:
+        if len(selected) >= max(refine_limit, len(forced)):
+            break
+        if row[0] in seen:
+            continue
+        selected.append(row)
+        seen.add(row[0])
+
+    selected.sort(key=lambda row: row[0])
+    return [row[2] for row in selected]
 
 
 def _slice_transcript(transcript: str, start_sec: float, end_sec: float) -> str:
@@ -255,7 +307,8 @@ def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
         return []
     rows = sorted(entries, key=lambda x: float(x.get("start_sec", 0.0)))
     merged: list[dict] = []
-    MERGE_GAP_SEC = 3.0
+    base_merge_gap_sec = 3.0
+    min_chapter_gap_sec = max(4.0, min(15.0, float(duration) * 0.02))
     for r in rows:
         if not merged:
             merged.append(r.copy())
@@ -265,8 +318,12 @@ def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
         same_title = (r.get("title") or "").strip() == (prev.get("title") or "").strip()
         prev_summary = (prev.get("summary") or "").strip()
         curr_summary = (r.get("summary") or "").strip()
-        # 近接マージは厳しめに。タイトル一致時のみ積極的に統合する。
-        if same_title or (gap < MERGE_GAP_SEC and (not prev_summary or not curr_summary)):
+        # 動画長に応じた最小チャプター間隔を維持しつつ、同タイトルは積極的に統合する。
+        if (
+            same_title
+            or gap < min_chapter_gap_sec
+            or (gap < base_merge_gap_sec and (not prev_summary or not curr_summary))
+        ):
             # 後ろの説明を採用する場合は時刻も後ろに寄せて「早すぎる見出し」を防ぐ。
             use_curr = len(curr_summary) > len(prev_summary)
             if use_curr:
@@ -757,10 +814,7 @@ async def review_analyze(req: ReviewRequest):
             entries = _build_toc_entries(coarse_result, duration)
 
             if int(plan["refine_limit"]) > 0 and entries:
-                targets = [
-                    e for e in entries
-                    if float(e.get("end_sec", 0.0)) - float(e.get("start_sec", 0.0)) >= float(plan["refine_min_span"])
-                ][: int(plan["refine_limit"])]
+                targets = _select_refine_targets(entries, duration, plan)
                 refined_entries: list[dict] = []
                 for idx, ch in enumerate(targets, start=1):
                     start = float(ch.get("start_sec", 0.0))
@@ -986,10 +1040,7 @@ async def review_build_toc(req: TOCBuildRequest):
             duration = float(meta.get("duration") or 0.0)
             entries = _build_toc_entries(coarse_analysis, duration)
             if int(plan["refine_limit"]) > 0 and entries:
-                targets = [
-                    e for e in entries
-                    if float(e.get("end_sec", 0.0)) - float(e.get("start_sec", 0.0)) >= float(plan["refine_min_span"])
-                ][: int(plan["refine_limit"])]
+                targets = _select_refine_targets(entries, duration, plan)
                 refined_entries: list[dict] = []
                 for idx, ch in enumerate(targets, start=1):
                     start = float(ch.get("start_sec", 0.0))

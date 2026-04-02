@@ -310,7 +310,7 @@
               <span>チャプター</span>
               <div class="analysis-header-actions">
                 <button class="btn btn-ghost analysis-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
-                <button class="btn btn-success analysis-run-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
+                <button class="btn btn-primary analysis-run-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
               </div>
             </div>
             <div class="analysis-scroll">
@@ -536,11 +536,7 @@
       if(progress) progress.style.display='none'
       if(fill) fill.style.width='0%'
       if(result) result.innerHTML=''
-      if(kind==='analyze'){
-        if(_analyzeTimer){ clearInterval(_analyzeTimer); _analyzeTimer=null }
-        const el=document.getElementById('analyzeElapsed')
-        if(el) el.textContent=''
-      }
+      stopTaskTimer(kind)
     }
     function updateGlobalStatus(kind,stateName,text){
       const labelMap={transcribe:'文字起こし',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',qa:'チャット',app:'ステータス'}
@@ -551,6 +547,37 @@
       label.textContent=labelMap[kind]||'ステータス'
       body.textContent=text||'待機中'
     }
+    const _taskTimers = {}
+
+    function _elapsedText(kind){
+      const entry=_taskTimers[kind]
+      if(!entry || !entry.startedAt) return ''
+      const sec=Math.max(0, Math.floor((Date.now()-entry.startedAt)/1000))
+      return ` / 経過: ${sec}秒`
+    }
+
+    function startTaskTimer(kind){
+      stopTaskTimer(kind)
+      _taskTimers[kind]={startedAt:Date.now(), interval:setInterval(()=>{
+        const entry=_taskTimers[kind]
+        if(!entry || !entry.lastLabel) return
+        const pct = typeof entry.lastPct === 'number' ? ` (${Math.max(0, Math.round(entry.lastPct))}%)` : ''
+        updateGlobalStatus(kind,'running',`${entry.lastLabel}${pct}${_elapsedText(kind)}`)
+      },1000)}
+    }
+
+    function stopTaskTimer(kind, stateName='done', text=''){
+      const entry=_taskTimers[kind]
+      if(!entry) return
+      if(entry.interval) clearInterval(entry.interval)
+      const sec=Math.max(0, Math.floor((Date.now()-entry.startedAt)/1000))
+      delete _taskTimers[kind]
+      if(text){
+        const suffix = stateName==='error' ? ` / 経過: ${sec}秒` : ` / 完了: ${sec}秒`
+        updateGlobalStatus(kind,stateName,`${text}${suffix}`)
+      }
+    }
+
     function setProgress(kind,pct,label){
       const dot=document.getElementById(`${kind}Dot`)
       if(dot) dot.className='status-dot-sm running'
@@ -562,27 +589,11 @@
       if(result) result.innerHTML=''
       if(fill) fill.style.width=pct+'%'
       if(labelEl) labelEl.textContent=label
-      const statusText=typeof pct === 'number' ? `${label} (${Math.max(0, Math.round(pct))}%)` : label
+      if(!_taskTimers[kind]) startTaskTimer(kind)
+      _taskTimers[kind].lastLabel=label
+      _taskTimers[kind].lastPct=pct
+      const statusText=typeof pct === 'number' ? `${label} (${Math.max(0, Math.round(pct))}%)${_elapsedText(kind)}` : `${label}${_elapsedText(kind)}`
       updateGlobalStatus(kind,'running',statusText)
-    }
-
-    // 分析経過時間タイマー
-    let _analyzeTimer=null, _analyzeStart=0
-    function startAnalyzeTimer(){
-      _analyzeStart=Date.now()
-      const el=document.getElementById('analyzeElapsed')
-      if(el) el.textContent=''
-      if(_analyzeTimer) clearInterval(_analyzeTimer)
-      _analyzeTimer=setInterval(()=>{
-        const s=Math.floor((Date.now()-_analyzeStart)/1000)
-        if(el) el.textContent=`経過: ${s}秒`
-      },1000)
-    }
-    function stopAnalyzeTimer(){
-      if(_analyzeTimer){ clearInterval(_analyzeTimer); _analyzeTimer=null }
-      const s=Math.floor((Date.now()-_analyzeStart)/1000)
-      const el=document.getElementById('analyzeElapsed')
-      if(el) el.textContent=`完了: ${s}秒`
     }
     function setResult(kind,ok,text){
       const dot=document.getElementById(`${kind}Dot`)
@@ -594,7 +605,9 @@
         el.className='result-row '+(ok?'done':'error')
         el.innerHTML = ok ? `<span>✓</span><span>${text}</span>` : `<span>✗</span><span>${text}</span>`
       }
-      updateGlobalStatus(kind, ok?'done':'error', text)
+      const hadTimer=!!_taskTimers[kind]
+      stopTaskTimer(kind, ok?'done':'error', text)
+      if(!hadTimer) updateGlobalStatus(kind, ok?'done':'error', text)
     }
     function setQAEnabled(enabled){
       state.analysisReady = enabled
@@ -1620,7 +1633,6 @@
       if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
       resetSection('analyze')
-      startAnalyzeTimer()
       try{
         const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang()})})
         await readSSE(res,event=>{
@@ -1631,7 +1643,6 @@
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
           else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
           else if(event.status==='done'){
-            stopAnalyzeTimer()
             setProgress('analyze',100,'完了')
             setResult('analyze',true,'分析完了')
             state.tocPath=null
@@ -1642,9 +1653,9 @@
             markTocDraftDirty()
             fetchReviewModelStatus()
           }
-          else if(event.status==='error'){ stopAnalyzeTimer(); setResult('analyze',false,event.message) }
+          else if(event.status==='error'){ setResult('analyze',false,event.message) }
         })
-      }catch(e){ stopAnalyzeTimer(); setResult('analyze',false,`接続エラー: ${e.message}`) }
+      }catch(e){ setResult('analyze',false,`接続エラー: ${e.message}`) }
       btn.disabled=!state.videoPath
     })
 

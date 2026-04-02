@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, protocol, Menu } = require('electro
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 
 const BACKEND_HOST = '127.0.0.1'
 const BACKEND_PORT = 8765
@@ -12,6 +12,7 @@ const BACKEND_HEALTHCHECK_TIMEOUT_MS = 1000
 
 let backendProcess = null
 let isQuitting = false
+let isCleaningUpBackend = false
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -51,10 +52,13 @@ async function waitForBackendReady(timeoutMs) {
 }
 
 async function stopBackendProcess() {
+  if (isCleaningUpBackend) return
   if (!backendProcess || backendProcess.killed) return
+  isCleaningUpBackend = true
   const pid = backendProcess.pid
   if (typeof pid !== 'number') {
     backendProcess.kill()
+    isCleaningUpBackend = false
     return
   }
 
@@ -66,6 +70,29 @@ async function stopBackendProcess() {
     })
   } else {
     backendProcess.kill('SIGTERM')
+  }
+  isCleaningUpBackend = false
+}
+
+function stopBackendProcessSync() {
+  if (isCleaningUpBackend) return
+  if (!backendProcess || backendProcess.killed) return
+  isCleaningUpBackend = true
+  const pid = backendProcess.pid
+  try {
+    if (typeof pid !== 'number') {
+      backendProcess.kill()
+      return
+    }
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+    } else {
+      backendProcess.kill('SIGTERM')
+    }
+  } catch (_) {
+    // best effort cleanup
+  } finally {
+    isCleaningUpBackend = false
   }
 }
 
@@ -159,6 +186,17 @@ app.on('before-quit', async (event) => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+process.on('exit', () => {
+  stopBackendProcessSync()
+})
+
+;['SIGINT', 'SIGTERM', 'SIGHUP'].forEach((signal) => {
+  process.on(signal, () => {
+    stopBackendProcessSync()
+    process.exit(0)
+  })
 })
 
 // ---------- IPC ハンドラー ----------
