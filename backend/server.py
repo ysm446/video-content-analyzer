@@ -420,6 +420,7 @@ class UISettingsRequest(BaseModel):
     output_lang: Optional[str] = None  # "ja" | "en"
     subtitle_display: Optional[str] = None  # "below" | "overlay"
     subtitle_font: Optional[str] = None  # "noto" | "biz" | "yugothic" | "meiryo"
+    analysis_actions_expanded: Optional[bool] = None
     analysis_summary_expanded: Optional[bool] = None
     analysis_tags_expanded: Optional[bool] = None
     analysis_scenes_expanded: Optional[bool] = None
@@ -485,6 +486,7 @@ def get_ui_settings():
         "output_lang": s.get("output_lang", "ja"),
         "subtitle_display": s.get("subtitle_display", "below"),
         "subtitle_font": s.get("subtitle_font", "noto"),
+        "analysis_actions_expanded": s.get("analysis_actions_expanded", True),
         "analysis_summary_expanded": s.get("analysis_summary_expanded", True),
         "analysis_tags_expanded": s.get("analysis_tags_expanded", True),
         "analysis_scenes_expanded": s.get("analysis_scenes_expanded", True),
@@ -510,6 +512,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["subtitle_display"] = req.subtitle_display if req.subtitle_display in {"below", "overlay"} else "below"
     if req.subtitle_font is not None:
         to_save["subtitle_font"] = req.subtitle_font if req.subtitle_font in {"noto", "biz", "yugothic", "meiryo"} else "noto"
+    if req.analysis_actions_expanded is not None:
+        to_save["analysis_actions_expanded"] = bool(req.analysis_actions_expanded)
     if req.analysis_summary_expanded is not None:
         to_save["analysis_summary_expanded"] = bool(req.analysis_summary_expanded)
     if req.analysis_tags_expanded is not None:
