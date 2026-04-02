@@ -66,8 +66,6 @@
     .vertical-resizer::before{content:'';position:absolute;left:0;right:0;top:-5px;bottom:-5px}
     .vertical-resizer:hover{background:var(--accent)}
     .player-detail-pane{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
-    .detail-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
-    .detail-title{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
     .detail-scroll{flex:1;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
     .detail-actions{display:flex;flex-direction:column;gap:8px}
     .detail-action-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start}
@@ -314,31 +312,7 @@
           </div>
           <div class="vertical-resizer" id="verticalResizer" aria-label="動画エリア高さを調整" role="separator"></div>
           <section class="player-detail-pane">
-            <div class="detail-header">
-              <div class="detail-title">詳細</div>
-            </div>
             <div class="detail-scroll">
-              <section class="analysis-section">
-                <button class="analysis-toggle" id="actionsToggleBtn" type="button" aria-expanded="true">
-                  <span class="analysis-toggle-label">操作</span>
-                  <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
-                </button>
-                <div class="analysis-section-body" id="actionsSectionBody">
-                  <div class="detail-actions">
-                    <div class="detail-action-row primary">
-                      <button class="btn btn-ghost detail-action-btn" id="loadVideoBtn"><i data-lucide="folder-open"></i> 動画読込</button>
-                      <button class="btn btn-ghost detail-action-btn" id="toggleOrigSrtBtn"><i data-lucide="file-text"></i> 原文</button>
-                      <button class="btn btn-ghost detail-action-btn" id="toggleJpSrtBtn"><i data-lucide="languages"></i> 日本語</button>
-                    </div>
-                    <div class="detail-action-row secondary">
-                      <button class="btn btn-primary detail-action-btn" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
-                      <button class="btn btn-primary detail-action-btn" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
-                      <button class="btn btn-primary detail-action-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
-                      <button class="btn detail-action-btn detail-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
-                    </div>
-                  </div>
-                </div>
-              </section>
               <div id="detailAnalysis" class="card analysis-detail" style="display:none">
                 <section class="analysis-section">
                   <button class="analysis-toggle" id="summaryToggleBtn" type="button" aria-expanded="true">
@@ -357,6 +331,27 @@
                   </button>
                   <div class="analysis-section-body" id="tagsSectionBody">
                     <div class="tags-wrap" id="tagsWrap"></div>
+                  </div>
+                </section>
+                <section class="analysis-section">
+                  <button class="analysis-toggle" id="actionsToggleBtn" type="button" aria-expanded="true">
+                    <span class="analysis-toggle-label">操作</span>
+                    <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
+                  </button>
+                  <div class="analysis-section-body" id="actionsSectionBody">
+                    <div class="detail-actions">
+                      <div class="detail-action-row primary">
+                        <button class="btn btn-ghost detail-action-btn" id="loadVideoBtn"><i data-lucide="folder-open"></i> 動画読込</button>
+                        <button class="btn btn-ghost detail-action-btn" id="toggleOrigSrtBtn"><i data-lucide="file-text"></i> 原文</button>
+                        <button class="btn btn-ghost detail-action-btn" id="toggleJpSrtBtn"><i data-lucide="languages"></i> 日本語</button>
+                      </div>
+                      <div class="detail-action-row secondary">
+                        <button class="btn btn-primary detail-action-btn" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
+                        <button class="btn btn-primary detail-action-btn" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
+                        <button class="btn btn-primary detail-action-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
+                        <button class="btn detail-action-btn detail-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
+                      </div>
+                    </div>
                   </div>
                 </section>
               </div>
