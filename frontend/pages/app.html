@@ -22,13 +22,13 @@
     .tab-btn:hover{background:none;color:var(--text)}
     .tab-btn.active{color:var(--accent);background:none}
     .topbar-divider{width:1px;height:20px;background:var(--border);margin:0 3px}
-    .model-pill{min-width:min(32vw,360px);max-width:min(42vw,500px);height:32px;display:flex;align-items:center;gap:10px;padding:0 14px;border:none;border-radius:10px;background:linear-gradient(135deg,var(--accent) 0%,var(--accent-hover) 100%);color:#fff;cursor:pointer;box-shadow:none;transition:filter .15s,transform .1s,background .15s,color .15s}
-    .model-pill:hover{filter:brightness(1.04);box-shadow:none}
+    .model-pill{min-width:min(32vw,360px);max-width:min(42vw,500px);height:32px;display:flex;align-items:center;gap:10px;padding:0 14px;border:none;border-radius:10px;background:linear-gradient(135deg,#5b9ee8 0%,#79b3ee 100%);color:#fff;cursor:pointer;box-shadow:none;transition:filter .15s,transform .1s,background .15s,color .15s}
+    .model-pill:hover{filter:brightness(1.02);box-shadow:none}
     .model-pill:active{transform:scale(.99)}
     .model-pill:focus-visible{outline:2px solid #9ba4ff;outline-offset:2px}
     .model-pill.off{background:linear-gradient(135deg,#2b2f38 0%,#232830 100%);color:#bfc7d6;box-shadow:none}
     .model-pill.off:hover{filter:none;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset}
-    .model-pill.loading{background:linear-gradient(135deg,#3f8ef0 0%,var(--accent-hover) 100%)}
+    .model-pill.loading{background:linear-gradient(135deg,#5e9ce0 0%,#77afe8 100%)}
     .model-pill-icon{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
     .model-pill-icon svg.lucide{width:15px;height:15px;stroke-width:1.8}
     .model-pill-text{min-width:0;flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
@@ -200,7 +200,7 @@
     .analysis-toggle-icon{display:inline-flex;align-items:center;justify-content:center;color:var(--text-dim);transition:transform .15s ease}
     .analysis-toggle[aria-expanded="false"] .analysis-toggle-icon{transform:rotate(-90deg)}
     .analysis-section-body{margin-top:8px}
-    .genre-tag{display:inline-block;padding:2px 10px;border-radius:99px;background:rgba(74,158,255,0.16);color:var(--accent);font-size:12px;margin-bottom:8px}
+    .genre-tag{display:inline-block;padding:2px 10px;border-radius:7px;background:rgba(74,158,255,0.10);color:var(--accent);font-size:12px;margin-bottom:8px}
     .summary-text{font-size:13px;line-height:1.65}
     .scenes-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
     .scene-item{display:flex;gap:8px;padding:8px 10px;background:#212121;border-radius:6px;align-items:stretch}
@@ -228,7 +228,7 @@
     .toc-row textarea{min-height:56px;resize:vertical}
     .toc-del{padding:6px 8px;font-size:12px}
     .tags-wrap{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-    .tag{font-size:11px;padding:3px 8px;border-radius:99px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim)}
+    .tag{font-size:11px;padding:3px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:var(--text-dim)}
 
     @media (max-width:1100px){
       .player-shell{grid-template-columns:1fr 1fr!important;grid-template-rows:1fr 260px!important;grid-template-areas:"player player" "analysis qa"!important}
@@ -704,11 +704,14 @@
 
     function clearAnalysisDetail(){
       document.getElementById('analysisDetail').style.display = 'none'
-      document.getElementById('detailAnalysis').style.display = 'none'
+      document.getElementById('detailAnalysis').style.display = 'block'
       document.getElementById('analysisEmpty').style.display = 'flex'
-      document.getElementById('detailEmpty').style.display = 'flex'
+      document.getElementById('detailEmpty').style.display = 'none'
       state.openSceneMenuId = null
       state.editingSceneId = null
+      document.getElementById('summaryToggleBtn').closest('.analysis-section').style.display = 'none'
+      document.getElementById('tagsToggleBtn').closest('.analysis-section').style.display = 'none'
+      document.getElementById('actionsToggleBtn').closest('.analysis-section').style.display = ''
       document.getElementById('genreTag').textContent = ''
       document.getElementById('summaryText').textContent = ''
       document.getElementById('scenesList').innerHTML = ''
@@ -777,6 +780,9 @@
       document.getElementById('detailAnalysis').style.display = 'block'
       document.getElementById('analysisEmpty').style.display = 'none'
       document.getElementById('detailEmpty').style.display = 'none'
+      document.getElementById('summaryToggleBtn').closest('.analysis-section').style.display = ''
+      document.getElementById('tagsToggleBtn').closest('.analysis-section').style.display = ''
+      document.getElementById('actionsToggleBtn').closest('.analysis-section').style.display = ''
       setAnalysisSectionExpanded('summary', state.analysisExpanded.summary !== false)
       setAnalysisSectionExpanded('tags', state.analysisExpanded.tags !== false)
       setAnalysisSectionExpanded('scenes', state.analysisExpanded.scenes !== false)
