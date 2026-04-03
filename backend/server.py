@@ -895,7 +895,7 @@ async def review_qa(req: QARequest):
       {"status": "extracting_frames"}
       {"status": "answering", "count": int}
       {"status": "answer_delta", "delta": str}
-      {"status": "done", "answer": str}
+      {"status": "done", "answer": str, "meta": dict}
       {"status": "error", "message": str}
     """
     video_path = Path(req.video_path)
@@ -947,16 +947,15 @@ async def review_qa(req: QARequest):
         def run_stream():
             parts: list[str] = []
             try:
-                for delta in video_reviewer.qa_frames_stream(
+                answer_meta = video_reviewer.qa_frames_stream_with_meta(
                     frames,
                     req.question,
                     req.transcript,
                     meta.get("timestamps", []),
-                ):
-                    parts.append(delta)
-                    q.put(("answer_delta", delta))
+                    on_delta=lambda delta: (parts.append(delta), q.put(("answer_delta", delta))),
+                )
                 answer = video_reviewer._clean_generated_text("".join(parts))
-                q.put(("done", answer))
+                q.put(("done", json.dumps({"answer": answer, "meta": answer_meta}, ensure_ascii=False)))
             except Exception as e:
                 q.put(("error", str(e)))
 
@@ -969,7 +968,8 @@ async def review_qa(req: QARequest):
                 yield sse({"status": "answer_delta", "delta": payload})
                 await asyncio.sleep(0)
             elif status == "done":
-                yield sse({"status": "done", "answer": payload})
+                done_payload = json.loads(payload)
+                yield sse({"status": "done", "answer": done_payload.get("answer", ""), "meta": done_payload.get("meta", {})})
                 break
             else:
                 yield sse({"status": "error", "message": payload})

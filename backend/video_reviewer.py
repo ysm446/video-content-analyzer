@@ -20,10 +20,10 @@ from .model_catalog import (
 )
 from .vram import MAX_PIXELS_PER_FRAME
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8466-bin-win-cuda-13.1-x64")))
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8648-bin-win-cuda-13.1-x64")))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
-LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "8192"))
+LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
 
 # シーン検出の閾値（0.0〜1.0、低いほど敏感）
 SCENE_THRESHOLD = 0.35
@@ -250,6 +250,9 @@ class LlamaCppVisionServerManager:
         return str(message.get("content", "")).strip()
 
     def stream_chat(self, model_id: str, messages: list[dict], max_tokens: int):
+        yield from self.stream_chat_with_meta(model_id, messages, max_tokens)
+
+    def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int):
         self.ensure_model(model_id)
         payload = {
             "messages": messages,
@@ -266,6 +269,8 @@ class LlamaCppVisionServerManager:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
+        usage: dict | None = None
+        finish_reason: str | None = None
         try:
             with request.urlopen(req, timeout=300.0) as resp:
                 for raw_line in resp:
@@ -276,11 +281,19 @@ class LlamaCppVisionServerManager:
                     if not data or data == "[DONE]":
                         continue
                     event = json.loads(data)
+                    if isinstance(event.get("usage"), dict):
+                        usage = event["usage"]
                     for choice in event.get("choices") or []:
+                        if choice.get("finish_reason"):
+                            finish_reason = str(choice["finish_reason"])
                         delta = choice.get("delta") or {}
                         content = delta.get("content")
                         if isinstance(content, str) and content:
                             yield content
+                return {
+                    "usage": usage or {},
+                    "finish_reason": finish_reason or "",
+                }
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
@@ -484,26 +497,50 @@ class VideoReviewer:
         return self._clean_generated_text(result)
 
     def _infer_stream(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None):
+        meta = self._infer_stream_with_meta(
+            frames,
+            system,
+            prompt,
+            max_new_tokens,
+            lambda _delta: None,
+            timestamps=timestamps,
+        )
+        return meta
+        yield
+
+    def _infer_stream_with_meta(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, on_delta, timestamps: list[float] | None = None) -> dict:
         print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚")
         t0 = time.time()
         prefix_buffer = ""
         content_started = False
+        meta: dict = {}
+
+        def forward_stream(stream_iter) -> None:
+            nonlocal prefix_buffer, content_started, meta
+            while True:
+                try:
+                    delta = next(stream_iter)
+                except StopIteration as stop:
+                    meta = stop.value or {}
+                    return
+                if not delta:
+                    continue
+                if not content_started:
+                    prefix_buffer += delta
+                    cleaned = self._clean_stream_prefix(prefix_buffer)
+                    if not cleaned:
+                        continue
+                    content_started = True
+                    on_delta(cleaned)
+                    prefix_buffer = ""
+                else:
+                    on_delta(delta.replace("<think>", "").replace("</think>", ""))
+
         try:
             try:
                 messages = self._build_messages(frames, system, prompt, timestamps)
-                stream_iter = _vision_server.stream_chat(self.model_id, messages, max_new_tokens)
-                for delta in stream_iter:
-                    if delta:
-                        if not content_started:
-                            prefix_buffer += delta
-                            cleaned = self._clean_stream_prefix(prefix_buffer)
-                            if not cleaned:
-                                continue
-                            content_started = True
-                            yield cleaned
-                            prefix_buffer = ""
-                        else:
-                            yield delta.replace("<think>", "").replace("</think>", "")
+                stream_iter = _vision_server.stream_chat_with_meta(self.model_id, messages, max_new_tokens)
+                forward_stream(stream_iter)
             except RuntimeError as exc:
                 msg = str(exc)
                 if "failed to process image" not in msg:
@@ -524,21 +561,21 @@ class VideoReviewer:
                     retry_timestamps,
                     max_pixels=retry_pixels,
                 )
-                for delta in _vision_server.stream_chat(self.model_id, messages, max_new_tokens):
-                    if delta:
-                        if not content_started:
-                            prefix_buffer += delta
-                            cleaned = self._clean_stream_prefix(prefix_buffer)
-                            if not cleaned:
-                                continue
-                            content_started = True
-                            yield cleaned
-                            prefix_buffer = ""
-                        else:
-                            yield delta.replace("<think>", "").replace("</think>", "")
+                stream_iter = _vision_server.stream_chat_with_meta(self.model_id, messages, max_new_tokens)
+                forward_stream(stream_iter)
         finally:
             elapsed = time.time() - t0
             print(f"[VideoReviewer] ストリーミング推論完了: {elapsed:.1f}秒")
+        meta["elapsed_seconds"] = elapsed
+        usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
+        completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
+        try:
+            completion_tokens_num = float(completion_tokens)
+        except (TypeError, ValueError):
+            completion_tokens_num = 0.0
+        if completion_tokens_num > 0 and elapsed > 0:
+            meta["tokens_per_sec"] = completion_tokens_num / elapsed
+        return meta
 
     def _get_duration(self, video_path: str) -> float:
         probe = ffmpeg.probe(video_path)
@@ -750,3 +787,16 @@ class VideoReviewer:
         self._ensure_loaded()
         prompt = self._build_qa_prompt(question, transcript, timestamps)
         yield from self._infer_stream(frames, QA_SYSTEM, prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
+
+    def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None) -> dict:
+        self._ensure_loaded()
+        prompt = self._build_qa_prompt(question, transcript, timestamps)
+        callback = on_delta or (lambda _delta: None)
+        return self._infer_stream_with_meta(
+            frames,
+            QA_SYSTEM,
+            prompt,
+            max_new_tokens=QA_MAX_NEW_TOKENS,
+            on_delta=callback,
+            timestamps=timestamps or None,
+        )

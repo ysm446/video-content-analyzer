@@ -18,10 +18,10 @@ from .model_catalog import (
 from .vram import max_memory_map
 from .video_reviewer import _vision_server
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8466-bin-win-cuda-13.1-x64")))
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8648-bin-win-cuda-13.1-x64")))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_PORT = int(os.environ.get("LLAMA_CPP_PORT", "8766"))
-LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "8192"))
+LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
 
 # /no_think でthinkingモードをOFF → 字幕バッチ翻訳に最適化
 SYSTEM_PROMPT = (

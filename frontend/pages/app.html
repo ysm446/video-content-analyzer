@@ -19,8 +19,8 @@
     .sidebar-right{margin-left:auto}
     .sidebar-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;min-width:0;max-width:min(46vw,540px)}
     .tab-btn{background:none;border:none;color:var(--text-dim);width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;border-radius:8px;transition:background .15s,color .15s}
-    .tab-btn:hover{background:var(--surface2);color:var(--text)}
-    .tab-btn.active{color:var(--accent);background:rgba(74,158,255,0.12)}
+    .tab-btn:hover{background:none;color:var(--text)}
+    .tab-btn.active{color:var(--accent);background:none}
     .topbar-divider{width:1px;height:20px;background:var(--border);margin:0 3px}
     .model-pill{min-width:min(32vw,360px);max-width:min(42vw,500px);height:32px;display:flex;align-items:center;gap:10px;padding:0 14px;border:none;border-radius:10px;background:linear-gradient(135deg,var(--accent) 0%,var(--accent-hover) 100%);color:#fff;cursor:pointer;box-shadow:none;transition:filter .15s,transform .1s,background .15s,color .15s}
     .model-pill:hover{filter:brightness(1.04);box-shadow:none}
@@ -164,14 +164,17 @@
     .qa-panel{min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);grid-area:qa;overflow:hidden}
     .qa-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
     .qa-title{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
-    .qa-history{flex:1;overflow-y:auto;padding:4px 8px 12px;display:flex;flex-direction:column;gap:10px}
+    .qa-history{flex:1;overflow-y:auto;padding:10px 10px 16px;display:flex;flex-direction:column;gap:10px}
     .qa-pair{display:flex;flex-direction:column;gap:6px}
     .qa-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;text-align:center}
-    .qa-question{align-self:flex-end;background:var(--accent);color:#fff;padding:8px 12px;border-radius:12px 12px 4px 12px;max-width:85%}
-    .qa-answer{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);padding:8px 12px;border-radius:4px 12px 12px 12px;max-width:90%;white-space:pre-wrap}
+    .qa-question{align-self:flex-end;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:12px 12px 4px 12px;max-width:92%;white-space:pre-wrap}
+    .qa-answer{align-self:flex-start;background:transparent;border:none;padding:0;max-width:96%;white-space:pre-wrap;line-height:1.7;color:var(--text)}
+    .qa-answer-meta{align-self:flex-start;display:flex;flex-wrap:wrap;gap:8px 12px;max-width:96%;color:var(--text-dim)}
+    .qa-meta-item{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1.2;color:var(--text-dim);background:none;border:none;padding:0}
+    .qa-meta-item svg.lucide{width:13px;height:13px;stroke-width:1.9}
     .qa-answering{font-size:12px;color:var(--text-dim)}
     .qa-elapsed{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
-    .qa-input-row{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px}
+    .qa-input-row{padding:12px 10px 14px;border-top:1px solid var(--border);display:flex;gap:8px}
     .qa-input{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius)}
 
     .settings-main{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;max-width:920px;margin:0 auto;width:100%}
@@ -654,6 +657,27 @@
 
     function trimLeadingChatWhitespace(text){
       return String(text || '').replace(/^(?:\s*\r?\n)+/, '').replace(/^[\t ]+/, '')
+    }
+
+    function formatQaMeta(meta){
+      if(!meta || typeof meta !== 'object') return []
+      const usage = meta.usage && typeof meta.usage === 'object' ? meta.usage : {}
+      const parts = []
+      const tokensPerSec = Number(meta.tokens_per_sec)
+      const tokenCount = usage.total_tokens ?? usage.completion_tokens ?? usage.output_tokens
+      const elapsedSec = Number(meta.elapsed_seconds)
+      const finishReason = meta.finish_reason ? String(meta.finish_reason) : ''
+      if(Number.isFinite(tokensPerSec) && tokensPerSec > 0) parts.push({kind:'speed', icon:'zap', text:`${tokensPerSec.toFixed(1)} tok/sec`})
+      if(tokenCount != null && tokenCount !== '') parts.push({kind:'tokens', icon:'message-square', text:`${tokenCount} tokens`})
+      if(Number.isFinite(elapsedSec) && elapsedSec > 0) parts.push({kind:'elapsed', icon:'clock-3', text:`${elapsedSec.toFixed(2)}s`})
+      if(finishReason) parts.push({kind:'finish', icon:'circle-stop', text:`Finish reason: ${finishReason}`})
+      return parts
+    }
+
+    function renderQaMeta(meta){
+      const items = formatQaMeta(meta)
+      if(!items.length) return ''
+      return items.map(item=>`<span class="qa-meta-item ${escHtml(item.kind || '')}"><i data-lucide="${item.icon}"></i><span>${escHtml(item.text)}</span></span>`).join('')
     }
 
     async function readSSE(response,onEvent){
@@ -1728,6 +1752,10 @@
       ans.className='qa-answer'
       ans.style.display='none'
       pair.appendChild(ans)
+      const ansMeta=document.createElement('div')
+      ansMeta.className='qa-answer-meta'
+      ansMeta.style.display='none'
+      pair.appendChild(ansMeta)
       const elapsed=document.createElement('div')
       elapsed.className='qa-elapsed'
       pair.appendChild(elapsed)
@@ -1766,6 +1794,12 @@
               ans.style.display=''
               ans.textContent=trimLeadingChatWhitespace(event.answer || '')
               thinking.style.display='none'
+            }
+            const metaHtml = renderQaMeta(event.meta)
+            if(metaHtml){
+              ansMeta.style.display=''
+              ansMeta.innerHTML=metaHtml
+              lucide.createIcons({nodes:[ansMeta]})
             }
             stopQaTimer('完了')
             updateGlobalStatus('qa','done','回答を生成しました')
