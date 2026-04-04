@@ -1,23 +1,27 @@
+import base64
+import io
+import json
 import os
-import re
+import subprocess
 import tempfile
-from importlib import metadata
+import time
+from pathlib import Path
+from urllib import error, request
 
+import ffmpeg
+import soundfile as sf
 import torch
 
-from .vram import max_memory_map
-import soundfile as sf
-import ffmpeg
+from .model_catalog import get_review_model_meta, default_review_model_id
 
-MODEL_ID           = "Qwen/Qwen3-ASR-1.7B"
-FORCED_ALIGNER_ID  = "Qwen/Qwen3-ForcedAligner-0.6B"
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8664-bin-win-cuda-13.1-x64")))
+LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
+LLAMA_CPP_ASR_PORT = int(os.environ.get("LLAMA_CPP_ASR_PORT", "8768"))
+LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
 
-# チャンクサイズ（秒）
-# ForcedAligner の上限は 170s だが、ASR の出力トークン上限による末尾切り捨てを
-# 防ぐため、実際の入力は 90s に抑える。
-MAX_ALIGN_SEC = 90
+# 音声チャンクサイズ（秒）
+CHUNK_SEC = 30
 
-# Qwen3-ASR は言語コードではなく言語名を要求する
 LANGUAGE_MAP = {
     "en":  "English",
     "zh":  "Chinese",
@@ -51,47 +55,195 @@ LANGUAGE_MAP = {
     "mk":  "Macedonian",
 }
 
+_TRANSCRIBE_PROMPT = (
+    "Transcribe the following speech segment in {language} into {language} text.\n\n"
+    "Follow these specific instructions for formatting the answer:\n"
+    "* Only output the transcription, with no newlines.\n"
+    "* When transcribing numbers, write the digits, i.e. write 1.7 and not one point seven, "
+    "and write 3 instead of three."
+)
+
+
+def _numpy_to_wav_bytes(data, sr: int) -> bytes:
+    buf = io.BytesIO()
+    sf.write(buf, data, sr, format="WAV", subtype="PCM_16")
+    buf.seek(0)
+    return buf.read()
+
+
+class LlamaCppASRServerManager:
+    def __init__(self):
+        self._process: subprocess.Popen | None = None
+        self._current_model_id: str | None = None
+
+    def _base_url(self) -> str:
+        return f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_ASR_PORT}"
+
+    def _find_executable(self) -> Path:
+        candidates = [
+            LLAMA_CPP_DIR / "llama-server.exe",
+            LLAMA_CPP_DIR / "bin" / "llama-server.exe",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError(f"llama-server.exe が見つかりません: {LLAMA_CPP_DIR}")
+
+    def _request_json(self, method: str, path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
+        data = None
+        headers = {}
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = request.Request(self._base_url() + path, data=data, method=method, headers=headers)
+        with request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+        if not body:
+            return {}
+        return json.loads(body.decode("utf-8"))
+
+    def _is_ready(self) -> bool:
+        try:
+            self._request_json("GET", "/v1/models", timeout=2.0)
+            return True
+        except Exception:
+            return False
+
+    def ensure_model(self, model_id: str) -> None:
+        meta = get_review_model_meta(model_id)
+        if meta is None:
+            raise ValueError(f"ASR に対応したモデルが見つかりません: {model_id}")
+        model_path = Path(meta["model_path"])
+        mmproj_path = Path(meta["mmproj_path"])
+        if not model_path.exists():
+            raise FileNotFoundError(f"GGUF モデルが見つかりません: {model_path}")
+        if not mmproj_path.exists():
+            raise FileNotFoundError(f"mmproj モデルが見つかりません: {mmproj_path}")
+
+        same_model = (
+            self._process is not None
+            and self._process.poll() is None
+            and self._current_model_id == model_id
+            and self._is_ready()
+        )
+        if same_model:
+            return
+
+        self.stop()
+        exe = self._find_executable()
+        cmd = [
+            str(exe),
+            "-m", str(model_path),
+            "--mmproj", str(mmproj_path),
+            "--host", LLAMA_CPP_HOST,
+            "--port", str(LLAMA_CPP_ASR_PORT),
+            "-c", str(LLAMA_CPP_CTX),
+            "--jinja",
+            "--reasoning", "off",
+            "--reasoning-budget", "0",
+        ]
+        if torch.cuda.is_available():
+            cmd.extend(["-ngl", "999"])
+
+        self._process = subprocess.Popen(cmd, cwd=str(exe.parent))
+        self._current_model_id = model_id
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            if self._process.poll() is not None:
+                raise RuntimeError("ASR 用 llama-cpp サーバーが起動直後に終了しました")
+            if self._is_ready():
+                print(f"[ASR] llama.cpp server ready: {model_id}")
+                return
+            time.sleep(1.0)
+
+        self.stop()
+        raise TimeoutError("ASR 用 llama-cpp サーバーの起動がタイムアウトしました")
+
+    def stop(self) -> None:
+        proc = self._process
+        self._process = None
+        self._current_model_id = None
+        if proc is None:
+            return
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5.0)
+        print("[ASR] llama.cpp server を停止しました")
+
+    def is_running(self) -> bool:
+        return (
+            self._process is not None
+            and self._process.poll() is None
+            and self._is_ready()
+        )
+
+    def transcribe_chunk(self, wav_bytes: bytes, language: str) -> str:
+        audio_b64 = base64.b64encode(wav_bytes).decode("ascii")
+        prompt = _TRANSCRIBE_PROMPT.format(language=language)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "audio_url",
+                        "audio_url": {
+                            "url": f"data:audio/wav;base64,{audio_b64}"
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        payload = {
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": 1024,
+            "stream": False,
+        }
+        try:
+            response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=120.0)
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"ASR API error: {exc.code} {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"ASR llama-cpp サーバーに接続できません: {exc}") from exc
+        choices = response.get("choices") or []
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        return str(message.get("content", "")).strip()
+
+
+_asr_server = LlamaCppASRServerManager()
+
 
 class ASRProcessor:
     def __init__(self):
-        self.model = None
+        self.model_id = default_review_model_id() or ""
+        self.model = None  # None = 未ロード、truthy = ロード済み
 
-    def load(self):
-        try:
-            from qwen_asr import Qwen3ASRModel
-        except Exception as e:
-            try:
-                tf_ver = metadata.version("transformers")
-            except metadata.PackageNotFoundError:
-                tf_ver = "not installed"
-            raise RuntimeError(
-                "Failed to import qwen_asr. "
-                f"Installed transformers={tf_ver}. "
-                "Please install compatible versions, e.g. `pip install -U \"transformers==4.57.6\" qwen-asr`."
-            ) from e
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype  = torch.float16 if device == "cuda" else torch.float32
-        mm = max_memory_map()
-        self.model = Qwen3ASRModel.from_pretrained(
-            MODEL_ID,
-            dtype=dtype,
-            device_map="auto",
-            **({"max_memory": mm} if mm else {}),
-            forced_aligner=FORCED_ALIGNER_ID,
-            forced_aligner_kwargs={"torch_dtype": dtype, "device_map": "auto",
-                                   **({"max_memory": mm} if mm else {})},
-        )
-        print(f"[ASR] Loaded {MODEL_ID} + {FORCED_ALIGNER_ID}")
-
-    def unload(self):
-        """モデルを破棄して VRAM を解放する"""
-        if self.model is not None:
-            del self.model
+    def set_model_id(self, model_id: str) -> None:
+        if self.model_id != model_id:
+            _asr_server.stop()
+            self.model_id = model_id
             self.model = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            print("[ASR] モデルをアンロードしました")
+
+    @property
+    def loaded(self) -> bool:
+        return _asr_server.is_running()
+
+    def load(self) -> None:
+        _asr_server.ensure_model(self.model_id)
+        self.model = {"backend": "llama.cpp", "model_id": self.model_id}
+
+    def unload(self) -> None:
+        _asr_server.stop()
+        self.model = None
 
     def extract_audio(self, video_path: str) -> str:
         """動画ファイルから 16kHz モノラル WAV を一時ファイルに抽出する"""
@@ -105,77 +257,25 @@ class ASRProcessor:
         )
         return tmp.name
 
-    def _align_to_segments(
-        self,
-        align_result,
-        offset_sec: float,
-        max_words: int = 12,
-    ) -> list[dict]:
-        """
-        ForcedAlignResult の単語アイテムを字幕セグメントにグループ化する。
-
-        グループ区切りの優先順位:
-          1. 文末句読点（. ! ?）の直後
-          2. max_words 単語に達したとき
-
-        offset_sec: このチャンクの開始時刻（秒）。各アイテムの時刻に加算する。
-        """
-        segments: list[dict] = []
-        current_words: list[tuple[str, float, float]] = []  # (text, start, end)
-        seg_start: float | None = None
-
-        def flush():
-            nonlocal seg_start
-            if not current_words:
-                return
-            text    = " ".join(w[0] for w in current_words)
-            seg_end = current_words[-1][2]
-            segments.append({"text": text, "timestamp": (seg_start, seg_end)})
-            current_words.clear()
-            seg_start = None
-
-        for item in align_result:
-            word = item.text.strip()
-            if not word:
-                continue
-
-            w_start = item.start_time + offset_sec
-            w_end   = item.end_time   + offset_sec
-
-            if seg_start is None:
-                seg_start = w_start
-
-            current_words.append((word, w_start, w_end))
-
-            ends_sentence = bool(re.search(r"[.!?]$", word))
-            if ends_sentence or len(current_words) >= max_words:
-                flush()
-
-        flush()  # 残りのワードを確定
-        return segments
-
     def transcribe(
         self,
         video_path: str,
         language: str = None,
     ) -> list[dict]:
         """
-        動画を文字起こしし、ForcedAligner による正確なタイムスタンプ付きセグメントを返す。
+        動画を文字起こしし、チャンク単位のタイムスタンプ付きセグメントを返す。
 
-        音声を MAX_ALIGN_SEC 秒ごとに分割して推論し、
-        各チャンクのオフセットを ForcedAlignItem の時刻に加算することで
-        動画全体の絶対時刻を正確に再現する。
+        音声を CHUNK_SEC 秒ごとに分割して Gemma 4 に投げ、
+        各チャンクの境界時刻をタイムスタンプとして付与する。
 
         Args:
             video_path: 動画ファイルのパス
-            language:   ISO 言語コード（"en"/"zh"/"ja" など）または None（自動検出）。
-                        Qwen3-ASR が要求する言語名（"English" 等）への変換は内部で行う。
+            language:   ISO 言語コード（"en"/"zh"/"ja" など）または None（英語扱い）
 
         Returns:
             [{"text": str, "timestamp": (start_sec, end_sec)}, ...]
         """
-        # ISO コード → Qwen3-ASR が受け付ける言語名に変換
-        lang_name = LANGUAGE_MAP.get(language) if language else None
+        lang_name = LANGUAGE_MAP.get(language, "English") if language else "English"
 
         audio_path = self.extract_audio(video_path)
         try:
@@ -183,52 +283,30 @@ class ASRProcessor:
         finally:
             os.unlink(audio_path)
 
-        # モノラル保証
         if data.ndim > 1:
             data = data.mean(axis=1)
 
-        chunk_samples  = int(MAX_ALIGN_SEC * sr)
-        total_chunks   = max(1, -(-len(data) // chunk_samples))  # ceil 除算
+        chunk_samples = int(CHUNK_SEC * sr)
+        total_chunks = max(1, -(-len(data) // chunk_samples))
         segments: list[dict] = []
 
         for chunk_idx, start_sample in enumerate(range(0, len(data), chunk_samples)):
             chunk = data[start_sample : start_sample + chunk_samples]
 
-            # 0.5 秒未満の端切れは無音とみなしてスキップ
             if len(chunk) < sr * 0.5:
                 continue
 
             start_sec = start_sample / sr
+            end_sec = min(start_sample + chunk_samples, len(data)) / sr
             print(f"[ASR] チャンク {chunk_idx + 1}/{total_chunks} @ {start_sec:.1f}s 処理中...")
 
-            results = self.model.transcribe(
-                (chunk, sr),
-                language=lang_name,
-                return_time_stamps=True,
-            )
+            wav_bytes = _numpy_to_wav_bytes(chunk, sr)
+            text = _asr_server.transcribe_chunk(wav_bytes, lang_name)
 
-            if not results:
-                print(f"[ASR] チャンク {chunk_idx + 1}/{total_chunks} @ {start_sec:.1f}s: 結果なし（スキップ）")
-                continue
-
-            result = results[0]
-
-            # イテラブルをリスト化してアライメント率を計算
-            aligned_items = list(result.time_stamps) if result.time_stamps is not None else []
-            total_words   = len(result.text.split()) if result.text else 0
-            align_ratio   = len(aligned_items) / total_words if total_words > 0 else 0.0
-
-            print(f"[ASR] チャンク {chunk_idx + 1}/{total_chunks}: text={total_words}単語, aligned={len(aligned_items)}単語, ratio={align_ratio:.0%}")
-
-            if aligned_items:
-                # ForcedAligner が成功した場合：単語レベルのタイムスタンプを使用
-                chunk_segs = self._align_to_segments(aligned_items, offset_sec=start_sec)
-                segments.extend(chunk_segs)
+            if text:
+                segments.append({"text": text, "timestamp": (start_sec, end_sec)})
+                print(f"[ASR] チャンク {chunk_idx + 1}/{total_chunks}: {len(text)}文字")
             else:
-                # フォールバック：ForcedAligner が失敗した場合はチャンク全体を1セグメントに
-                text = result.text.strip()
-                if text:
-                    end_sec = min(start_sample + chunk_samples, len(data)) / sr
-                    segments.append({"text": text, "timestamp": (start_sec, end_sec)})
+                print(f"[ASR] チャンク {chunk_idx + 1}/{total_chunks}: 結果なし（スキップ）")
 
         return segments
