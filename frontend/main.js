@@ -146,6 +146,7 @@ function createMainWindow() {
     },
     title: 'Video Content Analyzer',
     backgroundColor: '#111111',
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
   })
   win.loadFile(path.join(__dirname, 'pages', 'app.html'))
 
@@ -160,6 +161,7 @@ function createMainWindow() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
+  app.setAppUserModelId('com.video-content-analyzer')
 
   try {
     await startBackendProcess()
