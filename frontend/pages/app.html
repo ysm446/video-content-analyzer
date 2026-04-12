@@ -51,11 +51,11 @@
     .status-bar-sysinfo{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0;font-size:11px;color:var(--text-dim);white-space:nowrap}
     .sysinfo-item{display:flex;align-items:center;gap:5px}
     .sysinfo-label{opacity:.65}
-    .sysinfo-val{color:var(--text);font-variant-numeric:tabular-nums}
+    .sysinfo-val{display:inline-block;color:var(--text);font-variant-numeric:tabular-nums}
     .sysinfo-val.hi{color:#f0a830}
     .sysinfo-val.crit{color:#e05050}
-    .sysinfo-bar{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;flex-shrink:0}
-    .sysinfo-bar-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .6s ease,background .4s}
+    .sysinfo-bar{display:inline-block;width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;flex-shrink:0}
+    .sysinfo-bar-fill{display:block;width:0%;height:100%;border-radius:2px;background:var(--accent);transition:width .6s ease,background .4s}
     .sysinfo-bar-fill.hi{background:#f0a830}
     .sysinfo-bar-fill.crit{background:#e05050}
 
@@ -2014,9 +2014,10 @@
       const fill = document.getElementById(`${id}_fill`)
       const val  = document.getElementById(`${id}_val`)
       if (!fill || !val) return
-      const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'hi' : ''
+      const safePct = Number.isFinite(pct) ? Math.max(0, Math.min(pct, 100)) : 0
+      const cls = safePct >= 90 ? 'crit' : safePct >= 70 ? 'hi' : ''
       fill.className = 'sysinfo-bar-fill' + (cls ? ` ${cls}` : '')
-      fill.style.width = Math.min(pct, 100).toFixed(1) + '%'
+      fill.style.width = safePct.toFixed(1) + '%'
       val.className  = 'sysinfo-val' + (cls ? ` ${cls}` : '')
       val.textContent = text
     }
