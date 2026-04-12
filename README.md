@@ -64,14 +64,9 @@ pip install -r requirements.txt
 
 ### 3. モデルを配置
 
-ASR モデルは初回起動時に自動ダウンロードされます。翻訳・動画レビュー用 GGUF は `models/` 配下に置いてください。
+翻訳・動画レビュー用 GGUF は `models/` 配下に置いてください。
 
-```bash
-set HF_HOME=./models
-
-# ASR モデル
-python -c "from qwen_asr import Qwen3ASRModel; Qwen3ASRModel.from_pretrained('Qwen/Qwen3-ASR-1.7B', forced_aligner='Qwen/Qwen3-ForcedAligner-0.6B')"
-```
+> 現在の ASR 実装メモ: Gemma 4 E4B を `llama.cpp` の `llama-server` 経由で音声入力付き `/v1/chat/completions` に接続する検証を行いましたが、2026-04-07 時点では文字起こし用途では安定動作していません。詳細は `docs/asr-gemma-notes.md` を参照してください。
 
 翻訳・動画レビュー用 GGUF の配置例：
 
@@ -212,6 +207,12 @@ video-content-analyzer/
 | [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B) | 単語タイムスタンプ生成 | ~1 GB |
 | GGUF テキストモデル（mmproj なし） | 翻訳・辞書検索 | モデルによる |
 | GGUF VL モデル（mmproj あり） | 動画レビュー・Q&A | モデルによる |
+
+## ASR の補足
+
+- Gemma 4 E4B GGUF + `llama-server` は、モデルロード自体は成功しても、音声入力付き `chat/completions` で `audio input is not supported` を返し、文字起こしには使えないケースを確認しています。
+- そのため、ASR は現時点では Gemma 4 E4B を前提にせず、専用 ASR か別の音声対応モデルで構成する前提で考えるのが安全です。
+- 検証ログと切り分け結果は `docs/asr-gemma-notes.md` にまとめています。
 
 ## VRAM 管理
 
