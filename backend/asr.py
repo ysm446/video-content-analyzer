@@ -14,10 +14,12 @@ import torch
 
 from .model_catalog import get_review_model_meta, default_review_model_id
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8664-bin-win-cuda-13.1-x64")))
+LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8763-bin-win-cuda-13.1-x64")))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_ASR_PORT = int(os.environ.get("LLAMA_CPP_ASR_PORT", "8768"))
 LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
+LLAMA_CPP_ASR_HF_REPO = os.environ.get("LLAMA_CPP_ASR_HF_REPO", "").strip()
+LLAMA_CPP_ASR_STARTUP_TIMEOUT = float(os.environ.get("LLAMA_CPP_ASR_STARTUP_TIMEOUT", "1800"))
 
 # 音声チャンクサイズ（秒）
 CHUNK_SEC = 30
@@ -89,6 +91,18 @@ class LlamaCppASRServerManager:
                 return candidate
         raise FileNotFoundError(f"llama-server.exe が見つかりません: {LLAMA_CPP_DIR}")
 
+    def _hf_repo_for_meta(self, meta: dict) -> str:
+        if LLAMA_CPP_ASR_HF_REPO:
+            return LLAMA_CPP_ASR_HF_REPO
+
+        model_path = Path(meta["model_path"])
+        folder_name = model_path.parent.name.strip()
+        if not folder_name:
+            raise ValueError(f"ASR 用 Hugging Face repo を推定できません: {model_path}")
+        if "/" in folder_name:
+            return folder_name
+        return f"ggml-org/{folder_name}"
+
     def _request_json(self, method: str, path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
         data = None
         headers = {}
@@ -114,11 +128,9 @@ class LlamaCppASRServerManager:
         if meta is None:
             raise ValueError(f"ASR に対応したモデルが見つかりません: {model_id}")
         model_path = Path(meta["model_path"])
-        mmproj_path = Path(meta["mmproj_path"])
         if not model_path.exists():
             raise FileNotFoundError(f"GGUF モデルが見つかりません: {model_path}")
-        if not mmproj_path.exists():
-            raise FileNotFoundError(f"mmproj モデルが見つかりません: {mmproj_path}")
+        hf_repo = self._hf_repo_for_meta(meta)
 
         same_model = (
             self._process is not None
@@ -133,8 +145,7 @@ class LlamaCppASRServerManager:
         exe = self._find_executable()
         cmd = [
             str(exe),
-            "-m", str(model_path),
-            "--mmproj", str(mmproj_path),
+            "-hf", hf_repo,
             "--host", LLAMA_CPP_HOST,
             "--port", str(LLAMA_CPP_ASR_PORT),
             "-c", str(LLAMA_CPP_CTX),
@@ -145,10 +156,12 @@ class LlamaCppASRServerManager:
         if torch.cuda.is_available():
             cmd.extend(["-ngl", "999"])
 
-        self._process = subprocess.Popen(cmd, cwd=str(exe.parent))
+        env = os.environ.copy()
+        env.setdefault("HF_HOME", str(Path(__file__).resolve().parent.parent / "models"))
+        self._process = subprocess.Popen(cmd, cwd=str(exe.parent), env=env)
         self._current_model_id = model_id
 
-        deadline = time.time() + 180.0
+        deadline = time.time() + LLAMA_CPP_ASR_STARTUP_TIMEOUT
         while time.time() < deadline:
             if self._process.poll() is not None:
                 raise RuntimeError("ASR 用 llama-cpp サーバーが起動直後に終了しました")
@@ -185,33 +198,81 @@ class LlamaCppASRServerManager:
     def transcribe_chunk(self, wav_bytes: bytes, language: str) -> str:
         audio_b64 = base64.b64encode(wav_bytes).decode("ascii")
         prompt = _TRANSCRIBE_PROMPT.format(language=language)
-        messages = [
+        audio_data_url = f"data:audio/wav;base64,{audio_b64}"
+        payloads = [
             {
-                "role": "user",
-                "content": [
+                "messages": [
                     {
-                        "type": "audio_url",
-                        "audio_url": {
-                            "url": f"data:audio/wav;base64,{audio_b64}"
-                        },
-                    },
-                    {"type": "text", "text": prompt},
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "format": "wav",
+                                    "data": audio_b64,
+                                },
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
                 ],
-            }
+                "temperature": 0,
+                "max_tokens": 1024,
+                "stream": False,
+            },
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "audio_url",
+                                "audio_url": {"url": audio_data_url},
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                "temperature": 0,
+                "max_tokens": 1024,
+                "stream": False,
+            },
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "audio",
+                                "audio_url": {"url": audio_data_url},
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                "temperature": 0,
+                "max_tokens": 1024,
+                "stream": False,
+            },
         ]
-        payload = {
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": 1024,
-            "stream": False,
-        }
-        try:
-            response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=120.0)
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"ASR API error: {exc.code} {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"ASR llama-cpp サーバーに接続できません: {exc}") from exc
+
+        last_error_detail = None
+        response = None
+        for idx, payload in enumerate(payloads):
+            try:
+                response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=120.0)
+                break
+            except error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                last_error_detail = f"{exc.code} {detail}"
+                # Some llama.cpp multimodal builds reject one audio content type but accept the other.
+                if exc.code == 400 and "unsupported content[].type" in detail and idx + 1 < len(payloads):
+                    continue
+                raise RuntimeError(f"ASR API error: {last_error_detail}") from exc
+            except error.URLError as exc:
+                raise RuntimeError(f"ASR llama-cpp サーバーに接続できません: {exc}") from exc
+        if response is None:
+            raise RuntimeError(f"ASR API error: {last_error_detail or 'empty response'}")
         choices = response.get("choices") or []
         if not choices:
             return ""
