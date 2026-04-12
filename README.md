@@ -64,7 +64,7 @@ pip install -r requirements.txt
 
 ### 3. モデルを配置
 
-翻訳・動画レビュー用 GGUF は `models/` 配下に置いてください。
+ASR モデルは初回起動時に自動ダウンロードされます。翻訳・動画レビュー用 GGUF は `models/` 配下に置いてください。
 
 > 現在の ASR 実装メモ: Gemma 4 E4B を `llama.cpp` の `llama-server` 経由で音声入力付き `/v1/chat/completions` に接続する検証を行いましたが、2026-04-07 時点では文字起こし用途では安定動作していません。詳細は `docs/asr-gemma-notes.md` を参照してください。
 

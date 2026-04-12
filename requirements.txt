@@ -1,9 +1,13 @@
 fastapi
 uvicorn[standard]
-transformers
+# qwen-asr requires a compatible transformers build
+transformers==4.57.6
+qwen-asr
 torch
+torchaudio
 soundfile
 ffmpeg-python
 srt
 accelerate
+qwen-vl-utils
 Pillow
