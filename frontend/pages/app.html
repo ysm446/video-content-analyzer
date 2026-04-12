@@ -48,6 +48,16 @@
     .status-bar-dot.error{background:var(--error)}
     .status-bar-label{color:var(--text);white-space:nowrap}
     .status-bar-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .status-bar-sysinfo{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0;font-size:11px;color:var(--text-dim);white-space:nowrap}
+    .sysinfo-item{display:flex;align-items:center;gap:5px}
+    .sysinfo-label{opacity:.65}
+    .sysinfo-val{color:var(--text);font-variant-numeric:tabular-nums}
+    .sysinfo-val.hi{color:#f0a830}
+    .sysinfo-val.crit{color:#e05050}
+    .sysinfo-bar{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;flex-shrink:0}
+    .sysinfo-bar-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .6s ease,background .4s}
+    .sysinfo-bar-fill.hi{background:#f0a830}
+    .sysinfo-bar-fill.crit{background:#e05050}
 
     .player-shell{flex:1;display:grid;grid-template-columns:minmax(0,2fr) 1px minmax(0,1fr) minmax(0,1fr);grid-template-areas:"player divider analysis qa";min-height:0;overflow:hidden}
     .player-left{min-width:0;display:flex;flex-direction:column;grid-area:player}
@@ -472,6 +482,7 @@
     <span class="status-bar-dot" id="globalStatusDot"></span>
     <span class="status-bar-label" id="globalStatusLabel">ステータス</span>
     <span class="status-bar-text" id="globalStatusText">待機中</span>
+    <span class="status-bar-sysinfo" id="sysInfo"></span>
   </div>
 
   <div id="modelModal" class="model-modal" style="display:none">
@@ -1986,6 +1997,59 @@
     switchAnalysisPane('analysis')
     updatePanelLayout()
     lucide.createIcons()
+
+    // システムリソース表示
+    const sysInfo = document.getElementById('sysInfo')
+
+    // 各メトリクスの DOM を一度だけ生成し、以降は値だけ更新してトランジションを維持する
+    function makeSysItem(id, label) {
+      const wrap = document.createElement('span')
+      wrap.className = 'sysinfo-item'
+      wrap.innerHTML = `<span class="sysinfo-label">${label}</span>`
+        + `<span class="sysinfo-bar"><span class="sysinfo-bar-fill" id="${id}_fill"></span></span>`
+        + `<span class="sysinfo-val" id="${id}_val"></span>`
+      return wrap
+    }
+    function setSysItem(id, pct, text) {
+      const fill = document.getElementById(`${id}_fill`)
+      const val  = document.getElementById(`${id}_val`)
+      if (!fill || !val) return
+      const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'hi' : ''
+      fill.className = 'sysinfo-bar-fill' + (cls ? ` ${cls}` : '')
+      fill.style.width = Math.min(pct, 100).toFixed(1) + '%'
+      val.className  = 'sysinfo-val' + (cls ? ` ${cls}` : '')
+      val.textContent = text
+    }
+
+    const itemCpu  = makeSysItem('si_cpu',  'CPU')
+    const itemRam  = makeSysItem('si_ram',  'RAM')
+    const itemGpu  = makeSysItem('si_gpu',  'GPU')
+    const itemVram = makeSysItem('si_vram', 'VRAM')
+    sysInfo.append(itemCpu, itemRam)
+
+    let gpuAttached = false, vramAttached = false
+
+    async function updateSysInfo() {
+      try {
+        const r = await fetch('http://localhost:8765/system-stats')
+        if (!r.ok) return
+        const d = await r.json()
+        setSysItem('si_cpu', d.cpu, `${d.cpu}%`)
+        const ramPct = d.ram_total > 0 ? d.ram_used / d.ram_total * 100 : 0
+        setSysItem('si_ram', ramPct, `${d.ram_used.toFixed(1)}/${d.ram_total.toFixed(1)} GB`)
+        if (d.gpu !== null && d.gpu !== undefined) {
+          if (!gpuAttached) { sysInfo.append(itemGpu); gpuAttached = true }
+          setSysItem('si_gpu', d.gpu, `${d.gpu}%`)
+        }
+        if (d.vram_used !== null && d.vram_used !== undefined) {
+          if (!vramAttached) { sysInfo.append(itemVram); vramAttached = true }
+          const vramPct = d.vram_total > 0 ? d.vram_used / d.vram_total * 100 : 0
+          setSysItem('si_vram', vramPct, `${d.vram_used.toFixed(1)}/${d.vram_total.toFixed(1)} GB`)
+        }
+      } catch (_) {}
+    }
+    updateSysInfo()
+    setInterval(updateSysInfo, 1000)
   </script>
 </body>
 </html>

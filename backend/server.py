@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 import base64
+import psutil
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -472,6 +473,40 @@ def _cache_dir(video_path: str) -> Path:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/system-stats")
+def system_stats():
+    cpu = psutil.cpu_percent(interval=None)
+    vm  = psutil.virtual_memory()
+    ram_used  = vm.used  / (1024 ** 3)
+    ram_total = vm.total / (1024 ** 3)
+
+    gpu_used  = None
+    gpu_total = None
+    vram_used  = None
+    vram_total = None
+
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        mem  = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        gpu_used   = util.gpu
+        vram_used  = mem.used  / (1024 ** 3)
+        vram_total = mem.total / (1024 ** 3)
+    except Exception:
+        pass
+
+    return {
+        "cpu":        round(cpu, 1),
+        "ram_used":   round(ram_used, 2),
+        "ram_total":  round(ram_total, 2),
+        "gpu":        gpu_used,
+        "vram_used":  round(vram_used, 2)  if vram_used  is not None else None,
+        "vram_total": round(vram_total, 2) if vram_total is not None else None,
+    }
 
 
 @app.get("/ui-settings")
