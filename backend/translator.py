@@ -8,7 +8,6 @@ from typing import Optional
 from urllib import error, request
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 from .model_catalog import (
     available_translator_models as catalog_translator_models,
@@ -243,6 +242,8 @@ class Translator:
             if self.model is not None and self.tokenizer is not None:
                 return
             try:
+                # HF フォールバック経路でのみ transformers を遅延 import（通常は GGUF 経路）
+                from transformers import AutoModelForCausalLM, AutoTokenizer
                 self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
                 mm = max_memory_map()
                 self.model = AutoModelForCausalLM.from_pretrained(
@@ -324,6 +325,7 @@ class Translator:
             )
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
+            from transformers import GenerationConfig
             gen_config = GenerationConfig(do_sample=False, max_new_tokens=256)
             with torch.no_grad():
                 output_ids = self.model.generate(
@@ -357,6 +359,7 @@ class Translator:
             )
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
+            from transformers import GenerationConfig
             gen_config = GenerationConfig(do_sample=False, max_new_tokens=128)
             with torch.no_grad():
                 output_ids = self.model.generate(

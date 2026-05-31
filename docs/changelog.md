@@ -20,6 +20,9 @@
   - _get_duration を format.duration 欠落コンテナ向けにフォールバック対応
   - 未使用のデッドコード（_infer_stream / qa_frames_stream）を削除
   - refine パスを scenes-only 化（summary/tags/genre の無駄生成を止めトークン削減）
+- transformers / accelerate 依存を撤去: translator.py の HF フォールバック経路を遅延 import 化し、
+  トップレベル import を除去。requirements と .venv から削除（GGUF 経路のみ使用のため実害なし）。
+  transformers 無しで import backend.server が成功することを確認
 - フェーズ0検証: `.venv-gemma`（transformers 5.9.0 / torch 2.12.0+cu130）で Gemma 4 E2B の
   音声書き起こしパイプラインが動作することを確認
   - sample.mp4 先頭30秒の英語を正確に書き起こし。RTF=0.19 / ピークVRAM 10.4GB / ロード19s

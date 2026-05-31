@@ -4,9 +4,8 @@ uvicorn[standard]
 faster-whisper
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
-# 翻訳/VL は llama.cpp(GGUF)。transformers は translator.py の HF フォールバック用（ピン不要）。
-transformers
-accelerate
+# 翻訳/VL は llama.cpp(GGUF)。transformers/accelerate は不要（HF フォールバック経路は
+# 遅延 import 化済みで、通常は GGUF 経路のみ使用）。必要時は translator.py が遅延 import する。
 # torch は translator.py / video_reviewer.py / vram.py が使用。
 # Blackwell(sm_120) では cu130 ホイールが必要:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu130

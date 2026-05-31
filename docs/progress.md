@@ -32,6 +32,6 @@
 - [x] feat/asr-whisper を main へマージ（fast-forward）
 - [x] 長尺ポーズ時の字幕間延びを修正（GAP_FLUSH_SEC=8s で区切り。「あとね、」16秒→解消）
 - [x] 検証用 .venv-gemma を削除（5.34GB 解放）
-- [ ] transformers依存の最終撤去可否（translator HFフォールバックの扱い）を検討
+- [x] transformers/accelerate 依存を撤去（HFフォールバックを遅延import化、requirements/.venvから削除）
 - [ ] 旧Qwen関連の残骸確認、gemma検証スクリプト(scripts/test_gemma_asr.py)の要否
 - [ ] （任意）リモートへ push
