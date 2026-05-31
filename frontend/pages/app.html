@@ -1479,7 +1479,7 @@
       if(!file) return
       const p=window.electronAPI.getPathForFile(file)
       if(!p) return
-      setCurrentVideo(p); loadVideo(p); await tryAutoLoadSrt(p); await tryAutoLoadToc(p)
+      setCurrentVideo(p); loadVideo(p); await tryAutoLoadSrt(p); await tryAutoLoadCache(p)
     })
 
     const slider=document.getElementById('maxFrames')
