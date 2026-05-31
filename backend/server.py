@@ -26,6 +26,7 @@ from .model_catalog import available_translator_models as scan_translator_models
 from .translator import Translator, available_translator_models, get_prompts as _translator_prompts
 from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_output_path, split_long_segments
 from .video_reviewer import VideoReviewer, available_review_models, get_prompts as _review_prompts
+from . import prompts as _prompts
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -477,8 +478,28 @@ def health():
 
 @app.get("/prompts")
 def list_prompts():
-    """このアプリで使用しているシステムプロンプト一覧（閲覧用）を返す。"""
-    return {"prompts": _translator_prompts() + _review_prompts()}
+    """システムプロンプト一覧を返す。各項目に default / override / editable を含む。"""
+    items = _translator_prompts() + _review_prompts()
+    overrides = _prompts.load_overrides()
+    for it in items:
+        key = it["key"]
+        it["editable"] = key in _prompts.EDITABLE_KEYS
+        it["override"] = overrides.get(key) if it["editable"] else None
+    return {"prompts": items}
+
+
+class PromptOverrideRequest(BaseModel):
+    key: str
+    text: Optional[str] = None  # 空/None で上書き解除（デフォルトに戻す）
+
+
+@app.post("/prompts")
+def set_prompt(req: PromptOverrideRequest):
+    """system プロンプトのユーザー上書きを保存/解除する（data/prompts.json）。"""
+    if req.key not in _prompts.EDITABLE_KEYS:
+        raise HTTPException(400, f"このプロンプトは上書きできません: {req.key}")
+    _prompts.set_override(req.key, req.text)
+    return {"status": "ok", "key": req.key, "active": _prompts.get_override(req.key) is not None}
 
 
 @app.get("/system-stats")

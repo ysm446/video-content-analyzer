@@ -18,6 +18,7 @@ from .model_catalog import (
 )
 from .llama_server import LlamaServerManager
 from .vram import MAX_PIXELS_PER_FRAME
+from . import prompts
 
 LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
 
@@ -100,13 +101,13 @@ def get_prompts() -> list[dict]:
     """設定画面での閲覧用にこのモジュールのプロンプトを返す。
     system 系（ペルソナ）と、分析の指示・出力フォーマット系を区別して返す。"""
     return [
-        {"key": "analyze", "label": "動画分析（system）", "category": "動画分析", "text": ANALYZE_SYSTEM},
-        {"key": "qa", "label": "Q&A（system）", "category": "動画分析", "text": QA_SYSTEM},
-        {"key": "analyze_instr_visual", "label": "分析指示（映像のみ）", "category": "動画分析（出力指示）", "text": _ANALYZE_INSTR_VISUAL},
-        {"key": "analyze_instr_audio", "label": "分析指示（映像＋音声）", "category": "動画分析（出力指示）", "text": _ANALYZE_INSTR_AUDIO},
-        {"key": "analyze_instr_scenes", "label": "分析指示（refine: scenesのみ）", "category": "動画分析（出力指示）", "text": _ANALYZE_INSTR_SCENES},
-        {"key": "analyze_json_format", "label": "分析JSONフォーマット", "category": "動画分析（出力指示）", "text": _ANALYZE_JSON_FORMAT},
-        {"key": "analyze_json_format_scenes", "label": "分析JSONフォーマット（scenesのみ）", "category": "動画分析（出力指示）", "text": _ANALYZE_JSON_FORMAT_SCENES},
+        {"key": "analyze", "label": "動画分析（system）", "category": "動画分析", "default": ANALYZE_SYSTEM},
+        {"key": "qa", "label": "Q&A（system）", "category": "動画分析", "default": QA_SYSTEM},
+        {"key": "analyze_instr_visual", "label": "分析指示（映像のみ）", "category": "動画分析（出力指示）", "default": _ANALYZE_INSTR_VISUAL},
+        {"key": "analyze_instr_audio", "label": "分析指示（映像＋音声）", "category": "動画分析（出力指示）", "default": _ANALYZE_INSTR_AUDIO},
+        {"key": "analyze_instr_scenes", "label": "分析指示（refine: scenesのみ）", "category": "動画分析（出力指示）", "default": _ANALYZE_INSTR_SCENES},
+        {"key": "analyze_json_format", "label": "分析JSONフォーマット", "category": "動画分析（出力指示）", "default": _ANALYZE_JSON_FORMAT},
+        {"key": "analyze_json_format_scenes", "label": "分析JSONフォーマット（scenesのみ）", "category": "動画分析（出力指示）", "default": _ANALYZE_JSON_FORMAT_SCENES},
     ]
 
 
@@ -584,7 +585,7 @@ class VideoReviewer:
         prompt = self._build_analyze_prompt(transcript, timestamps, output_lang, scenes_only)
         # scenes_only（refine用）は summary/tags/genre を生成しないので出力上限を抑える
         max_tokens = 1536 if scenes_only else 3072
-        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=max_tokens, timestamps=timestamps or None)
+        raw = self._infer(frames, prompts.resolve("analyze", ANALYZE_SYSTEM), prompt, max_new_tokens=max_tokens, timestamps=timestamps or None)
         clean = self._strip_code_fences(raw)
         try:
             result = json.loads(clean.strip())
@@ -605,7 +606,7 @@ class VideoReviewer:
     def qa_frames(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = []) -> str:
         self._ensure_loaded()
         prompt = self._build_qa_prompt(question, transcript, timestamps)
-        return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
+        return self._infer(frames, prompts.resolve("qa", QA_SYSTEM), prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
 
     def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None) -> dict:
         self._ensure_loaded()
@@ -613,7 +614,7 @@ class VideoReviewer:
         callback = on_delta or (lambda _delta: None)
         return self._infer_stream_with_meta(
             frames,
-            QA_SYSTEM,
+            prompts.resolve("qa", QA_SYSTEM),
             prompt,
             max_new_tokens=QA_MAX_NEW_TOKENS,
             on_delta=callback,

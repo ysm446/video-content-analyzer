@@ -11,6 +11,7 @@ from .model_catalog import (
 from .llama_server import LlamaServerManager
 from .vram import max_memory_map
 from .video_reviewer import _vision_server
+from . import prompts
 
 LLAMA_CPP_PORT = int(os.environ.get("LLAMA_CPP_PORT", "8766"))
 
@@ -39,8 +40,8 @@ def available_translator_models() -> list[dict]:
 def get_prompts() -> list[dict]:
     """設定画面での閲覧用にこのモジュールのシステムプロンプトを返す。"""
     return [
-        {"key": "translate", "label": "翻訳（字幕）", "category": "翻訳", "text": SYSTEM_PROMPT},
-        {"key": "lookup", "label": "辞書検索", "category": "翻訳", "text": LOOKUP_SYSTEM_PROMPT},
+        {"key": "translate", "label": "翻訳（字幕）", "category": "翻訳", "default": SYSTEM_PROMPT},
+        {"key": "lookup", "label": "辞書検索", "category": "翻訳", "default": LOOKUP_SYSTEM_PROMPT},
     ]
 
 
@@ -153,7 +154,7 @@ class Translator:
     def translate(self, text: str, context: list[tuple[str, str]] | None = None) -> str:
         with self._lock:
             self._ensure_loaded()
-            messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+            messages: list[dict] = [{"role": "system", "content": prompts.resolve("translate", SYSTEM_PROMPT)}]
 
             if context:
                 for orig, jp in context:
@@ -192,7 +193,7 @@ class Translator:
         with self._lock:
             self._ensure_loaded()
             messages = [
-                {"role": "system", "content": LOOKUP_SYSTEM_PROMPT},
+                {"role": "system", "content": prompts.resolve("lookup", LOOKUP_SYSTEM_PROMPT)},
                 {"role": "user", "content": word.strip()},
             ]
 

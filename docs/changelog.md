@@ -23,6 +23,11 @@
 - 機能追加: 設定画面にシステムプロンプト閲覧セクションを追加（読み取り専用）。
   translator/video_reviewer に get_prompts() を持たせ GET /prompts で集約、設定タブにカテゴリ別表示。
   対象: 翻訳/辞書/分析(system)/Q&A(system)＋分析の出力指示・JSONフォーマット（計9件）
+- 機能追加（フェーズB）: システムプロンプトのユーザー上書き（差し替え）に対応。
+  backend/prompts.py で「デフォルト不変＋上書きレイヤー」を実装し、上書きは data/prompts.json に保存（gitignore）。
+  GET /prompts に default/override/editable を付与、POST /prompts で保存・解除。
+  編集可は system プロンプト4つ（翻訳/辞書/分析/Q&A）のみ。出力フォーマット系は閲覧専用（解析破壊防止）。
+  設定UIにテキストエリア＋保存／デフォルトに戻すを追加
 - リファクタ: llama-server 管理を共通化。translator の LlamaCppServerManager と
   video_reviewer の LlamaCppVisionServerManager（重複~80%）を backend/llama_server.py の
   LlamaServerManager に統合（port / meta_resolver / mmproj有無 / label / timeout でパラメタ化）。
