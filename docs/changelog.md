@@ -11,6 +11,7 @@
   - feat/asr-whisper を main へマージ（fast-forward）
 - 長尺ポーズで字幕が間延びする問題を修正（単語間ギャップ8秒超で区切り。「あとね、」16秒表示を解消）
 - 検証用 .venv-gemma を削除（5.34GB 解放）
+- goals.md を整備（目的・主要機能・確定方針を明文化。ASR=Whisper 等を反映）
 - フェーズ0検証: `.venv-gemma`（transformers 5.9.0 / torch 2.12.0+cu130）で Gemma 4 E2B の
   音声書き起こしパイプラインが動作することを確認
   - sample.mp4 先頭30秒の英語を正確に書き起こし。RTF=0.19 / ピークVRAM 10.4GB / ロード19s
