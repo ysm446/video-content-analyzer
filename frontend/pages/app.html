@@ -1997,14 +1997,14 @@
     const PROMPT_PRE_STYLE='margin:0;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--text)'
     function renderPromptItem(p){
       if(!p.editable){
-        return `<div style="margin-bottom:8px">
+        return `<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
             <div style="font-size:12px;margin-bottom:3px">${escHtml(p.label)} <span style="color:var(--text-dim);font-size:11px">（閲覧のみ）</span></div>
             <pre style="${PROMPT_PRE_STYLE}">${escHtml(p.default)}</pre>
           </div>`
       }
       const ov=p.override||''
       const active=!!p.override
-      return `<div style="margin-bottom:14px">
+      return `<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
           <div style="font-size:12px;margin-bottom:3px">${escHtml(p.label)}${active?' <span style="color:var(--accent);font-size:11px">● 上書き中</span>':''}</div>
           <textarea id="prompt-ta-${escHtml(p.key)}" rows="4" style="width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;font-family:inherit;resize:vertical" placeholder="（空欄のままだとデフォルトを使用）">${escHtml(ov)}</textarea>
           <details style="margin-top:4px"><summary style="font-size:11px;color:var(--text-dim);cursor:pointer">デフォルトを表示</summary><pre style="${PROMPT_PRE_STYLE};margin-top:4px">${escHtml(p.default)}</pre></details>
