@@ -17,13 +17,12 @@ build/
 venv/
 env/
 ENV/
-.venv
+.venv*/
 
 # ---------- Node / Electron ----------
 node_modules/
 
 # ---------- モデルファイル（大容量） ----------
-models/
 models/
 !models/.gitkeep
 
@@ -55,5 +54,4 @@ bin/
 .cache/
 *.swp
 *~
-settings.json
 settings.json

@@ -75,19 +75,22 @@
 - `CLAUDE.md`「環境」セクション … conda 環境名 `main` の記述を venv に更新
 
 **注意点**
-- PyTorch は CPU 版が入らないよう CUDA ホイールを明示インデックス指定でインストール
-  （例: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121`）。
+- **GPU は RTX PRO 5000 Blackwell（sm_120, VRAM 48GB）**。Blackwell は古い CUDA ホイールでは動かないため、
+  PyTorch は **cu130 ホイール**を明示インデックス指定でインストールする
+  （`pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu130`）。
+  現行 `main` 環境が `torch 2.10.0+cu130`（arch_list に sm_120 を含む）で動作確認済み。
   システム側は NVIDIA ドライバのみ必要。llama-server は同梱 cuda ビルドなので無関係
-- Python バージョンを固定・明記する（transformers 5.x / Gemma 4 が要求する 3.10〜3.12 を想定）
+- Python は現行 `main` 環境と同じ **3.10**（3.10.19 で動作実績）を基準にする
 
 ## 移行ステップ
 
 ### フェーズ 0: 事前検証（コード変更なし・使い捨て venv）
 - [ ] 検証用 venv を作成（本番環境を汚さない）
   ```
+  # Python 3.10 を基準（main 環境の interpreter から seed 可）
   python -m venv .venv-gemma
   .venv-gemma\Scripts\activate
-  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu130
   pip install "transformers>=5.5.0" accelerate soundfile ffmpeg-python Pillow
   # qwen-asr / transformers==4.57.6 は入れない
   ```
