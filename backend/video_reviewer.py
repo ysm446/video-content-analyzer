@@ -96,6 +96,20 @@ def available_review_models() -> list[dict]:
     return catalog_review_models()
 
 
+def get_prompts() -> list[dict]:
+    """設定画面での閲覧用にこのモジュールのプロンプトを返す。
+    system 系（ペルソナ）と、分析の指示・出力フォーマット系を区別して返す。"""
+    return [
+        {"key": "analyze", "label": "動画分析（system）", "category": "動画分析", "text": ANALYZE_SYSTEM},
+        {"key": "qa", "label": "Q&A（system）", "category": "動画分析", "text": QA_SYSTEM},
+        {"key": "analyze_instr_visual", "label": "分析指示（映像のみ）", "category": "動画分析（出力指示）", "text": _ANALYZE_INSTR_VISUAL},
+        {"key": "analyze_instr_audio", "label": "分析指示（映像＋音声）", "category": "動画分析（出力指示）", "text": _ANALYZE_INSTR_AUDIO},
+        {"key": "analyze_instr_scenes", "label": "分析指示（refine: scenesのみ）", "category": "動画分析（出力指示）", "text": _ANALYZE_INSTR_SCENES},
+        {"key": "analyze_json_format", "label": "分析JSONフォーマット", "category": "動画分析（出力指示）", "text": _ANALYZE_JSON_FORMAT},
+        {"key": "analyze_json_format_scenes", "label": "分析JSONフォーマット（scenesのみ）", "category": "動画分析（出力指示）", "text": _ANALYZE_JSON_FORMAT_SCENES},
+    ]
+
+
 _vision_server = LlamaServerManager(
     port=LLAMA_CPP_VISION_PORT,
     meta_resolver=get_review_model_meta,

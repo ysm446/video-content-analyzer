@@ -36,6 +36,14 @@ def available_translator_models() -> list[dict]:
     return catalog_translator_models()
 
 
+def get_prompts() -> list[dict]:
+    """設定画面での閲覧用にこのモジュールのシステムプロンプトを返す。"""
+    return [
+        {"key": "translate", "label": "翻訳（字幕）", "category": "翻訳", "text": SYSTEM_PROMPT},
+        {"key": "lookup", "label": "辞書検索", "category": "翻訳", "text": LOOKUP_SYSTEM_PROMPT},
+    ]
+
+
 _llama_cpp = LlamaServerManager(
     port=LLAMA_CPP_PORT,
     meta_resolver=get_text_model_meta,

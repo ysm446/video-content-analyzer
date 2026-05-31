@@ -474,6 +474,12 @@
           </div>
           <div class="frame-hint" id="frameHint"></div>
         </div>
+
+        <div class="card">
+          <div class="section-label">システムプロンプト（閲覧）</div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">このアプリが内部で使用しているシステムプロンプトです（読み取り専用）。</div>
+          <div id="promptsList"><div style="font-size:12px;color:var(--text-dim)">読み込み中…</div></div>
+        </div>
       </main>
     </section>
   </div>
@@ -1988,10 +1994,34 @@
     })
     window.addEventListener('resize', updatePanelLayout)
 
+    async function loadPrompts(){
+      const el=document.getElementById('promptsList')
+      if(!el) return
+      try{
+        const res=await fetch(`${API}/prompts`)
+        if(!res.ok) throw new Error('failed')
+        const {prompts}=await res.json()
+        const groups={}
+        for(const p of prompts){ (groups[p.category]=groups[p.category]||[]).push(p) }
+        el.innerHTML=Object.entries(groups).map(([cat,items])=>`
+          <div style="margin-bottom:14px">
+            <div style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px">${escHtml(cat)}</div>
+            ${items.map(p=>`
+              <div style="margin-bottom:8px">
+                <div style="font-size:12px;margin-bottom:3px">${escHtml(p.label)}</div>
+                <pre style="margin:0;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--text)">${escHtml(p.text)}</pre>
+              </div>`).join('')}
+          </div>`).join('')
+      }catch(e){
+        el.innerHTML='<div style="font-size:12px;color:var(--text-dim)">プロンプトの取得に失敗しました</div>'
+      }
+    }
+
     switchTab('player')
     updateFrameHint()
     fetchReviewModelStatus()
     loadUiSettings()
+    loadPrompts()
     setQAEnabled(false)
     syncSubtitleToggleButtons()
     switchAnalysisPane('analysis')

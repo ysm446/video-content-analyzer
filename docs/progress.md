@@ -35,5 +35,7 @@
 - [x] transformers/accelerate 依存を撤去（HFフォールバックを遅延import化、requirements/.venvから削除）
 - [x] バグ修正: D&Dで分析済み動画を開くとサムネール/分析結果が読み込まれない（未定義関数呼び出し）
 - [x] リファクタ: llama-server 管理を共通化（backend/llama_server.py に統合、重複~330行削減）
+- [x] 機能: 設定画面にシステムプロンプト閲覧（読み取り専用、GET /prompts）を追加
+- [ ] （将来）システムプロンプトのユーザー上書き（append/replace）= フェーズB。今回は閲覧のみ
 - [ ] 旧Qwen関連の残骸確認、gemma検証スクリプト(scripts/test_gemma_asr.py)の要否
-- [ ] リモートへ push（リファクタ分）
+- [ ] リモートへ push（リファクタ＋プロンプト閲覧分）

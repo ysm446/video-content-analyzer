@@ -23,9 +23,9 @@ os.environ["HF_HOME"] = str(Path(__file__).parent.parent / "models")
 from .asr import ASRProcessor
 from .model_catalog import available_review_models as scan_review_models
 from .model_catalog import available_translator_models as scan_translator_models
-from .translator import Translator, available_translator_models
+from .translator import Translator, available_translator_models, get_prompts as _translator_prompts
 from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_output_path, split_long_segments
-from .video_reviewer import VideoReviewer, available_review_models
+from .video_reviewer import VideoReviewer, available_review_models, get_prompts as _review_prompts
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -473,6 +473,12 @@ def _cache_dir(video_path: str) -> Path:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/prompts")
+def list_prompts():
+    """このアプリで使用しているシステムプロンプト一覧（閲覧用）を返す。"""
+    return {"prompts": _translator_prompts() + _review_prompts()}
 
 
 @app.get("/system-stats")

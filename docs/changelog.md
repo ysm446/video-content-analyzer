@@ -20,6 +20,9 @@
   - _get_duration を format.duration 欠落コンテナ向けにフォールバック対応
   - 未使用のデッドコード（_infer_stream / qa_frames_stream）を削除
   - refine パスを scenes-only 化（summary/tags/genre の無駄生成を止めトークン削減）
+- 機能追加: 設定画面にシステムプロンプト閲覧セクションを追加（読み取り専用）。
+  translator/video_reviewer に get_prompts() を持たせ GET /prompts で集約、設定タブにカテゴリ別表示。
+  対象: 翻訳/辞書/分析(system)/Q&A(system)＋分析の出力指示・JSONフォーマット（計9件）
 - リファクタ: llama-server 管理を共通化。translator の LlamaCppServerManager と
   video_reviewer の LlamaCppVisionServerManager（重複~80%）を backend/llama_server.py の
   LlamaServerManager に統合（port / meta_resolver / mmproj有無 / label / timeout でパラメタ化）。
