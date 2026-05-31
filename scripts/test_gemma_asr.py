@@ -37,6 +37,8 @@ def main():
     ap.add_argument("media", help="音声 or 動画ファイル")
     ap.add_argument("--lang", default=None, help="言語名（例: Japanese, English）")
     ap.add_argument("--sec", type=int, default=30, help="先頭何秒を使うか（<=30 推奨）")
+    ap.add_argument("--timestamps", action="store_true",
+                    help="各発話に [mm:ss] タイムスタンプを付けて書き起こすよう指示（案3の検証）")
     args = ap.parse_args()
 
     # transformers 5.5+ のマルチモーダル API
@@ -50,7 +52,7 @@ def main():
     t0 = time.time()
     processor = AutoProcessor.from_pretrained(MODEL_ID)
     model = AutoModel.from_pretrained(
-        MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto",
+        MODEL_ID, dtype=torch.bfloat16, device_map="auto",
     )
     print(f"[load] done in {time.time()-t0:.1f}s")
 
@@ -58,10 +60,19 @@ def main():
     data, sr = sf.read(wav, dtype="float32")
     print(f"[audio] {len(data)/sr:.1f}s @ {sr}Hz")
 
-    prompt = "Transcribe the following speech segment"
-    if args.lang:
-        prompt += f" in {args.lang}"
-    prompt += "."
+    if args.timestamps:
+        lang = args.lang or "its original language"
+        prompt = (
+            f"Transcribe the following speech segment in {lang}. "
+            "Split it into short utterances and prefix each line with its start "
+            "timestamp in [mm:ss] format relative to the start of the audio. "
+            "Example:\n[00:00] first utterance\n[00:04] second utterance"
+        )
+    else:
+        prompt = "Transcribe the following speech segment"
+        if args.lang:
+            prompt += f" in {args.lang}"
+        prompt += "."
 
     messages = [{
         "role": "user",
@@ -85,9 +96,15 @@ def main():
 
     os.unlink(wav)
 
-    print("\n===== TRANSCRIPT =====")
-    print(text.strip())
+    # Windows コンソールの文字化け回避のため UTF-8 ファイルにも書き出す
+    out_path = os.path.join(os.path.dirname(__file__), "_last_transcript.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(text.strip())
+
+    print("\n===== TRANSCRIPT (see _last_transcript.txt for UTF-8) =====")
+    print(text.strip().encode("utf-8", "replace").decode("utf-8"))
     print("======================")
+    print(f"[saved] {out_path}")
     print(f"[time] generate {dt:.1f}s for {args.sec}s audio (RTF={dt/args.sec:.2f})")
     if torch.cuda.is_available():
         print(f"[vram] peak {torch.cuda.max_memory_allocated()/1e9:.1f} GB")
