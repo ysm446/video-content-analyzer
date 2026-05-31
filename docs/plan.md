@@ -61,20 +61,51 @@
 
 → **方針: まず案1で疎通 → 品質不足なら案2を導入。**
 
+## 環境方針: conda → venv へ移行
+
+本移行を機に、実行環境を conda 環境 `main` から **venv** に切り替える。
+
+**理由**
+- Gemma 4 (`transformers>=5.5.0`) で qwen-asr を完全置換すれば最終形は単一環境で済み、`requirements.txt` ベースで再現できる
+- フェーズ0の検証は使い捨て venv を別に立てれば本番環境を汚さない
+- conda インストールを利用者に要求せずに済む
+
+**conda 依存箇所（要変更・実質2か所）**
+- `start.bat:8` … `call conda activate main` → `call .venv\Scripts\activate.bat`
+- `CLAUDE.md`「環境」セクション … conda 環境名 `main` の記述を venv に更新
+
+**注意点**
+- PyTorch は CPU 版が入らないよう CUDA ホイールを明示インデックス指定でインストール
+  （例: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121`）。
+  システム側は NVIDIA ドライバのみ必要。llama-server は同梱 cuda ビルドなので無関係
+- Python バージョンを固定・明記する（transformers 5.x / Gemma 4 が要求する 3.10〜3.12 を想定）
+
 ## 移行ステップ
 
-### フェーズ 0: 事前検証（コード変更なし）
-- [ ] 別 conda 環境 `gemma-asr-test` を作成し `transformers>=5.5.0` + `accelerate` を導入
+### フェーズ 0: 事前検証（コード変更なし・使い捨て venv）
+- [ ] 検証用 venv を作成（本番環境を汚さない）
+  ```
+  python -m venv .venv-gemma
+  .venv-gemma\Scripts\activate
+  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+  pip install "transformers>=5.5.0" accelerate soundfile ffmpeg-python Pillow
+  # qwen-asr / transformers==4.57.6 は入れない
+  ```
 - [ ] `gemma-4-E4B-it`（または E2B）をロードし、30秒以下の音声で書き起こし精度・速度・VRAM を計測
 - [ ] 日本語・英語・中国語など実利用言語での精度を Qwen3-ASR と比較
 - [ ] タイムスタンプ案1（チャンク粒度）の字幕同期が許容範囲か体感確認
 - [ ] モデルサイズ選定: E2B（軽量）/ E4B（精度）/ 31B（高精度・高VRAM）
+- [ ] 動作する Python / torch / transformers のバージョン組合せを記録
 
-### フェーズ 1: 依存関係の切替
+### フェーズ 1: 依存関係の切替 + venv 本番化
+- [ ] 本番 venv `.venv` を作成し、フェーズ0で確定した手順で依存を導入
 - [ ] `requirements.txt`:
   - 削除: `qwen-asr`、`transformers==4.57.6` ピン
   - 追加: `transformers>=5.5.0`
   - `qwen-vl-utils` の要否を確認（ASR 専用なら削除候補）
+  - torch の CUDA ホイール導入手順を README/コメントで明記
+- [ ] `start.bat`: `conda activate main` → `.venv\Scripts\activate.bat` に変更
+- [ ] CLAUDE.md「環境」セクションを venv 記述に更新
 - [ ] CLAUDE.md の「依存パッケージの注意点」セクションを更新（qwen-asr 由来のピン記述を撤去）
 
 ### フェーズ 2: asr.py の書き換え
