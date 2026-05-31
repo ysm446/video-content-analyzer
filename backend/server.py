@@ -879,7 +879,7 @@ async def review_analyze(req: ReviewRequest):
                         )
                         r_transcript = _slice_transcript(transcript, start, end)
                         r_result = await loop.run_in_executor(
-                            None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang
+                            None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang, True
                         )
                         rel_entries = _entries_from_refine_result(
                             r_result, start, end, duration
@@ -1106,7 +1106,7 @@ async def review_build_toc(req: TOCBuildRequest):
                         r_transcript = _slice_transcript(req.transcript, start, end)
                         r_result = await loop.run_in_executor(
                             None, video_reviewer.analyze_frames,
-                            r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang
+                            r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang, True
                         )
                         rel_entries = _entries_from_refine_result(
                             r_result, start, end, duration

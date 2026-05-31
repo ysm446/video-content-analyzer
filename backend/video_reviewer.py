@@ -67,6 +67,24 @@ _ANALYZE_INSTR_AUDIO = (
     "description は各場面につき1文だけ、短く書いてください。"
 )
 
+# refine パス用: summary/tags/genre は不要で scenes のみ欲しい場合に使う
+_ANALYZE_JSON_FORMAT_SCENES = (
+    "{\n"
+    '  "scenes": [\n'
+    '    {"timestamp": "0:00", "label": "場面のタイトル", "description": "1文で短く説明"}\n'
+    "    ... （場面転換ごとに繰り返す）\n"
+    "  ]\n"
+    "}"
+)
+
+_ANALYZE_INSTR_SCENES = (
+    "指定区間のフレーム（と、あれば音声書き起こし）から場面転換を抽出し、"
+    "以下のJSON形式のみで回答してください。"
+    "コードブロック（```）は付けず、純粋なJSONだけを出力してください。\n"
+    "scenes は内容・雰囲気・場所・被写体が変化するたびに新しい場面として追加してください。"
+    "label には短いタイトルを、description は各場面1文で書いてください。"
+)
+
 QA_SYSTEM = (
     "/no_think\n"
     "あなたは動画分析の専門家です。"
@@ -496,18 +514,6 @@ class VideoReviewer:
         print(f"[VideoReviewer] 推論完了: {elapsed:.1f}秒")
         return self._clean_generated_text(result)
 
-    def _infer_stream(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None):
-        meta = self._infer_stream_with_meta(
-            frames,
-            system,
-            prompt,
-            max_new_tokens,
-            lambda _delta: None,
-            timestamps=timestamps,
-        )
-        return meta
-        yield
-
     def _infer_stream_with_meta(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, on_delta, timestamps: list[float] | None = None) -> dict:
         print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚")
         t0 = time.time()
@@ -579,7 +585,16 @@ class VideoReviewer:
 
     def _get_duration(self, video_path: str) -> float:
         probe = ffmpeg.probe(video_path)
-        return float(probe["format"]["duration"])
+        fmt = probe.get("format") or {}
+        if fmt.get("duration") is not None:
+            return float(fmt["duration"])
+        # format に duration が無いコンテナ向けフォールバック（最長ストリーム長）
+        durations = [
+            float(s["duration"])
+            for s in (probe.get("streams") or [])
+            if s.get("duration") is not None
+        ]
+        return max(durations) if durations else 0.0
 
     def extract_frames_scene(self, video_path: str, max_frames: int, threshold: float = SCENE_THRESHOLD) -> tuple[list[Image.Image], dict]:
         duration = self._get_duration(video_path)
@@ -595,6 +610,10 @@ class VideoReviewer:
                 outpattern, "-y",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                tail = "\n".join(result.stderr.strip().splitlines()[-3:])
+                print(f"[VideoReviewer] シーン検出 ffmpeg が異常終了 (code={result.returncode}) → 均等サンプリングにフォールバック\n{tail}")
+                return self.extract_frames(video_path, max_frames, 5.0)
             ts_pattern = re.compile(r"\bpts_time:(\d+\.?\d*)")
             raw_ts = [
                 float(m.group(1))
@@ -608,8 +627,11 @@ class VideoReviewer:
                 step = duration / max(len(frame_files) - 1, 1)
                 raw_ts += [step * i for i in range(len(raw_ts), len(frame_files))]
             if len(frame_files) > max_frames:
-                step = (len(frame_files) - 1) / (max_frames - 1)
-                indices = sorted(set([0] + [min(round(i * step), len(frame_files) - 1) for i in range(1, max_frames)]))
+                if max_frames <= 1:
+                    indices = [0]
+                else:
+                    step = (len(frame_files) - 1) / (max_frames - 1)
+                    indices = sorted(set([0] + [min(round(i * step), len(frame_files) - 1) for i in range(1, max_frames)]))
                 frame_files = [frame_files[i] for i in indices]
                 raw_ts = [raw_ts[i] for i in indices]
             for fname in frame_files:
@@ -734,17 +756,22 @@ class VideoReviewer:
         )
 
     @staticmethod
-    def _build_analyze_prompt(transcript: str, timestamps: list[float] = [], output_lang: str = "ja") -> str:
-        lang_instr = (
-            "summary / scenes[].label / scenes[].description / tags / genre は日本語で記述してください。"
-            if output_lang == "ja"
-            else "summary / scenes[].label / scenes[].description / tags / genre は英語で記述してください。"
+    def _build_analyze_prompt(transcript: str, timestamps: list[float] = [], output_lang: str = "ja", scenes_only: bool = False) -> str:
+        fields = (
+            "scenes[].label / scenes[].description"
+            if scenes_only
+            else "summary / scenes[].label / scenes[].description / tags / genre"
         )
+        lang_word = "日本語" if output_lang == "ja" else "英語"
+        lang_instr = f"{fields} は{lang_word}で記述してください。"
         ts_hint = VideoReviewer._ts_hint(timestamps)
+        json_format = _ANALYZE_JSON_FORMAT_SCENES if scenes_only else _ANALYZE_JSON_FORMAT
+        instr_visual = _ANALYZE_INSTR_SCENES if scenes_only else _ANALYZE_INSTR_VISUAL
+        instr_audio = _ANALYZE_INSTR_SCENES if scenes_only else _ANALYZE_INSTR_AUDIO
         if not transcript:
-            return _ANALYZE_INSTR_VISUAL + ts_hint + "\n" + lang_instr + "\n\n" + _ANALYZE_JSON_FORMAT
+            return instr_visual + ts_hint + "\n" + lang_instr + "\n\n" + json_format
         truncated = VideoReviewer._truncate_transcript(transcript)
-        return f"[音声書き起こし]\n{truncated}\n\n{_ANALYZE_INSTR_AUDIO}{ts_hint}\n{lang_instr}\n\n{_ANALYZE_JSON_FORMAT}"
+        return f"[音声書き起こし]\n{truncated}\n\n{instr_audio}{ts_hint}\n{lang_instr}\n\n{json_format}"
 
     @staticmethod
     def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = []) -> str:
@@ -757,10 +784,12 @@ class VideoReviewer:
         parts.append("映像フレームと字幕テキストを参照して、日本語で具体的に回答してください。")
         return "\n\n".join(parts)
 
-    def analyze_frames(self, frames: list[Image.Image], transcript: str = "", timestamps: list[float] = [], output_lang: str = "ja") -> dict:
+    def analyze_frames(self, frames: list[Image.Image], transcript: str = "", timestamps: list[float] = [], output_lang: str = "ja", scenes_only: bool = False) -> dict:
         self._ensure_loaded()
-        prompt = self._build_analyze_prompt(transcript, timestamps, output_lang)
-        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=3072, timestamps=timestamps or None)
+        prompt = self._build_analyze_prompt(transcript, timestamps, output_lang, scenes_only)
+        # scenes_only（refine用）は summary/tags/genre を生成しないので出力上限を抑える
+        max_tokens = 1536 if scenes_only else 3072
+        raw = self._infer(frames, ANALYZE_SYSTEM, prompt, max_new_tokens=max_tokens, timestamps=timestamps or None)
         clean = self._strip_code_fences(raw)
         try:
             result = json.loads(clean.strip())
@@ -782,11 +811,6 @@ class VideoReviewer:
         self._ensure_loaded()
         prompt = self._build_qa_prompt(question, transcript, timestamps)
         return self._infer(frames, QA_SYSTEM, prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
-
-    def qa_frames_stream(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = []):
-        self._ensure_loaded()
-        prompt = self._build_qa_prompt(question, transcript, timestamps)
-        yield from self._infer_stream(frames, QA_SYSTEM, prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
 
     def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None) -> dict:
         self._ensure_loaded()

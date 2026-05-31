@@ -14,6 +14,12 @@
 - goals.md を整備（目的・主要機能・確定方針を明文化。ASR=Whisper 等を反映）
 - リソースモニターで GPU/VRAM が出ない不具合を修正: /system-stats が使う pynvml が
   requirements 未記載で .venv に無かった。nvidia-ml-py（+psutil 明示）を requirements に追加
+- 動画分析プロセスのレビュー指摘を修正:
+  - シーン抽出で max_frames=1 のゼロ除算をガード
+  - シーン検出 ffmpeg 失敗を検知してログ＋均等サンプリングへフォールバック
+  - _get_duration を format.duration 欠落コンテナ向けにフォールバック対応
+  - 未使用のデッドコード（_infer_stream / qa_frames_stream）を削除
+  - refine パスを scenes-only 化（summary/tags/genre の無駄生成を止めトークン削減）
 - フェーズ0検証: `.venv-gemma`（transformers 5.9.0 / torch 2.12.0+cu130）で Gemma 4 E2B の
   音声書き起こしパイプラインが動作することを確認
   - sample.mp4 先頭30秒の英語を正確に書き起こし。RTF=0.19 / ピークVRAM 10.4GB / ロード19s
