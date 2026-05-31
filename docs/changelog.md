@@ -7,6 +7,8 @@
   - requirements.txt 整理（qwen-asr/torchaudio/soundfile/qwen-vl-utils 削除、transformersピン解除、faster-whisper+nvidia cu12 追加）
   - start.bat を venv 有効化に、CLAUDE.md を venv/Whisper 構成に更新
   - 本番 .venv をクリーン構築し import/実機ASR検証OK（カメラ=21.76s、RTF~0.02）
+  - Electron UI からの E2E 確認OK（/transcribe 200 → 18セグメント → アンロード、エラーなし）
+  - feat/asr-whisper を main へマージ（fast-forward）
 - フェーズ0検証: `.venv-gemma`（transformers 5.9.0 / torch 2.12.0+cu130）で Gemma 4 E2B の
   音声書き起こしパイプラインが動作することを確認
   - sample.mp4 先頭30秒の英語を正確に書き起こし。RTF=0.19 / ピークVRAM 10.4GB / ロード19s

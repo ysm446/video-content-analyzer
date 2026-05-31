@@ -25,9 +25,11 @@
 - [x] 単語タイムスタンプから句読点・長さ基準で字幕セグメント生成（_words_to_segments）
 - [x] 本番 .venv で実機検証: 18セグメント・時刻正確（カメラ=21.76s）・RTF~0.02
 
-### フェーズ 3: 後片付け・ドキュメント（残）
+### フェーズ 3: 後片付け・ドキュメント
 - [x] CLAUDE.md アーキ図・依存注意点更新
-- [ ] アプリ全体（Electron UI → /transcribe）でのE2E動作確認
-- [ ] feat/asr-whisper を main へマージ
+- [x] アプリ全体（Electron UI → /transcribe）でのE2E動作確認
+  （UI操作で /transcribe 200 → 18セグメント書き起こし → アンロード、エラーなし。turbo で高速）
+- [x] feat/asr-whisper を main へマージ（fast-forward）
 - [ ] transformers依存の最終撤去可否（translator HFフォールバックの扱い）を検討
 - [ ] 検証用 .venv-gemma（テスト環境）の整理、旧Qwen関連の残骸確認
+- [ ] （任意）長尺ポーズ時の字幕表示時間に上限を設ける調整
