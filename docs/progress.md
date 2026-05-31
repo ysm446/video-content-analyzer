@@ -33,5 +33,7 @@
 - [x] 長尺ポーズ時の字幕間延びを修正（GAP_FLUSH_SEC=8s で区切り。「あとね、」16秒→解消）
 - [x] 検証用 .venv-gemma を削除（5.34GB 解放）
 - [x] transformers/accelerate 依存を撤去（HFフォールバックを遅延import化、requirements/.venvから削除）
+- [x] バグ修正: D&Dで分析済み動画を開くとサムネール/分析結果が読み込まれない（未定義関数呼び出し）
+- [x] リファクタ: llama-server 管理を共通化（backend/llama_server.py に統合、重複~330行削減）
 - [ ] 旧Qwen関連の残骸確認、gemma検証スクリプト(scripts/test_gemma_asr.py)の要否
-- [ ] （任意）リモートへ push
+- [ ] リモートへ push（リファクタ分）

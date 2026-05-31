@@ -1,11 +1,5 @@
-import json
 import os
-import subprocess
 import threading
-import time
-from pathlib import Path
-from typing import Optional
-from urllib import error, request
 
 import torch
 
@@ -14,13 +8,11 @@ from .model_catalog import (
     default_translator_model_id,
     get_text_model_meta,
 )
+from .llama_server import LlamaServerManager
 from .vram import max_memory_map
 from .video_reviewer import _vision_server
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8763-bin-win-cuda-13.1-x64")))
-LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_PORT = int(os.environ.get("LLAMA_CPP_PORT", "8766"))
-LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
 
 # /no_think でthinkingモードをOFF → 字幕バッチ翻訳に最適化
 SYSTEM_PROMPT = (
@@ -44,165 +36,12 @@ def available_translator_models() -> list[dict]:
     return catalog_translator_models()
 
 
-class LlamaCppServerManager:
-    def __init__(self):
-        self._lock = threading.RLock()
-        self._process: subprocess.Popen | None = None
-        self._current_model_id: str | None = None
-        self._current_model_path: Path | None = None
-
-    def _base_url(self) -> str:
-        return f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_PORT}"
-
-    def _find_executable(self) -> Path:
-        candidates = [
-            LLAMA_CPP_DIR / "llama-server.exe",
-            LLAMA_CPP_DIR / "bin" / "llama-server.exe",
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-        raise FileNotFoundError(f"llama-server.exe が見つかりません: {LLAMA_CPP_DIR}")
-
-    def _request_json(self, method: str, path: str, payload: Optional[dict] = None, timeout: float = 30.0) -> dict:
-        data = None
-        headers = {}
-        if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = request.Request(self._base_url() + path, data=data, method=method, headers=headers)
-        with request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read()
-        if not body:
-            return {}
-        return json.loads(body.decode("utf-8"))
-
-    def _is_ready(self) -> bool:
-        try:
-            self._request_json("GET", "/health", timeout=2.0)
-            return True
-        except Exception:
-            try:
-                self._request_json("GET", "/v1/models", timeout=2.0)
-                return True
-            except Exception:
-                return False
-
-    def ensure_model(self, model_id: str) -> None:
-        meta = get_text_model_meta(model_id)
-        if meta is None:
-            raise ValueError(f"未対応の翻訳モデルです: {model_id}")
-        model_path = Path(meta["model_path"])
-        if not model_path.exists():
-            raise FileNotFoundError(f"GGUF モデルが見つかりません: {model_path}")
-
-        with self._lock:
-            same_model = (
-                self._process is not None
-                and self._process.poll() is None
-                and self._current_model_id == model_id
-                and self._current_model_path == model_path
-                and self._is_ready()
-            )
-            if same_model:
-                return
-
-            self.stop()
-
-            exe = self._find_executable()
-            cmd = [
-                str(exe),
-                "-m",
-                str(model_path),
-                "--host",
-                LLAMA_CPP_HOST,
-                "--port",
-                str(LLAMA_CPP_PORT),
-                "-c",
-                str(LLAMA_CPP_CTX),
-                "--jinja",
-                "--reasoning",
-                "off",
-                "--reasoning-budget",
-                "0",
-            ]
-            if torch.cuda.is_available():
-                cmd.extend(["-ngl", "999"])
-
-            self._process = subprocess.Popen(
-                cmd,
-                cwd=str(exe.parent),
-            )
-            self._current_model_id = model_id
-            self._current_model_path = model_path
-
-            deadline = time.time() + 120.0
-            while time.time() < deadline:
-                if self._process.poll() is not None:
-                    raise RuntimeError("llama-cpp サーバーが起動直後に終了しました")
-                if self._is_ready():
-                    print(f"[Translator] llama.cpp server ready: {model_id}")
-                    return
-                time.sleep(1.0)
-
-            self.stop()
-            raise TimeoutError("llama-cpp サーバーの起動がタイムアウトしました")
-
-    def stop(self) -> None:
-        with self._lock:
-            proc = self._process
-            self._process = None
-            self._current_model_id = None
-            self._current_model_path = None
-            if proc is None:
-                return
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10.0)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=5.0)
-
-    def loaded_for(self, model_id: str) -> bool:
-        with self._lock:
-            return (
-                self._process is not None
-                and self._process.poll() is None
-                and self._current_model_id == model_id
-                and self._is_ready()
-            )
-
-    def chat(self, model_id: str, messages: list[dict], max_tokens: int) -> str:
-        self.ensure_model(model_id)
-        payload = {
-            "messages": messages,
-            "think": False,
-            "temperature": 0,
-            "top_p": 1,
-            "max_tokens": max_tokens,
-            "cache_prompt": True,
-            "stream": False,
-        }
-        try:
-            response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=300.0)
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"llama-cpp サーバーに接続できません: {exc}") from exc
-
-        choices = response.get("choices") or []
-        if not choices:
-            raise RuntimeError("llama-cpp API の応答に choices がありません")
-        message = choices[0].get("message") or {}
-        content = message.get("content", "")
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return str(content).strip()
-
-
-_llama_cpp = LlamaCppServerManager()
+_llama_cpp = LlamaServerManager(
+    port=LLAMA_CPP_PORT,
+    meta_resolver=get_text_model_meta,
+    label="翻訳",
+    startup_timeout=120.0,
+)
 
 
 class Translator:

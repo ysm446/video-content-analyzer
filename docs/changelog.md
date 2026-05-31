@@ -20,6 +20,10 @@
   - _get_duration を format.duration 欠落コンテナ向けにフォールバック対応
   - 未使用のデッドコード（_infer_stream / qa_frames_stream）を削除
   - refine パスを scenes-only 化（summary/tags/genre の無駄生成を止めトークン削減）
+- リファクタ: llama-server 管理を共通化。translator の LlamaCppServerManager と
+  video_reviewer の LlamaCppVisionServerManager（重複~80%）を backend/llama_server.py の
+  LlamaServerManager に統合（port / meta_resolver / mmproj有無 / label / timeout でパラメタ化）。
+  重複コード ~330行削減。両マネージャの実起動・停止を E4B モデルで検証OK
 - バグ修正: ドラッグ&ドロップで分析済み動画を開くとシーン/サムネール/分析結果が読み込まれない問題。
   D&D 経路が未定義関数 tryAutoLoadToc を呼んでおり ReferenceError でキャッシュ読込が走っていなかった
   → tryAutoLoadCache に修正（「動画を選択」ボタン経路と同一に）。バックエンドのキャッシュ配信は正常と確認済み

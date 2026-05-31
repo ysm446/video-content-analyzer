@@ -7,10 +7,8 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from urllib import error, request
 
 import ffmpeg
-import torch
 from PIL import Image
 
 from .model_catalog import (
@@ -18,12 +16,10 @@ from .model_catalog import (
     default_review_model_id,
     get_review_model_meta,
 )
+from .llama_server import LlamaServerManager
 from .vram import MAX_PIXELS_PER_FRAME
 
-LLAMA_CPP_DIR = Path(os.environ.get("LLAMA_CPP_DIR", str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8763-bin-win-cuda-13.1-x64")))
-LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
-LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
 
 # シーン検出の閾値（0.0〜1.0、低いほど敏感）
 SCENE_THRESHOLD = 0.35
@@ -100,226 +96,11 @@ def available_review_models() -> list[dict]:
     return catalog_review_models()
 
 
-class LlamaCppVisionServerManager:
-    def __init__(self):
-        self._process: subprocess.Popen | None = None
-        self._current_model_id: str | None = None
-        self._current_model_path: Path | None = None
-        self._current_mmproj_path: Path | None = None
-        self._clients: dict[str, str] = {}
-
-    def _base_url(self) -> str:
-        return f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_VISION_PORT}"
-
-    def _find_executable(self) -> Path:
-        candidates = [
-            LLAMA_CPP_DIR / "llama-server.exe",
-            LLAMA_CPP_DIR / "bin" / "llama-server.exe",
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-        raise FileNotFoundError(f"llama-server.exe が見つかりません: {LLAMA_CPP_DIR}")
-
-    def _request_json(self, method: str, path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
-        data = None
-        headers = {}
-        if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = request.Request(self._base_url() + path, data=data, method=method, headers=headers)
-        with request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read()
-        if not body:
-            return {}
-        return json.loads(body.decode("utf-8"))
-
-    def _is_ready(self) -> bool:
-        try:
-            self._request_json("GET", "/v1/models", timeout=2.0)
-            return True
-        except Exception:
-            return False
-
-    def ensure_model(self, model_id: str) -> None:
-        meta = get_review_model_meta(model_id)
-        if meta is None:
-            raise ValueError(f"未対応の動画レビュー用モデルです: {model_id}")
-        model_path = Path(meta["model_path"])
-        mmproj_path = Path(meta["mmproj_path"])
-        if not model_path.exists():
-            raise FileNotFoundError(f"GGUF モデルが見つかりません: {model_path}")
-        if not mmproj_path.exists():
-            raise FileNotFoundError(f"mmproj モデルが見つかりません: {mmproj_path}")
-
-        same_model = (
-            self._process is not None
-            and self._process.poll() is None
-            and self._current_model_id == model_id
-            and self._current_model_path == model_path
-            and self._current_mmproj_path == mmproj_path
-            and self._is_ready()
-        )
-        if same_model:
-            return
-
-        self.stop()
-        exe = self._find_executable()
-        cmd = [
-            str(exe),
-            "-m",
-            str(model_path),
-            "--mmproj",
-            str(mmproj_path),
-            "--host",
-            LLAMA_CPP_HOST,
-            "--port",
-            str(LLAMA_CPP_VISION_PORT),
-            "-c",
-            str(LLAMA_CPP_CTX),
-            "--jinja",
-            "--reasoning",
-            "off",
-            "--reasoning-budget",
-            "0",
-        ]
-        if torch.cuda.is_available():
-            cmd.extend(["-ngl", "999"])
-
-        self._process = subprocess.Popen(cmd, cwd=str(exe.parent))
-        self._current_model_id = model_id
-        self._current_model_path = model_path
-        self._current_mmproj_path = mmproj_path
-
-        deadline = time.time() + 180.0
-        while time.time() < deadline:
-            if self._process.poll() is not None:
-                raise RuntimeError("動画レビュー用 llama-cpp サーバーが起動直後に終了しました")
-            if self._is_ready():
-                print(f"[VideoReviewer] llama.cpp vision server ready: {model_id}")
-                return
-            time.sleep(1.0)
-
-        self.stop()
-        raise TimeoutError("動画レビュー用 llama-cpp サーバーの起動がタイムアウトしました")
-
-    def stop(self) -> None:
-        proc = self._process
-        self._process = None
-        self._current_model_id = None
-        self._current_model_path = None
-        self._current_mmproj_path = None
-        self._clients = {}
-        if proc is None:
-            return
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5.0)
-
-    def loaded_for(self, model_id: str) -> bool:
-        return (
-            self._process is not None
-            and self._process.poll() is None
-            and self._current_model_id == model_id
-            and self._is_ready()
-        )
-
-    def acquire_model(self, model_id: str, client_name: str) -> None:
-        current = self._clients.get(client_name)
-        if current == model_id and self.loaded_for(model_id):
-            return
-        if current is not None and current != model_id:
-            self.release_client(client_name)
-        self.ensure_model(model_id)
-        self._clients[client_name] = model_id
-
-    def release_client(self, client_name: str) -> None:
-        if client_name in self._clients:
-            del self._clients[client_name]
-        if not self._clients:
-            self.stop()
-
-    def chat(self, model_id: str, messages: list[dict], max_tokens: int) -> str:
-        self.ensure_model(model_id)
-        payload = {
-            "messages": messages,
-            "think": False,
-            "temperature": 0,
-            "top_p": 1,
-            "max_tokens": max_tokens,
-            "cache_prompt": True,
-            "stream": False,
-        }
-        try:
-            response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=300.0)
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"動画レビュー用 llama-cpp サーバーに接続できません: {exc}") from exc
-        choices = response.get("choices") or []
-        if not choices:
-            raise RuntimeError("動画レビュー API の応答に choices がありません")
-        message = choices[0].get("message") or {}
-        return str(message.get("content", "")).strip()
-
-    def stream_chat(self, model_id: str, messages: list[dict], max_tokens: int):
-        yield from self.stream_chat_with_meta(model_id, messages, max_tokens)
-
-    def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int):
-        self.ensure_model(model_id)
-        payload = {
-            "messages": messages,
-            "think": False,
-            "temperature": 0,
-            "top_p": 1,
-            "max_tokens": max_tokens,
-            "cache_prompt": True,
-            "stream": True,
-        }
-        req = request.Request(
-            self._base_url() + "/v1/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        usage: dict | None = None
-        finish_reason: str | None = None
-        try:
-            with request.urlopen(req, timeout=300.0) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if not data or data == "[DONE]":
-                        continue
-                    event = json.loads(data)
-                    if isinstance(event.get("usage"), dict):
-                        usage = event["usage"]
-                    for choice in event.get("choices") or []:
-                        if choice.get("finish_reason"):
-                            finish_reason = str(choice["finish_reason"])
-                        delta = choice.get("delta") or {}
-                        content = delta.get("content")
-                        if isinstance(content, str) and content:
-                            yield content
-                return {
-                    "usage": usage or {},
-                    "finish_reason": finish_reason or "",
-                }
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"動画レビュー用 llama-cpp サーバーに接続できません: {exc}") from exc
-
-
-_vision_server = LlamaCppVisionServerManager()
+_vision_server = LlamaServerManager(
+    port=LLAMA_CPP_VISION_PORT,
+    meta_resolver=get_review_model_meta,
+    label="動画レビュー用",
+)
 
 
 class VideoReviewer:
