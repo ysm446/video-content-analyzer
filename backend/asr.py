@@ -1,55 +1,53 @@
+"""音声書き起こし（ASR）: faster-whisper (CTranslate2) バックエンド。
+
+- Whisper がセグメント/単語単位のタイムスタンプを直接出力するため、
+  旧 Qwen3-ASR + ForcedAligner のような別アライメントは不要。
+- CTranslate2 は CUDA12 の cublas/cudnn DLL を要求するため、Windows では
+  nvidia-*-cu12 wheel の bin を起動時に DLL 検索パスへ通す（_add_nvidia_dlls）。
+"""
+import gc
 import os
+import site
+
 import re
-import tempfile
-from importlib import metadata
 
-import ffmpeg
-import soundfile as sf
-import torch
+# モデル名: large-v3-turbo（高速）。精度重視なら WHISPER_MODEL=large-v3 で上書き可。
+MODEL_ID = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+# モデルキャッシュ先（HF_HOME と同じ models/ 配下に置く）
+DOWNLOAD_ROOT = os.environ.get("WHISPER_DOWNLOAD_ROOT", "models")
 
-from .vram import max_memory_map
+# 字幕セグメント分割のしきい値（単語タイムスタンプから再分割する際に使用）
+SEG_MAX_SEC = 7.0       # 1 セグメントの最大長（秒）→ ここを超えたら強制 flush
+SEG_MAX_CHARS = 40      # 1 セグメントの最大文字数 → ここを超えたら強制 flush
+SEG_SOFT_SEC = 3.5      # この長さを超えていれば読点「、」でも flush（自然な区切り）
+SEG_SOFT_CHARS = 16
+_SENTENCE_END = re.compile(r"[。．！？!?]$")   # 文末（常に flush）
+_SOFT_END = re.compile(r"[、，,]$")            # 読点（ある程度の長さで flush）
 
-MODEL_ID = "Qwen/Qwen3-ASR-1.7B"
-FORCED_ALIGNER_ID = "Qwen/Qwen3-ForcedAligner-0.6B"
 
-# チャンクサイズ（秒）
-# ForcedAligner の上限は 170s だが、ASR の出力トークン上限による末尾切り捨てを
-# 防ぐため、実際の入力は 90s に抑える。
-MAX_ALIGN_SEC = 90
+def _add_nvidia_dlls() -> None:
+    """faster-whisper(CTranslate2) が必要とする CUDA12 cublas/cudnn DLL を
+    pip wheel(nvidia-*-cu12) の bin から DLL 検索パスに追加する（Windows 用）。"""
+    bases = list(site.getsitepackages())
+    try:
+        bases.append(site.getusersitepackages())
+    except Exception:
+        pass
+    for base in bases:
+        nvidia = os.path.join(base, "nvidia")
+        if not os.path.isdir(nvidia):
+            continue
+        for pkg in os.listdir(nvidia):
+            bindir = os.path.join(nvidia, pkg, "bin")
+            if os.path.isdir(bindir):
+                try:
+                    os.add_dll_directory(bindir)
+                except (OSError, AttributeError):
+                    pass
+                os.environ["PATH"] = bindir + os.pathsep + os.environ.get("PATH", "")
 
-# Qwen3-ASR は言語コードではなく言語名を要求する
-LANGUAGE_MAP = {
-    "en": "English",
-    "zh": "Chinese",
-    "yue": "Cantonese",
-    "ar": "Arabic",
-    "de": "German",
-    "fr": "French",
-    "es": "Spanish",
-    "pt": "Portuguese",
-    "id": "Indonesian",
-    "it": "Italian",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "ru": "Russian",
-    "th": "Thai",
-    "vi": "Vietnamese",
-    "tr": "Turkish",
-    "hi": "Hindi",
-    "ms": "Malay",
-    "nl": "Dutch",
-    "sv": "Swedish",
-    "da": "Danish",
-    "fi": "Finnish",
-    "pl": "Polish",
-    "cs": "Czech",
-    "tl": "Filipino",
-    "fa": "Persian",
-    "el": "Greek",
-    "ro": "Romanian",
-    "hu": "Hungarian",
-    "mk": "Macedonian",
-}
+
+_add_nvidia_dlls()
 
 
 class ASRProcessor:
@@ -57,154 +55,98 @@ class ASRProcessor:
         self.model = None
 
     def load(self):
-        try:
-            from qwen_asr import Qwen3ASRModel
-        except Exception as exc:
-            try:
-                tf_ver = metadata.version("transformers")
-            except metadata.PackageNotFoundError:
-                tf_ver = "not installed"
-            raise RuntimeError(
-                "Failed to import qwen_asr. "
-                f"Installed transformers={tf_ver}. "
-                "Please install compatible versions, e.g. "
-                "`pip install -U \"transformers==4.57.6\" qwen-asr`."
-            ) from exc
+        import ctranslate2
+        from faster_whisper import WhisperModel
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.float16 if device == "cuda" else torch.float32
-        mm = max_memory_map()
-        self.model = Qwen3ASRModel.from_pretrained(
+        if ctranslate2.get_cuda_device_count() > 0:
+            device, compute = "cuda", "float16"
+        else:
+            device, compute = "cpu", "int8"
+
+        self.model = WhisperModel(
             MODEL_ID,
-            dtype=dtype,
-            device_map="auto",
-            **({"max_memory": mm} if mm else {}),
-            forced_aligner=FORCED_ALIGNER_ID,
-            forced_aligner_kwargs={
-                "torch_dtype": dtype,
-                "device_map": "auto",
-                **({"max_memory": mm} if mm else {}),
-            },
+            device=device,
+            compute_type=compute,
+            download_root=DOWNLOAD_ROOT,
         )
-        print(f"[ASR] Loaded {MODEL_ID} + {FORCED_ALIGNER_ID}")
+        print(f"[ASR] Loaded faster-whisper {MODEL_ID} ({device}/{compute})")
 
     def unload(self):
         if self.model is not None:
             del self.model
             self.model = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            gc.collect()
             print("[ASR] モデルをアンロードしました")
-
-    def extract_audio(self, video_path: str) -> str:
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp.close()
-        (
-            ffmpeg.input(video_path)
-            .output(tmp.name, ar=16000, ac=1, format="wav")
-            .overwrite_output()
-            .run(quiet=True)
-        )
-        return tmp.name
-
-    def _align_to_segments(
-        self,
-        align_result,
-        offset_sec: float,
-        max_words: int = 12,
-    ) -> list[dict]:
-        segments: list[dict] = []
-        current_words: list[tuple[str, float, float]] = []
-        seg_start: float | None = None
-
-        def flush():
-            nonlocal seg_start
-            if not current_words:
-                return
-            text = " ".join(word[0] for word in current_words)
-            seg_end = current_words[-1][2]
-            segments.append({"text": text, "timestamp": (seg_start, seg_end)})
-            current_words.clear()
-            seg_start = None
-
-        for item in align_result:
-            word = item.text.strip()
-            if not word:
-                continue
-
-            w_start = item.start_time + offset_sec
-            w_end = item.end_time + offset_sec
-
-            if seg_start is None:
-                seg_start = w_start
-
-            current_words.append((word, w_start, w_end))
-
-            ends_sentence = bool(re.search(r"[.!?]$", word))
-            if ends_sentence or len(current_words) >= max_words:
-                flush()
-
-        flush()
-        return segments
 
     def transcribe(
         self,
         video_path: str,
         language: str = None,
     ) -> list[dict]:
-        lang_name = LANGUAGE_MAP.get(language) if language else None
+        """動画/音声ファイルを書き起こし、セグメントのリストを返す。
 
-        audio_path = self.extract_audio(video_path)
-        try:
-            data, sr = sf.read(audio_path, dtype="float32")
-        finally:
-            os.unlink(audio_path)
+        Whisper の単語タイムスタンプを使い、句読点・長さ基準で字幕向けに再分割する。
 
-        if data.ndim > 1:
-            data = data.mean(axis=1)
+        Returns:
+            [{"text": str, "timestamp": (start_sec, end_sec)}, ...]
+        """
+        # faster-whisper は動画ファイルから音声を直接デコードできる（ffmpeg 抽出不要）。
+        segments, info = self.model.transcribe(
+            video_path,
+            language=language or None,
+            word_timestamps=True,
+            vad_filter=True,
+        )
 
-        chunk_samples = int(MAX_ALIGN_SEC * sr)
-        total_chunks = max(1, -(-len(data) // chunk_samples))
-        segments: list[dict] = []
-
-        for chunk_idx, start_sample in enumerate(range(0, len(data), chunk_samples)):
-            chunk = data[start_sample : start_sample + chunk_samples]
-
-            if len(chunk) < sr * 0.5:
-                continue
-
-            start_sec = start_sample / sr
-            print(f"[ASR] チャンク {chunk_idx + 1}/{total_chunks} @ {start_sec:.1f}s 処理中...")
-
-            results = self.model.transcribe(
-                (chunk, sr),
-                language=lang_name,
-                return_time_stamps=True,
-            )
-
-            if not results:
-                print(
-                    f"[ASR] チャンク {chunk_idx + 1}/{total_chunks} @ "
-                    f"{start_sec:.1f}s: 結果なし（スキップ）"
-                )
-                continue
-
-            result = results[0]
-            aligned_items = list(result.time_stamps) if result.time_stamps is not None else []
-            total_words = len(result.text.split()) if result.text else 0
-            align_ratio = len(aligned_items) / total_words if total_words > 0 else 0.0
-
-            print(
-                f"[ASR] チャンク {chunk_idx + 1}/{total_chunks}: "
-                f"text={total_words}単語, aligned={len(aligned_items)}単語, ratio={align_ratio:.0%}"
-            )
-
-            if aligned_items:
-                segments.extend(self._align_to_segments(aligned_items, offset_sec=start_sec))
+        result: list[dict] = []
+        for seg in segments:
+            words = list(seg.words or [])
+            if words:
+                result.extend(self._words_to_segments(words))
             else:
-                text = result.text.strip()
+                text = (seg.text or "").strip()
                 if text:
-                    end_sec = min(start_sample + chunk_samples, len(data)) / sr
-                    segments.append({"text": text, "timestamp": (start_sec, end_sec)})
+                    result.append({"text": text, "timestamp": (seg.start, seg.end)})
 
+        print(
+            f"[ASR] 書き起こし完了: {len(result)} セグメント "
+            f"(言語={info.language}, p={info.language_probability:.2f})"
+        )
+        return result
+
+    @staticmethod
+    def _words_to_segments(words: list) -> list[dict]:
+        """単語（start/end/word）を字幕セグメントへまとめる。
+        句読点（。！？）で区切り、長さ・文字数の上限でも強制的に flush する。"""
+        segments: list[dict] = []
+        buf: list = []
+        seg_start = None
+
+        def flush():
+            nonlocal buf, seg_start
+            if not buf:
+                return
+            text = "".join(w.word for w in buf).strip()
+            if text:
+                segments.append({"text": text, "timestamp": (seg_start, buf[-1].end)})
+            buf = []
+            seg_start = None
+
+        for w in words:
+            if seg_start is None:
+                seg_start = w.start
+            buf.append(w)
+
+            cur_text = "".join(x.word for x in buf).strip()
+            dur = w.end - seg_start
+            long_enough = dur >= SEG_SOFT_SEC or len(cur_text) >= SEG_SOFT_CHARS
+            if (
+                _SENTENCE_END.search(cur_text)                       # 文末は常に区切る
+                or (long_enough and _SOFT_END.search(cur_text))      # 読点はある程度長ければ区切る
+                or dur >= SEG_MAX_SEC                                 # 上限超過は強制
+                or len(cur_text) >= SEG_MAX_CHARS
+            ):
+                flush()
+
+        flush()
         return segments

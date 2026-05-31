@@ -5,9 +5,9 @@ echo  Video Content Analyzer
 echo =============================================
 echo.
 
-call conda activate main
+call "%~dp0.venv\Scripts\activate.bat"
 if errorlevel 1 (
-    echo [ERROR] Failed to activate conda env "main".
+    echo [ERROR] Failed to activate venv ".venv". Run: python -m venv .venv ^&^& pip install -r requirements.txt
     pause
     exit /b 1
 )
