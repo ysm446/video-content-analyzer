@@ -9,6 +9,8 @@
   - 本番 .venv をクリーン構築し import/実機ASR検証OK（カメラ=21.76s、RTF~0.02）
   - Electron UI からの E2E 確認OK（/transcribe 200 → 18セグメント → アンロード、エラーなし）
   - feat/asr-whisper を main へマージ（fast-forward）
+- 長尺ポーズで字幕が間延びする問題を修正（単語間ギャップ8秒超で区切り。「あとね、」16秒表示を解消）
+- 検証用 .venv-gemma を削除（5.34GB 解放）
 - フェーズ0検証: `.venv-gemma`（transformers 5.9.0 / torch 2.12.0+cu130）で Gemma 4 E2B の
   音声書き起こしパイプラインが動作することを確認
   - sample.mp4 先頭30秒の英語を正確に書き起こし。RTF=0.19 / ピークVRAM 10.4GB / ロード19s

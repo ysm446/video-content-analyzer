@@ -30,6 +30,8 @@
 - [x] アプリ全体（Electron UI → /transcribe）でのE2E動作確認
   （UI操作で /transcribe 200 → 18セグメント書き起こし → アンロード、エラーなし。turbo で高速）
 - [x] feat/asr-whisper を main へマージ（fast-forward）
+- [x] 長尺ポーズ時の字幕間延びを修正（GAP_FLUSH_SEC=8s で区切り。「あとね、」16秒→解消）
+- [x] 検証用 .venv-gemma を削除（5.34GB 解放）
 - [ ] transformers依存の最終撤去可否（translator HFフォールバックの扱い）を検討
-- [ ] 検証用 .venv-gemma（テスト環境）の整理、旧Qwen関連の残骸確認
-- [ ] （任意）長尺ポーズ時の字幕表示時間に上限を設ける調整
+- [ ] 旧Qwen関連の残骸確認、gemma検証スクリプト(scripts/test_gemma_asr.py)の要否
+- [ ] （任意）リモートへ push
