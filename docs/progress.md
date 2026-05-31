@@ -13,15 +13,21 @@
 - [x] faster-whisper large-v3 を検証: 品質◎・**単語時刻が正確**（「カメラ」21.94s≒正解21s）・RTF 0.10・VRAM ~3GB
 - [x] 比較の結果 **Whisper を採用**（タイムスタンプ/長尺一括/軽量で優位）
 
-### フェーズ 1: 環境整備（conda → venv 本番化）
-- [ ] 本番 venv `.venv` 作成
-- [ ] requirements.txt 更新（qwen-asr/transformers ピン削除、faster-whisper + nvidia-cublas-cu12/cudnn-cu12 追加）
-- [ ] start.bat / CLAUDE.md 環境記述更新
+作業ブランチ: `feat/asr-whisper`
 
-### フェーズ 2: asr.py 書き換え（Qwen3-ASR → faster-whisper）
-- [ ] WhisperModel への置換、CUDA DLL パス処理、セグメント/時刻マップ、ForcedAligner撤去
-- [ ] 未着手
+### フェーズ 1: 環境整備（conda → venv 本番化）（完了）
+- [x] 本番 venv `.venv` をクリーン構築（Python 3.10 / torch cu130 / requirements.txt）。`import backend.server` 成功
+- [x] requirements.txt 更新（qwen-asr/torchaudio/soundfile/qwen-vl-utils 削除、transformers ピン解除、faster-whisper + nvidia-cublas/cudnn-cu12 追加）
+- [x] start.bat（.venv 有効化）/ CLAUDE.md（環境・アーキ図・依存注意点）更新
 
-### フェーズ 3: 後片付け・ドキュメント
-- [ ] CLAUDE.md アーキ図更新、transformers依存の撤去可否確認、旧Qwenコード整理
-- [ ] 未着手
+### フェーズ 2: asr.py 書き換え（Qwen3-ASR → faster-whisper）（完了）
+- [x] WhisperModel(large-v3-turbo) へ置換、CUDA DLL パス処理、ForcedAligner撤去
+- [x] 単語タイムスタンプから句読点・長さ基準で字幕セグメント生成（_words_to_segments）
+- [x] 本番 .venv で実機検証: 18セグメント・時刻正確（カメラ=21.76s）・RTF~0.02
+
+### フェーズ 3: 後片付け・ドキュメント（残）
+- [x] CLAUDE.md アーキ図・依存注意点更新
+- [ ] アプリ全体（Electron UI → /transcribe）でのE2E動作確認
+- [ ] feat/asr-whisper を main へマージ
+- [ ] transformers依存の最終撤去可否（translator HFフォールバックの扱い）を検討
+- [ ] 検証用 .venv-gemma（テスト環境）の整理、旧Qwen関連の残骸確認
