@@ -21,6 +21,12 @@ SEG_MAX_SEC = 7.0       # 1 セグメントの最大長（秒）→ ここを超
 SEG_MAX_CHARS = 40      # 1 セグメントの最大文字数 → ここを超えたら強制 flush
 SEG_SOFT_SEC = 3.5      # この長さを超えていれば読点「、」でも flush（自然な区切り）
 SEG_SOFT_CHARS = 16
+# 単語間に極端に長い無音（ポーズ）があると、1セグメントが沈黙をまたいで間延びする
+# （例: 「あと」49s と「ね」65s の間に約15秒の沈黙）。このギャップを超えたら
+# ポーズを区切りとみなして flush する。数秒程度の自然な間で割らないよう高めに設定。
+GAP_FLUSH_SEC = 8.0
+# 末尾トークン単体が沈黙を吸収して長い場合の保険的な頭打ち。
+MAX_TOKEN_DUR = 2.0
 _SENTENCE_END = re.compile(r"[。．！？!?]$")   # 文末（常に flush）
 _SOFT_END = re.compile(r"[、，,]$")            # 読点（ある程度の長さで flush）
 
@@ -128,11 +134,20 @@ class ASRProcessor:
                 return
             text = "".join(w.word for w in buf).strip()
             if text:
-                segments.append({"text": text, "timestamp": (seg_start, buf[-1].end)})
+                last = buf[-1]
+                # 末尾トークンがポーズを吸収して長すぎる場合は表示終了を頭打ちにする
+                seg_end = last.end
+                if last.end - last.start > MAX_TOKEN_DUR:
+                    seg_end = last.start + MAX_TOKEN_DUR
+                seg_end = max(seg_end, seg_start)
+                segments.append({"text": text, "timestamp": (seg_start, seg_end)})
             buf = []
             seg_start = None
 
         for w in words:
+            # 直前の単語との間に大きな無音があればそこで区切る（ポーズ＝境界）
+            if buf and (w.start - buf[-1].end) > GAP_FLUSH_SEC:
+                flush()
             if seg_start is None:
                 seg_start = w.start
             buf.append(w)
