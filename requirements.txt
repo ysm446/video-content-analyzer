@@ -14,3 +14,6 @@ torch
 ffmpeg-python
 srt
 Pillow
+# システムリソースモニター(/system-stats)用。pynvml は nvidia-ml-py が提供。
+psutil
+nvidia-ml-py
