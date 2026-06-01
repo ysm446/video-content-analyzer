@@ -478,28 +478,70 @@ def health():
 
 @app.get("/prompts")
 def list_prompts():
-    """システムプロンプト一覧を返す。各項目に default / override / editable を含む。"""
+    """システムプロンプト一覧を返す。editable 項目には presets / active を含む。"""
     items = _translator_prompts() + _review_prompts()
-    overrides = _prompts.load_overrides()
     for it in items:
         key = it["key"]
-        it["editable"] = key in _prompts.EDITABLE_KEYS
-        it["override"] = overrides.get(key) if it["editable"] else None
+        editable = key in _prompts.EDITABLE_KEYS
+        it["editable"] = editable
+        if editable:
+            entry = _prompts.list_for(key)
+            it["presets"] = entry["presets"]
+            it["active"] = entry["active"]
+        else:
+            it["presets"] = []
+            it["active"] = "default"
     return {"prompts": items}
 
 
-class PromptOverrideRequest(BaseModel):
+class PromptPresetRequest(BaseModel):
     key: str
-    text: Optional[str] = None  # 空/None で上書き解除（デフォルトに戻す）
+    id: Optional[str] = None      # 省略=新規作成 / 指定=更新
+    name: Optional[str] = None
+    text: Optional[str] = None
 
 
-@app.post("/prompts")
-def set_prompt(req: PromptOverrideRequest):
-    """system プロンプトのユーザー上書きを保存/解除する（data/prompts.json）。"""
-    if req.key not in _prompts.EDITABLE_KEYS:
-        raise HTTPException(400, f"このプロンプトは上書きできません: {req.key}")
-    _prompts.set_override(req.key, req.text)
-    return {"status": "ok", "key": req.key, "active": _prompts.get_override(req.key) is not None}
+class PromptActiveRequest(BaseModel):
+    key: str
+    active: str                   # preset id または "default"
+
+
+class PromptDeleteRequest(BaseModel):
+    key: str
+    id: str
+
+
+@app.post("/prompts/preset")
+def save_prompt_preset(req: PromptPresetRequest):
+    """プリセットを新規作成（id 省略）または更新（id 指定）する。"""
+    try:
+        if req.id:
+            _prompts.update_preset(req.key, req.id, req.name, req.text)
+            return {"status": "ok", "id": req.id}
+        preset = _prompts.create_preset(req.key, req.name or "無題", req.text or "")
+        return {"status": "ok", "id": preset["id"]}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/prompts/active")
+def set_prompt_active(req: PromptActiveRequest):
+    """選択中プリセットを切り替える（"default" でデフォルトに戻す）。"""
+    try:
+        _prompts.set_active(req.key, req.active)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok"}
+
+
+@app.post("/prompts/delete")
+def delete_prompt_preset(req: PromptDeleteRequest):
+    """プリセットを削除する。削除対象が選択中ならデフォルトに戻る。"""
+    try:
+        _prompts.delete_preset(req.key, req.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok"}
 
 
 @app.get("/system-stats")

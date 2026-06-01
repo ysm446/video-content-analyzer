@@ -25,9 +25,11 @@
   対象: 翻訳/辞書/分析(system)/Q&A(system)＋分析の出力指示・JSONフォーマット（計9件）
 - 機能追加（フェーズB）: システムプロンプトのユーザー上書き（差し替え）に対応。
   backend/prompts.py で「デフォルト不変＋上書きレイヤー」を実装し、上書きは data/prompts.json に保存（gitignore）。
-  GET /prompts に default/override/editable を付与、POST /prompts で保存・解除。
   編集可は system プロンプト4つ（翻訳/辞書/分析/Q&A）のみ。出力フォーマット系は閲覧専用（解析破壊防止）。
-  設定UIにテキストエリア＋保存／デフォルトに戻すを追加
+- 機能拡張: 1キーにつき**複数の名前付きプリセット**を作成・切替・削除できるように。
+  data/prompts.json を { key: {active, presets:[{id,name,text}]} } 形式へ拡張（旧単一上書き形式は自動移行）。
+  API: GET /prompts(presets/active付与) / POST /prompts/preset(作成・更新) / /prompts/active(切替) / /prompts/delete。
+  設定UIにプリセット選択ドロップダウン＋名前入力＋新規／保存／削除を追加。resolve(key) は選択中プリセットを使用
 - リファクタ: llama-server 管理を共通化。translator の LlamaCppServerManager と
   video_reviewer の LlamaCppVisionServerManager（重複~80%）を backend/llama_server.py の
   LlamaServerManager に統合（port / meta_resolver / mmproj有無 / label / timeout でパラメタ化）。

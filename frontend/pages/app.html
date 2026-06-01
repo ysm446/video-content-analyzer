@@ -1995,6 +1995,8 @@
     window.addEventListener('resize', updatePanelLayout)
 
     const PROMPT_PRE_STYLE='margin:0;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--text)'
+    const PROMPT_FIELD_STYLE='width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;font-family:inherit'
+    const _promptDefaults={}
     function renderPromptItem(p){
       if(!p.editable){
         return `<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
@@ -2002,16 +2004,27 @@
             <pre style="${PROMPT_PRE_STYLE}">${escHtml(p.default)}</pre>
           </div>`
       }
-      const ov=p.override||''
-      const active=!!p.override
+      const active=p.active||'default'
+      const presets=p.presets||[]
+      const cur=presets.find(x=>x.id===active)
+      const options=`<option value="default"${active==='default'?' selected':''}>デフォルト</option>`+
+        presets.map(x=>`<option value="${escHtml(x.id)}"${x.id===active?' selected':''}>${escHtml(x.name)}</option>`).join('')
+      const editor = active==='default'
+        ? `<pre style="${PROMPT_PRE_STYLE}">${escHtml(p.default)}</pre>`
+        : `<input id="prompt-name-${escHtml(p.key)}" type="text" value="${escHtml(cur?cur.name:'')}" placeholder="プロンプト名" style="${PROMPT_FIELD_STYLE};margin-bottom:6px">
+           <textarea id="prompt-ta-${escHtml(p.key)}" rows="4" style="${PROMPT_FIELD_STYLE};resize:vertical">${escHtml(cur?cur.text:'')}</textarea>
+           <div style="display:flex;gap:8px;margin-top:6px">
+             <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" data-prompt-save="${escHtml(p.key)}">保存</button>
+           </div>`
       return `<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-          <div style="font-size:12px;margin-bottom:3px">${escHtml(p.label)}${active?' <span style="color:var(--accent);font-size:11px">● 上書き中</span>':''}</div>
-          <textarea id="prompt-ta-${escHtml(p.key)}" rows="4" style="width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;font-family:inherit;resize:vertical" placeholder="（空欄のままだとデフォルトを使用）">${escHtml(ov)}</textarea>
-          <details style="margin-top:4px"><summary style="font-size:11px;color:var(--text-dim);cursor:pointer">デフォルトを表示</summary><pre style="${PROMPT_PRE_STYLE};margin-top:4px">${escHtml(p.default)}</pre></details>
-          <div style="display:flex;gap:8px;margin-top:6px">
-            <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" data-prompt-save="${escHtml(p.key)}">保存</button>
-            <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-prompt-reset="${escHtml(p.key)}">デフォルトに戻す</button>
+          <div style="font-size:12px;margin-bottom:5px">${escHtml(p.label)}${active!=='default'?' <span style="color:var(--accent);font-size:11px">● 上書き中</span>':''}</div>
+          <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+            <select data-prompt-sel="${escHtml(p.key)}" style="flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px">${options}</select>
+            <button class="btn btn-ghost" style="padding:5px 10px;font-size:12px" data-prompt-new="${escHtml(p.key)}">＋新規</button>
+            <button class="btn btn-ghost" style="padding:5px 10px;font-size:12px" data-prompt-del="${escHtml(p.key)}"${active==='default'?' disabled':''}>削除</button>
           </div>
+          ${editor}
+          <details style="margin-top:6px"><summary style="font-size:11px;color:var(--text-dim);cursor:pointer">デフォルトを表示</summary><pre style="${PROMPT_PRE_STYLE};margin-top:4px">${escHtml(p.default)}</pre></details>
         </div>`
     }
     async function loadPrompts(){
@@ -2022,33 +2035,54 @@
         if(!res.ok) throw new Error('failed')
         const {prompts}=await res.json()
         const groups={}
-        for(const p of prompts){ (groups[p.category]=groups[p.category]||[]).push(p) }
+        for(const p of prompts){ if(p.editable) _promptDefaults[p.key]=p.default; (groups[p.category]=groups[p.category]||[]).push(p) }
         el.innerHTML=Object.entries(groups).map(([cat,items])=>`
           <div style="margin-bottom:14px">
             <div style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px">${escHtml(cat)}</div>
             ${items.map(p=>renderPromptItem(p)).join('')}
           </div>`).join('')
-        el.querySelectorAll('[data-prompt-save]').forEach(b=>b.addEventListener('click',()=>savePrompt(b.getAttribute('data-prompt-save'))))
-        el.querySelectorAll('[data-prompt-reset]').forEach(b=>b.addEventListener('click',()=>resetPrompt(b.getAttribute('data-prompt-reset'))))
+        el.querySelectorAll('[data-prompt-sel]').forEach(s=>s.addEventListener('change',()=>setPromptActive(s.getAttribute('data-prompt-sel'),s.value)))
+        el.querySelectorAll('[data-prompt-new]').forEach(b=>b.addEventListener('click',()=>newPrompt(b.getAttribute('data-prompt-new'))))
+        el.querySelectorAll('[data-prompt-del]').forEach(b=>b.addEventListener('click',()=>deletePrompt(b.getAttribute('data-prompt-del'))))
+        el.querySelectorAll('[data-prompt-save]').forEach(b=>b.addEventListener('click',()=>savePromptPreset(b.getAttribute('data-prompt-save'))))
       }catch(e){
         el.innerHTML='<div style="font-size:12px;color:var(--text-dim)">プロンプトの取得に失敗しました</div>'
       }
     }
-    async function savePrompt(key){
-      const ta=document.getElementById(`prompt-ta-${key}`)
-      if(!ta) return
+    function _curPresetId(key){
+      const sel=document.querySelector(`[data-prompt-sel="${key}"]`)
+      return sel?sel.value:'default'
+    }
+    async function _promptPost(path,body){
+      const res=await fetch(`${API}${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      if(!res.ok) throw new Error(await res.text())
+      return res.json()
+    }
+    async function setPromptActive(key,active){
+      try{ await _promptPost('/prompts/active',{key,active}); await loadPrompts() }
+      catch(e){ alert('切替に失敗しました: '+e.message); loadPrompts() }
+    }
+    async function newPrompt(key){
       try{
-        const res=await fetch(`${API}/prompts`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,text:ta.value})})
-        if(!res.ok) throw new Error(await res.text())
+        await _promptPost('/prompts/preset',{key,name:'新しいプロンプト',text:_promptDefaults[key]||''})
+        await loadPrompts()
+      }catch(e){ alert('作成に失敗しました: '+e.message) }
+    }
+    async function savePromptPreset(key){
+      const id=_curPresetId(key)
+      if(id==='default') return
+      const nameEl=document.getElementById(`prompt-name-${key}`)
+      const ta=document.getElementById(`prompt-ta-${key}`)
+      try{
+        await _promptPost('/prompts/preset',{key,id,name:nameEl?nameEl.value:undefined,text:ta?ta.value:''})
         await loadPrompts()
       }catch(e){ alert('保存に失敗しました: '+e.message) }
     }
-    async function resetPrompt(key){
-      try{
-        const res=await fetch(`${API}/prompts`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,text:''})})
-        if(!res.ok) throw new Error(await res.text())
-        await loadPrompts()
-      }catch(e){ alert('リセットに失敗しました: '+e.message) }
+    async function deletePrompt(key){
+      const id=_curPresetId(key)
+      if(id==='default') return
+      try{ await _promptPost('/prompts/delete',{key,id}); await loadPrompts() }
+      catch(e){ alert('削除に失敗しました: '+e.message) }
     }
 
     switchTab('player')
