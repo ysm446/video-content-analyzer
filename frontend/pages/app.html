@@ -6,6 +6,7 @@
   <title>Video Content Analyzer</title>
   <link rel="stylesheet" href="../css/common.css">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/marked@12/marked.min.js"></script>
   <style>
     svg.lucide{width:14px;height:14px;stroke-width:1.75;vertical-align:-2px;flex-shrink:0}
     .time-label svg.lucide{vertical-align:0}
@@ -178,7 +179,23 @@
     .qa-pair{display:flex;flex-direction:column;gap:6px}
     .qa-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;text-align:center}
     .qa-question{align-self:flex-end;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:12px 12px 4px 12px;max-width:92%;white-space:pre-wrap}
-    .qa-answer{align-self:flex-start;background:transparent;border:none;padding:0;max-width:96%;white-space:pre-wrap;line-height:1.7;color:var(--text)}
+    .qa-answer{align-self:flex-start;background:transparent;border:none;padding:0;max-width:96%;line-height:1.7;color:var(--text);overflow-wrap:anywhere}
+    .qa-answer>*:first-child{margin-top:0}
+    .qa-answer>*:last-child{margin-bottom:0}
+    .qa-answer p{margin:.5em 0;white-space:pre-wrap}
+    .qa-answer h1,.qa-answer h2,.qa-answer h3,.qa-answer h4{margin:.8em 0 .4em;line-height:1.35;font-weight:600}
+    .qa-answer h1{font-size:1.3em}.qa-answer h2{font-size:1.18em}.qa-answer h3{font-size:1.06em}.qa-answer h4{font-size:1em}
+    .qa-answer ul,.qa-answer ol{margin:.4em 0;padding-left:1.4em}
+    .qa-answer li{margin:.2em 0}
+    .qa-answer li>p{margin:0}
+    .qa-answer code{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:.1em .35em;font-size:.9em;font-family:ui-monospace,Consolas,monospace}
+    .qa-answer pre{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;overflow-x:auto;margin:.6em 0}
+    .qa-answer pre code{background:none;border:none;padding:0;font-size:.88em}
+    .qa-answer blockquote{margin:.5em 0;padding-left:.9em;border-left:3px solid var(--border);color:var(--text-dim)}
+    .qa-answer a{color:#6ea8fe;text-decoration:underline}
+    .qa-answer table{border-collapse:collapse;margin:.6em 0;font-size:.92em}
+    .qa-answer th,.qa-answer td{border:1px solid var(--border);padding:4px 8px;text-align:left}
+    .qa-answer hr{border:none;border-top:1px solid var(--border);margin:.8em 0}
     .qa-answer-meta{align-self:flex-start;display:flex;flex-wrap:wrap;gap:8px 12px;max-width:96%;color:var(--text-dim)}
     .qa-meta-item{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1.2;color:var(--text-dim);background:none;border:none;padding:0}
     .qa-meta-item svg.lucide{width:13px;height:13px;stroke-width:1.9}
@@ -717,6 +734,15 @@
 
     function escHtml(str){
       return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+    }
+
+    // チャット回答を Markdown としてレンダリング。marked 未読込時は素のテキスト（改行保持）にフォールバック。
+    function renderMarkdown(text){
+      const src=String(text || '')
+      if(typeof marked==='undefined' || !marked.parse){
+        return `<p style="white-space:pre-wrap">${escHtml(src)}</p>`
+      }
+      return marked.parse(src, {gfm:true, breaks:true})
     }
 
     function clearAnalysisDetail(){
@@ -1775,6 +1801,7 @@
       ans.className='qa-answer'
       ans.style.display='none'
       pair.appendChild(ans)
+      let qaRaw=''
       const ansMeta=document.createElement('div')
       ansMeta.className='qa-answer-meta'
       ansMeta.style.display='none'
@@ -1806,16 +1833,18 @@
               ans.style.display=''
               thinking.style.display='none'
             }
-            const delta = ans.textContent.length === 0
+            const delta = qaRaw.length === 0
               ? trimLeadingChatWhitespace(event.delta || '')
               : (event.delta || '')
-            ans.textContent += delta
+            qaRaw += delta
+            ans.innerHTML = renderMarkdown(qaRaw)
             pair.scrollIntoView({behavior:'smooth'})
           }
           else if(event.status==='done'){
-            if((ans.textContent || '').trim().length===0){
+            if(qaRaw.trim().length===0){
               ans.style.display=''
-              ans.textContent=trimLeadingChatWhitespace(event.answer || '')
+              qaRaw=trimLeadingChatWhitespace(event.answer || '')
+              ans.innerHTML=renderMarkdown(qaRaw)
               thinking.style.display='none'
             }
             const metaHtml = renderQaMeta(event.meta)

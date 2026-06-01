@@ -1,5 +1,25 @@
 # 変更履歴
 
+## 2026-06-02
+- **Q&A チャットを Markdown 表示に変更**: 回答を平文（`textContent`）ではなく Markdown
+  レンダリングで表示
+  - `app.html` に marked@12（CDN, lucide と同方式）を読み込み、`renderMarkdown()` を追加
+    （marked 未読込時は改行保持の素テキストにフォールバック）
+  - ストリーミングは生テキストを `qaRaw` に蓄積し、delta ごと／done 時に
+    `ans.innerHTML = renderMarkdown(qaRaw)` で再描画
+  - `.qa-answer` の `white-space:pre-wrap` を解除し、見出し/リスト/コード/引用/表/水平線/
+    リンク等の Markdown 要素用スタイルを追加
+- **Q&A の字幕参照を関連部分優先に改善（embedding なし）**: 長尺動画で transcript が
+  先頭3000文字に固定切り出しされ、後半の質問に字幕的根拠が渡らない問題を修正
+  - `video_reviewer.py` に `_tokenize_query`（英数字トークン＋CJK 2-gram、形態素解析不要）と
+    `_select_relevant_transcript` を追加。`[m:ss] 行` を質問キーワードでスコア付けし、
+    高スコア行＋前後1行を時系列順に予算（3000字）内で収集
+  - 一致ゼロ時は全編から等間隔サンプリング（先頭偏重を回避）、全文が予算内ならそのまま、
+    タイムスタンプ無し形式は従来の先頭切り出しにフォールバック
+  - `_build_qa_prompt` を `_truncate_transcript` → `_select_relevant_transcript(質問)` に変更
+  - 検証: 11375字の字幕で深い位置（25:00付近）の関連行を正しく抽出（先頭切り出しでない）、
+    非一致時は 0–1980秒へ均等サンプリング、短文は素通しを確認
+
 ## 2026-05-31
 - **実装（branch feat/asr-whisper）**: backend/asr.py を faster-whisper(large-v3-turbo) に全面書き換え
   - 単語タイムスタンプから句読点・長さ基準で字幕セグメント生成（ForcedAligner不要化）

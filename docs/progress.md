@@ -1,6 +1,13 @@
 # 進捗状況
 
-最終更新: 2026-05-31
+最終更新: 2026-06-02
+
+## Q&A の字幕参照改善（embedding なし・2026-06-02 完了）
+- [x] 長尺で transcript が先頭3000字固定だった問題を、質問キーワードによる関連行抽出で解消
+- [x] `video_reviewer.py`: `_tokenize_query` / `_select_relevant_transcript` 追加、`_build_qa_prompt` で使用
+- [x] 一致ゼロ時は全編等間隔サンプリング、TS無し形式は先頭切り出しへフォールバック
+- [x] ロジック検証OK（関連行抽出・均等サンプリング・短文素通し）
+- 今後の選択肢: 必要ならシーン単位検索→字幕チャンク embedding へ段階的拡張
 
 ## ASR 移行（Qwen3-ASR → faster-whisper large-v3）
 

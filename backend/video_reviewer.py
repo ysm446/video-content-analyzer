@@ -512,6 +512,99 @@ class VideoReviewer:
         return transcript[:_TRANSCRIPT_MAX_CHARS] + "…（以下省略）"
 
     @staticmethod
+    def _tokenize_query(question: str) -> list[str]:
+        """質問を検索語に分解する（形態素解析なし）。
+
+        - 英数字は単語単位（小文字化）
+        - CJK は連続文字列から 2-gram（1文字のみの場合はその文字）を生成
+        """
+        terms: list[str] = []
+        terms += [w for w in re.findall(r"[A-Za-z0-9]+", question.lower()) if len(w) >= 2]
+        for run in re.findall(r"[぀-ヿ㐀-䶿一-鿿]+", question):
+            if len(run) == 1:
+                terms.append(run)
+            else:
+                terms += [run[i:i + 2] for i in range(len(run) - 1)]
+        # 重複除去（順序保持）
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for t in terms:
+            if t not in seen:
+                seen.add(t)
+                uniq.append(t)
+        return uniq
+
+    @staticmethod
+    def _select_relevant_transcript(transcript: str, question: str, max_chars: int = _TRANSCRIPT_MAX_CHARS) -> str:
+        """質問に関連する字幕行を予算内で抽出する（embedding なしのキーワード検索）。
+
+        - 全文が予算内ならそのまま返す
+        - `[m:ss] テキスト` 形式の行をキーワード一致でスコア付けし、高スコア行＋前後1行を
+          時系列順に予算内で収集
+        - 一致がゼロなら全編から等間隔サンプリング（先頭偏重を避ける）
+        """
+        if not transcript or len(transcript) <= max_chars:
+            return transcript
+
+        lines = transcript.splitlines()
+        rows: list[tuple[int, str]] = []  # (行index, 行テキスト)
+        for idx, line in enumerate(lines):
+            if re.match(r"^\[(\d+):(\d{2})\]\s*", line.strip()):
+                rows.append((idx, line))
+        # タイムスタンプ行が無い形式は従来の先頭切り出しにフォールバック
+        if not rows:
+            return VideoReviewer._truncate_transcript(transcript)
+
+        terms = VideoReviewer._tokenize_query(question)
+
+        def _pick(indices: list[int]) -> str:
+            # 行 index を時系列（=元の順序）で並べ、予算内で連結
+            ordered = sorted(set(indices))
+            picked: list[str] = []
+            total = 0
+            for i in ordered:
+                line = lines[i]
+                add = len(line) + 1
+                if total + add > max_chars:
+                    break
+                picked.append(line)
+                total += add
+            return "\n".join(picked)
+
+        if terms:
+            scored: list[tuple[int, int]] = []  # (score, 行index)
+            for idx, line in rows:
+                low = line.lower()
+                score = sum(low.count(t) for t in terms)
+                if score > 0:
+                    scored.append((score, idx))
+            if scored:
+                # 高スコア順に、前後1行の文脈を含めて予算まで集める
+                scored.sort(key=lambda x: (-x[0], x[1]))
+                chosen: set[int] = set()
+                total = 0
+                for _score, idx in scored:
+                    window = [j for j in (idx - 1, idx, idx + 1) if 0 <= j < len(lines)]
+                    add = sum(len(lines[j]) + 1 for j in window if j not in chosen)
+                    if total + add > max_chars and chosen:
+                        break
+                    for j in window:
+                        if j not in chosen:
+                            chosen.add(j)
+                            total += len(lines[j]) + 1
+                return _pick(list(chosen))
+
+        # 一致なし: 全編から等間隔サンプリング
+        n = len(rows)
+        approx_line = sum(len(line) for _i, line in rows) / max(1, n)
+        budget_lines = max(1, int(max_chars / max(1.0, approx_line + 1)))
+        if budget_lines >= n:
+            return _pick([i for i, _l in rows])
+        step = n / budget_lines
+        sampled = [rows[int(k * step)][0] for k in range(budget_lines)]
+        return _pick(sampled)
+
+    @staticmethod
     def _fmt_ts(secs: float) -> str:
         m, s = divmod(int(secs), 60)
         return f"{m}:{s:02d}"
@@ -575,7 +668,8 @@ class VideoReviewer:
         if timestamps:
             parts.append("各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。時刻を参考にしてください。")
         if transcript:
-            parts.append(f"[字幕テキスト]\n{VideoReviewer._truncate_transcript(transcript)}")
+            selected = VideoReviewer._select_relevant_transcript(transcript, question)
+            parts.append(f"[字幕テキスト]\n{selected}")
         parts.append(f"質問: {question}")
         parts.append("映像フレームと字幕テキストを参照して、日本語で具体的に回答してください。")
         return "\n\n".join(parts)
