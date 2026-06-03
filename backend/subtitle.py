@@ -53,6 +53,7 @@ def srt_file_to_segments(srt_path: str) -> list[dict]:
 
 
 def save_srt(content: str, path: str) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(content, encoding="utf-8")
 
 
@@ -119,7 +120,8 @@ def split_long_segments(
 def make_output_path(video_path: str, suffix: str) -> str:
     """
     動画パスからSRT出力パスを生成する。
-    例: video.mp4 → video.original.srt / video.japanese.srt
+    解析成果物として {動画名}.cache/ フォルダ内に保存する。
+    例: video.mp4 → video.cache/video.original.srt / video.cache/video.japanese.srt
     """
     p = Path(video_path)
-    return str(p.parent / f"{p.stem}.{suffix}.srt")
+    return str(p.parent / f"{p.stem}.cache" / f"{p.stem}.{suffix}.srt")

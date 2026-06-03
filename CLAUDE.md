@@ -199,13 +199,16 @@ error            → {message}
 
 ```
 video.mp4
-├── video.original.srt       （ASR 生成）
-├── video.japanese.srt       （翻訳生成）
 └── video.cache/
+    ├── video.original.srt   （ASR 生成）
+    ├── video.japanese.srt   （翻訳生成）
     ├── data.json            （シーン・メタ・transcript キャッシュ）
     └── thumbnails/
         └── scene_N.jpg
 ```
+
+字幕も解析成果物として `video.cache/` に集約する。読み込み時は cache 内を優先し、
+旧・動画の横（`video.original.srt` 等）にあれば後方互換でフォールバックする。
 
 ## フロントエンド構成
 

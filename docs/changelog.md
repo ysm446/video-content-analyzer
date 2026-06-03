@@ -1,5 +1,15 @@
 # 変更履歴
 
+## 2026-06-03
+- **字幕 SRT を `{動画名}.cache/` に集約**: これまで動画の横に出力していた
+  `video.original.srt` / `video.japanese.srt` を、解析成果物として cache フォルダ内に保存
+  - `subtitle.py`: `make_output_path()` を `{stem}.cache/{stem}.{suffix}.srt` に変更。
+    `save_srt()` に親フォルダ自動作成（`mkdir(parents=True, exist_ok=True)`）を追加
+  - `/translate` は入力 SRT の親フォルダ基準で出力するため、cache 内入力なら自動で cache 内出力（変更なし）
+  - `app.html` `tryAutoLoadSrt()`: cache 内を優先し、無ければ旧・横置きにフォールバック（後方互換）
+  - `.gitignore` の `*.original.srt` / `*.japanese.srt` はベース名一致のため cache 内でも引き続き無視
+  - 外部プレイヤー連携は使わない（解析目的）ため横置きの利点はなく、フォルダ集約を優先
+
 ## 2026-06-02
 - **Q&A チャットを Markdown 表示に変更**: 回答を平文（`textContent`）ではなく Markdown
   レンダリングで表示

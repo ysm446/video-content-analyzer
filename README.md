@@ -161,10 +161,10 @@ npm start
 
 ```
 video.mp4
-├── video.original.srt       # 文字起こし結果
-├── video.japanese.srt       # 日本語翻訳字幕
 ├── video.toc.json           # 保存したチャプター情報
 └── video.cache/
+    ├── video.original.srt   # 文字起こし結果
+    ├── video.japanese.srt   # 日本語翻訳字幕
     ├── data.json            # 保存後のシーン・メタ・文字起こしキャッシュ
     └── thumbnails/
         ├── scene_0.jpg

@@ -1287,13 +1287,23 @@
     }
 
     async function tryAutoLoadSrt(videoFilePath){
-      const stem=videoFilePath.replace(/\.[^.]+$/,'')
-      const targets=[{path:stem+'.original.srt',kind:'orig'},{path:stem+'.japanese.srt',kind:'jp'}]
-      for(const {path,kind} of targets){
-        const result=await window.electronAPI.readFile(path)
-        if(result.ok){
-          if(kind==='orig'){ state.origSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
-          else { state.jpSrtPath=path; await loadSrt(path,'jp'); setResult('translate',true,path) }
+      const stem=videoFilePath.replace(/\.[^.]+$/,'')          // 例: D:\foo\video
+      const base=stem.split(/[\\/]/).pop()                     // 例: video
+      const sep=videoFilePath.includes('\\')?'\\':'/'
+      const cacheBase=stem+'.cache'+sep+base                   // 例: D:\foo\video.cache\video
+      // cache 内を優先し、無ければ旧・横置きにフォールバック（後方互換）
+      const targets=[
+        {paths:[cacheBase+'.original.srt', stem+'.original.srt'],kind:'orig'},
+        {paths:[cacheBase+'.japanese.srt', stem+'.japanese.srt'],kind:'jp'},
+      ]
+      for(const {paths,kind} of targets){
+        for(const path of paths){
+          const result=await window.electronAPI.readFile(path)
+          if(result.ok){
+            if(kind==='orig'){ state.origSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
+            else { state.jpSrtPath=path; await loadSrt(path,'jp'); setResult('translate',true,path) }
+            break
+          }
         }
       }
     }

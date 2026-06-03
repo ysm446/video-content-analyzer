@@ -1,6 +1,12 @@
 # 進捗状況
 
-最終更新: 2026-06-02
+最終更新: 2026-06-03
+
+## 字幕 SRT を cache フォルダに集約（2026-06-03 完了）
+- [x] `subtitle.py`: `make_output_path()` を `{stem}.cache/` 配下に、`save_srt()` に親フォルダ自動作成を追加
+- [x] `app.html` `tryAutoLoadSrt()`: cache 内優先＋旧・横置きフォールバック（後方互換）
+- [x] `/translate` は親フォルダ基準のため変更不要、`.gitignore` も基底名一致で対応済み
+- [x] パス生成を venv python で検証（`D:\foo\video.cache\video.original.srt`）
 
 ## Q&A の字幕参照改善（embedding なし・2026-06-02 完了）
 - [x] 長尺で transcript が先頭3000字固定だった問題を、質問キーワードによる関連行抽出で解消
