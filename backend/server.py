@@ -790,6 +790,82 @@ async def translate(req: TranslateRequest):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+@app.post("/refine")
+async def refine(req: TranslateRequest):
+    """
+    原文 SRT を翻訳モデルで保守的に補正し corrected SRT を生成する。
+    タイムスタンプはそのまま保持し、各セグメントのテキストのみ補正する。
+
+    Events:
+      {"status": "loading_model"}          ← Translator モデルが未ロードの場合のみ
+      {"status": "refining", "current": int, "total": int}
+      {"status": "done", "srt_path": str, "total": int}
+      {"status": "error", "message": str}
+    """
+    srt_path = Path(req.srt_path)
+    if not srt_path.exists():
+        raise HTTPException(404, f"SRT ファイルが見つかりません: {srt_path}")
+
+    segments = srt_file_to_segments(str(srt_path))
+    total = len(segments)
+    if total == 0:
+        raise HTTPException(400, f"SRT に有効な字幕セグメントがありません: {srt_path}")
+
+    async def stream():
+        loop = asyncio.get_event_loop()
+        refined = []
+
+        # Translator が未ロードならロード（補正終了後に必ずアンロード）
+        if not translator.loaded:
+            yield sse({"status": "loading_model"})
+            try:
+                await loop.run_in_executor(None, translator.load)
+            except Exception as e:
+                yield sse({"status": "error", "message": str(e)})
+                return
+
+        yield sse({"status": "refining", "current": 0, "total": total})
+
+        # 直前 CONTEXT_WINDOW 件の (原文, 補正) ペアを文脈として保持（語の表記揺れ抑制）
+        CONTEXT_WINDOW = 5
+        context_history: list[tuple[str, str]] = []
+
+        try:
+            for i, seg in enumerate(segments):
+                ctx = context_history[-CONTEXT_WINDOW:] or None
+                try:
+                    fixed = await loop.run_in_executor(
+                        None, translator.refine, seg["text"], ctx
+                    )
+                except Exception as e:
+                    yield sse({"status": "error", "message": str(e)})
+                    return
+
+                if not str(fixed).strip():
+                    fixed = seg["text"]
+
+                context_history.append((seg["text"], fixed))
+                refined.append({**seg, "text": fixed})
+                yield sse({"status": "refining", "current": i + 1, "total": total})
+        finally:
+            # 補正完了（成功・失敗問わず）後に VRAM を解放
+            await loop.run_in_executor(None, translator.unload)
+
+        # corrected.srt を保存
+        # .original.srt → .corrected.srt、それ以外は .corrected.srt を付加
+        stem = srt_path.name
+        if stem.endswith(".original.srt"):
+            out_name = stem.replace(".original.srt", ".corrected.srt")
+        else:
+            out_name = srt_path.stem + ".corrected.srt"
+        out_path = str(srt_path.parent / out_name)
+
+        save_srt(segments_to_srt(refined), out_path)
+        yield sse({"status": "done", "srt_path": out_path, "total": total})
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
 @app.post("/lookup")
 async def lookup(req: LookupRequest):
     """

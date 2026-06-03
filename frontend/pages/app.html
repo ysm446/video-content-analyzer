@@ -377,6 +377,7 @@
                       </div>
                       <div class="detail-action-row secondary">
                         <button class="btn btn-primary detail-action-btn" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
+                        <button class="btn btn-primary detail-action-btn" id="refineBtn" disabled><i data-lucide="spell-check"></i> 補正</button>
                         <button class="btn btn-primary detail-action-btn" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
                         <button class="btn btn-primary detail-action-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
                         <button class="btn detail-action-btn detail-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
@@ -535,7 +536,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,tags:true,scenes:true} }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,tags:true,scenes:true} }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
@@ -545,10 +546,12 @@
 
     function updateProcessButtons(runningKind=null){
       const transcribeBtn=document.getElementById('transcribeBtn')
+      const refineBtn=document.getElementById('refineBtn')
       const translateBtn=document.getElementById('translateBtn')
       if(!transcribeBtn || !translateBtn) return
 
       const transcribeReady=!!state.origSrtPath
+      const refineReady=!!state.correctedSrtPath
       const translateReady=!!state.jpSrtPath
 
       transcribeBtn.classList.toggle('ready', transcribeReady && runningKind!=='transcribe')
@@ -570,7 +573,22 @@
 
       transcribeBtn.title = transcribeReady ? '文字起こし済みです。再実行もできます' : '動画を文字起こしします'
       translateBtn.title = translateReady ? '字幕生成済みです。再実行もできます' : '日本語字幕を生成します'
-      lucide.createIcons({nodes:[transcribeBtn, translateBtn]})
+
+      const refineNodes=[]
+      if(refineBtn){
+        // 補正は文字起こし済みのときだけ実行可能。実行後は corrected.srt を翻訳が使う
+        refineBtn.disabled = !transcribeReady || runningKind==='refine'
+        refineBtn.classList.toggle('ready', refineReady && runningKind!=='refine')
+        refineBtn.classList.toggle('running', runningKind==='refine')
+        refineBtn.innerHTML = refineReady && runningKind!=='refine'
+          ? '<i data-lucide="check"></i> 補正済み'
+          : runningKind==='refine'
+            ? '<i data-lucide="loader-circle"></i> 補正中'
+            : '<i data-lucide="spell-check"></i> 補正'
+        refineBtn.title = refineReady ? '補正済みです。翻訳は補正後の字幕を使います' : '文字起こしをローカルLLMで補正します（任意）'
+        refineNodes.push(refineBtn)
+      }
+      lucide.createIcons({nodes:[transcribeBtn, translateBtn, ...refineNodes]})
     }
 
 
@@ -583,6 +601,7 @@
       document.getElementById('analyzeBtn').disabled = !path
       if(path){
         state.origSrtPath = null
+        state.correctedSrtPath = null
         state.jpSrtPath = null
         state.origTranscript = ''
         state.tocPath = null
@@ -609,7 +628,7 @@
       stopTaskTimer(kind)
     }
     function updateGlobalStatus(kind,stateName,text){
-      const labelMap={transcribe:'文字起こし',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',qa:'チャット',app:'ステータス'}
+      const labelMap={transcribe:'文字起こし',refine:'補正',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',qa:'チャット',app:'ステータス'}
       const dot=document.getElementById('globalStatusDot')
       const label=document.getElementById('globalStatusLabel')
       const body=document.getElementById('globalStatusText')
@@ -1292,8 +1311,10 @@
       const sep=videoFilePath.includes('\\')?'\\':'/'
       const cacheBase=stem+'.cache'+sep+base                   // 例: D:\foo\video.cache\video
       // cache 内を優先し、無ければ旧・横置きにフォールバック（後方互換）
+      // corrected は original の後に処理し、存在すれば表示・翻訳元として original を上書きする
       const targets=[
         {paths:[cacheBase+'.original.srt', stem+'.original.srt'],kind:'orig'},
+        {paths:[cacheBase+'.corrected.srt', stem+'.corrected.srt'],kind:'corrected'},
         {paths:[cacheBase+'.japanese.srt', stem+'.japanese.srt'],kind:'jp'},
       ]
       for(const {paths,kind} of targets){
@@ -1301,11 +1322,13 @@
           const result=await window.electronAPI.readFile(path)
           if(result.ok){
             if(kind==='orig'){ state.origSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
+            else if(kind==='corrected'){ state.correctedSrtPath=path; await loadSrt(path,'orig'); setResult('refine',true,path) }
             else { state.jpSrtPath=path; await loadSrt(path,'jp'); setResult('translate',true,path) }
             break
           }
         }
       }
+      updateProcessButtons()
     }
 
     async function tryAutoLoadCache(videoFilePath){
@@ -1730,11 +1753,28 @@
           if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
           else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
           else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
-          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
+          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; state.correctedSrtPath=null; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
           else if(event.status==='error'){ setResult('transcribe',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`); updateProcessButtons() }
       btn.disabled=!state.videoPath
+      updateProcessButtons()
+    })
+
+    document.getElementById('refineBtn').addEventListener('click',async()=>{
+      if(!state.origSrtPath){ setResult('refine',false,'先に文字起こしを実行してください'); return }
+      const btn=document.getElementById('refineBtn'); btn.disabled=true
+      updateProcessButtons('refine')
+      resetSection('refine'); setProgress('refine',0,'準備中...')
+      try{
+        const res=await fetch(`${API}/refine`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:state.origSrtPath})})
+        await readSSE(res,event=>{
+          if(event.status==='loading_model') setProgress('refine',5,'補正モデルをロード中...')
+          else if(event.status==='refining'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('refine',pct,`補正中 ${event.current}/${event.total}`) }
+          else if(event.status==='done'){ setProgress('refine',100,'完了'); state.correctedSrtPath=event.srt_path; setResult('refine',true,state.correctedSrtPath); updateProcessButtons(); loadSrt(state.correctedSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
+          else if(event.status==='error'){ setResult('refine',false,event.message); updateProcessButtons() }
+        })
+      }catch(e){ setResult('refine',false,`接続エラー: ${e.message}`); updateProcessButtons() }
       updateProcessButtons()
     })
 
@@ -1744,7 +1784,8 @@
       updateProcessButtons('translate')
       resetSection('translate'); setProgress('translate',0,'準備中...')
       try{
-        const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:state.origSrtPath})})
+        const srcSrt=state.correctedSrtPath || state.origSrtPath
+        const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
           else if(event.status==='translating'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('translate',pct,`翻訳中 ${event.current}/${event.total}`) }

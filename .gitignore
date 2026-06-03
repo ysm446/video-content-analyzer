@@ -28,6 +28,7 @@ models/
 
 # ---------- 生成された字幕ファイル（出力物） ----------
 *.original.srt
+*.corrected.srt
 *.japanese.srt
 
 # ---------- テスト用動画 ----------

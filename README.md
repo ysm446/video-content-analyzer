@@ -123,7 +123,8 @@ npm start
 | `GET` | `/models` | 翻訳モデル一覧・状態 |
 | `POST` | `/models` | 翻訳モデル切り替え |
 | `POST` | `/transcribe` | 動画→原文SRT（SSE） |
-| `POST` | `/translate` | 原文SRT→日本語SRT（SSE） |
+| `POST` | `/refine` | 原文SRT→補正SRT（LLM 補正・SSE・任意） |
+| `POST` | `/translate` | 原文/補正SRT→日本語SRT（SSE） |
 | `POST` | `/lookup` | 単語辞書検索 |
 
 ### 動画レビュー
@@ -164,6 +165,7 @@ video.mp4
 ├── video.toc.json           # 保存したチャプター情報
 └── video.cache/
     ├── video.original.srt   # 文字起こし結果
+    ├── video.corrected.srt  # LLM 補正後の字幕（任意・翻訳はこれを優先）
     ├── video.japanese.srt   # 日本語翻訳字幕
     ├── data.json            # 保存後のシーン・メタ・文字起こしキャッシュ
     └── thumbnails/

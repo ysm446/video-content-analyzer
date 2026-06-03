@@ -32,6 +32,17 @@ LOOKUP_SYSTEM_PROMPT = (
     "If the word has multiple common meanings, list up to 2."
 )
 
+# 保守的な ASR 補正。原文の言語・意味・語順を保ち、明らかな認識誤りだけを直す
+REFINE_SYSTEM_PROMPT = (
+    "/no_think\n"
+    "You proofread raw speech-to-text (ASR) subtitle lines. Fix ONLY clear recognition "
+    "errors: misrecognized or homophone words, obvious typos, and missing punctuation or "
+    "capitalization. Keep the original language. Do NOT translate, summarize, paraphrase, "
+    "reorder, add, or remove information, and do not merge or split lines. Preserve the "
+    "wording and meaning as much as possible. If the line already looks correct, output it "
+    "unchanged. Output only the corrected line, with no quotes, labels, or extra text."
+)
+
 
 def available_translator_models() -> list[dict]:
     return catalog_translator_models()
@@ -42,6 +53,7 @@ def get_prompts() -> list[dict]:
     return [
         {"key": "translate", "label": "翻訳（字幕）", "category": "翻訳", "default": SYSTEM_PROMPT},
         {"key": "lookup", "label": "辞書検索", "category": "翻訳", "default": LOOKUP_SYSTEM_PROMPT},
+        {"key": "refine", "label": "文字起こし補正", "category": "翻訳", "default": REFINE_SYSTEM_PROMPT},
     ]
 
 
@@ -175,6 +187,45 @@ class Translator:
 
             from transformers import GenerationConfig
             gen_config = GenerationConfig(do_sample=False, max_new_tokens=256)
+            with torch.no_grad():
+                output_ids = self.model.generate(
+                    **inputs,
+                    generation_config=gen_config,
+                )
+
+            generated_ids = output_ids[0][inputs.input_ids.shape[1]:]
+            result = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+
+        if "</think>" in result:
+            result = result.split("</think>", 1)[-1].strip()
+
+        return result
+
+    def refine(self, text: str, context: list[tuple[str, str]] | None = None) -> str:
+        """ASR 字幕行を保守的に補正する。原文の言語・意味を保ち誤認識だけ直す。"""
+        with self._lock:
+            self._ensure_loaded()
+            messages: list[dict] = [{"role": "system", "content": prompts.resolve("refine", REFINE_SYSTEM_PROMPT)}]
+
+            if context:
+                for orig, fixed in context:
+                    messages.append({"role": "user", "content": f"Correct ASR errors:\n{orig}"})
+                    messages.append({"role": "assistant", "content": fixed})
+
+            messages.append({"role": "user", "content": f"Correct ASR errors:\n{text}"})
+
+            if self._is_gguf_model():
+                return self._chat_llama_cpp(messages, max_tokens=512)
+
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+
+            from transformers import GenerationConfig
+            gen_config = GenerationConfig(do_sample=False, max_new_tokens=512)
             with torch.no_grad():
                 output_ids = self.model.generate(
                     **inputs,

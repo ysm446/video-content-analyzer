@@ -2,6 +2,14 @@
 
 最終更新: 2026-06-03
 
+## 文字起こしのローカル LLM 補正（2026-06-03 完了）
+- [x] `translator.py`: `REFINE_SYSTEM_PROMPT`（保守的）＋ `refine()` 追加、`get_prompts()` に登録
+- [x] `server.py`: `POST /refine`（セグメント単位・時刻保持・前後5件文脈）→ `video.corrected.srt`
+- [x] `app.html`: 「補正」ボタン追加、翻訳は `correctedSrtPath` 優先、再オープン時 corrected 自動検出
+- [x] `.gitignore` に `*.corrected.srt` 追加、生 ASR は残す方針
+- [x] `py_compile` で構文検証OK
+- 未検証: 実モデルでの補正品質（保守性・ハルシネーション有無）は実機確認が必要
+
 ## 字幕 SRT を cache フォルダに集約（2026-06-03 完了）
 - [x] `subtitle.py`: `make_output_path()` を `{stem}.cache/` 配下に、`save_srt()` に親フォルダ自動作成を追加
 - [x] `app.html` `tryAutoLoadSrt()`: cache 内優先＋旧・横置きフォールバック（後方互換）

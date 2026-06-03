@@ -1,6 +1,17 @@
 # 変更履歴
 
 ## 2026-06-03
+- **文字起こしのローカル LLM 補正を追加**: ASR の認識誤りを翻訳用 GGUF テキストモデルで
+  保守的に補正するステップを新設（任意・字幕生成の前段）
+  - `translator.py`: `REFINE_SYSTEM_PROMPT`（明らかな誤認識・誤字・句読点のみ直し、言語/意味/
+    語順は保持）と `refine()` メソッドを追加。`get_prompts()` に `refine` を登録し設定画面で閲覧可
+  - `server.py`: `POST /refine` を追加。`/translate` と同型で**セグメント単位に補正＋時刻はそのまま
+    保持**（前後5件を文脈として渡す）。出力は `video.cache/video.corrected.srt`
+  - `app.html`: 「補正」ボタン（`refineBtn`）を文字起こし⇄字幕生成の間に追加。
+    補正後は翻訳が `correctedSrtPath` を優先使用。再オープン時は `tryAutoLoadSrt` が
+    `corrected.srt` を自動検出して表示・翻訳元に採用。補正実行で `transcript` キャッシュも更新
+  - `.gitignore` に `*.corrected.srt` を追加
+  - 生 ASR（`original.srt`）は残すため、補正が不適切でも元に戻せる
 - **字幕 SRT を `{動画名}.cache/` に集約**: これまで動画の横に出力していた
   `video.original.srt` / `video.japanese.srt` を、解析成果物として cache フォルダ内に保存
   - `subtitle.py`: `make_output_path()` を `{stem}.cache/{stem}.{suffix}.srt` に変更。
