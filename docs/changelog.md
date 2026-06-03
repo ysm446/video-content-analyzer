@@ -1,6 +1,16 @@
 # 変更履歴
 
 ## 2026-06-03
+- **動画分析に「内容のまとめ」(detail) を追加**: 概要（1〜2文）とは別に、内容を詳しく
+  まとめた `detail` を生成し、概要の下に折りたたみセクションで表示
+  - `video_reviewer.py`: `_ANALYZE_JSON_FORMAT` に `detail` を追加、分析指示文（visual/audio）に
+    「detail は概要より詳しく要点ごとに」を明記、`_salvage_analysis_fields` も `detail` を抽出
+  - `server.py`: `/review/analyze` の result に `detail` を追加。`UISettings` に
+    `analysis_detail_expanded`（既定 false=折りたたみ）を追加し GET/POST で永続化
+  - `app.html`: 概要の下に「内容のまとめ」セクション（`detailSection`、既定折りたたみ）を追加。
+    `detail` を `meta` 経由で受け渡し（`buildTocFromAnalysis` / `analysisFromTocData` /
+    キャッシュ load）、Markdown で描画。値が空のときはセクション非表示
+  - 既存キャッシュ（detail なし）は非表示になるだけで影響なし
 - **文字起こしのローカル LLM 補正を追加**: ASR の認識誤りを翻訳用 GGUF テキストモデルで
   保守的に補正するステップを新設（任意・字幕生成の前段）
   - `translator.py`: `REFINE_SYSTEM_PROMPT`（明らかな誤認識・誤字・句読点のみ直し、言語/意味/

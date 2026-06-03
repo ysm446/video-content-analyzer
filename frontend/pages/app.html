@@ -354,6 +354,15 @@
                     <div class="summary-text" id="summaryText"></div>
                   </div>
                 </section>
+                <section class="analysis-section" id="detailSection" style="display:none">
+                  <button class="analysis-toggle" id="detailToggleBtn" type="button" aria-expanded="false">
+                    <span class="analysis-toggle-label">内容のまとめ</span>
+                    <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
+                  </button>
+                  <div class="analysis-section-body" id="detailSectionBody">
+                    <div class="summary-text" id="detailText"></div>
+                  </div>
+                </section>
                 <section class="analysis-section">
                   <button class="analysis-toggle" id="tagsToggleBtn" type="button" aria-expanded="true">
                     <span class="analysis-toggle-label">タグ</span>
@@ -536,7 +545,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,tags:true,scenes:true} }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true} }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
@@ -772,10 +781,12 @@
       state.openSceneMenuId = null
       state.editingSceneId = null
       document.getElementById('summaryToggleBtn').closest('.analysis-section').style.display = 'none'
+      document.getElementById('detailSection').style.display = 'none'
       document.getElementById('tagsToggleBtn').closest('.analysis-section').style.display = 'none'
       document.getElementById('actionsToggleBtn').closest('.analysis-section').style.display = ''
       document.getElementById('genreTag').textContent = ''
       document.getElementById('summaryText').textContent = ''
+      document.getElementById('detailText').innerHTML = ''
       document.getElementById('scenesList').innerHTML = ''
       document.getElementById('tagsWrap').innerHTML = ''
       updateTocSaveButton()
@@ -813,6 +824,7 @@
       const keyMap={
         actions:'analysis_actions_expanded',
         summary:'analysis_summary_expanded',
+        detail:'analysis_detail_expanded',
         tags:'analysis_tags_expanded',
         scenes:'analysis_scenes_expanded',
       }
@@ -850,6 +862,18 @@
       setAnalysisSectionExpanded('scenes', state.analysisExpanded.scenes !== false)
       document.getElementById('genreTag').textContent = result.genre || '不明'
       document.getElementById('summaryText').textContent = result.summary || ''
+      // 内容のまとめ（detail）: 値があるときだけセクションを表示。Markdown で描画
+      const detailText = (result.detail || '').trim()
+      const detailSection = document.getElementById('detailSection')
+      const detailEl = document.getElementById('detailText')
+      if(detailText){
+        detailSection.style.display = ''
+        detailEl.innerHTML = renderMarkdown(detailText)
+        setAnalysisSectionExpanded('detail', state.analysisExpanded.detail === true)
+      }else{
+        detailSection.style.display = 'none'
+        detailEl.innerHTML = ''
+      }
       const tocRows=Array.isArray(state.tocData?.toc) ? state.tocData.toc : []
       const cachedScenes=Array.isArray(state.tocData?.scenes) ? state.tocData.scenes : []
       const sceneRows=(tocRows.length ? tocRows.map((ch,idx)=>({
@@ -999,6 +1023,7 @@
       return {
         genre: meta.genre || '目次',
         summary: meta.summary || `目次 ${toc.length} 件`,
+        detail: meta.detail || '',
         tags: Array.isArray(meta.tags)?meta.tags:[],
         scenes: toc.map(ch=>({
           timestamp: ch.timestamp || fmtTs(ch.start_sec||0),
@@ -1034,6 +1059,7 @@
         meta:{
           genre:result?.genre||'不明',
           summary:result?.summary||'',
+          detail:result?.detail||'',
           tags:Array.isArray(result?.tags)?result.tags:[],
         },
         toc,
@@ -1338,7 +1364,7 @@
         if(res.ok){
           const {data}=await res.json()
           if(data.transcript) state.origTranscript=data.transcript
-          const analysisResult={genre:data.meta?.genre, summary:data.meta?.summary, tags:data.meta?.tags||[], scenes:data.scenes||[]}
+          const analysisResult={genre:data.meta?.genre, summary:data.meta?.summary, detail:data.meta?.detail||'', tags:data.meta?.tags||[], scenes:data.scenes||[]}
           renderTocDetail({...data, toc:data.toc||[], bookmarks:data.bookmarks||[]})
           renderAnalysisDetail(analysisResult)
           state.tocDirty=false
@@ -1390,6 +1416,7 @@
       state.jpSrtPath=p; await loadSrt(p,'jp'); setResult('translate',true,p)
     })
     document.getElementById('summaryToggleBtn').addEventListener('click',()=>toggleAnalysisSection('summary'))
+    document.getElementById('detailToggleBtn').addEventListener('click',()=>toggleAnalysisSection('detail'))
     document.getElementById('tagsToggleBtn').addEventListener('click',()=>toggleAnalysisSection('tags'))
     document.getElementById('scenesToggleBtn').addEventListener('click',()=>toggleAnalysisSection('scenes'))
     document.getElementById('actionsToggleBtn').addEventListener('click',()=>toggleAnalysisSection('actions'))
@@ -1635,6 +1662,7 @@
         state.showQaPanel = s.show_qa_panel !== false
         state.analysisExpanded.actions = s.analysis_actions_expanded !== false
         state.analysisExpanded.summary = s.analysis_summary_expanded !== false
+        state.analysisExpanded.detail = s.analysis_detail_expanded === true
         state.analysisExpanded.tags = s.analysis_tags_expanded !== false
         state.analysisExpanded.scenes = s.analysis_scenes_expanded !== false
         outputLangSel.value=(s.output_lang==='en')?'en':'ja'

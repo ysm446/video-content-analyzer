@@ -2,6 +2,13 @@
 
 最終更新: 2026-06-03
 
+## 動画分析「内容のまとめ」(detail) 追加（2026-06-03 完了）
+- [x] `video_reviewer.py`: JSON スキーマ・指示文・salvage に `detail` を追加
+- [x] `server.py`: `/review/analyze` result に `detail`、UISettings に `analysis_detail_expanded`（既定 false）
+- [x] `app.html`: 概要の下に折りたたみ「内容のまとめ」セクション、meta 経由で受け渡し・Markdown 描画
+- [x] 空のときはセクション非表示、既存キャッシュは影響なし、`py_compile` OK
+- 未検証: 実モデルが detail を期待どおり充実して出力するかは実機確認が必要
+
 ## 文字起こしのローカル LLM 補正（2026-06-03 完了）
 - [x] `translator.py`: `REFINE_SYSTEM_PROMPT`（保守的）＋ `refine()` 追加、`get_prompts()` に登録
 - [x] `server.py`: `POST /refine`（セグメント単位・時刻保持・前後5件文脈）→ `video.corrected.srt`

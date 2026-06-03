@@ -35,6 +35,7 @@ ANALYZE_SYSTEM = (
 _ANALYZE_JSON_FORMAT = (
     "{\n"
     '  "summary": "動画全体の概要（1〜2文）",\n'
+    '  "detail": "動画の内容のまとめ（何が起きるか・要点を複数文または箇条書きで詳しく）",\n'
     '  "scenes": [\n'
     '    {"timestamp": "0:00", "label": "場面のタイトル", "description": "1文で短く説明"},\n'
     '    {"timestamp": "1:30", "label": "場面のタイトル", "description": "1文で短く説明"}\n'
@@ -53,6 +54,8 @@ _ANALYZE_INSTR_VISUAL = (
     "提供されたフレーム数を参考に場面分けしてください（目安: 6〜8場面）。"
     "label には場面の内容を表す短いタイトルを付けてください。"
     "description は各場面につき1文だけ、短く書いてください。"
+    "summary は1〜2文の概要、detail は動画全体の内容のまとめを概要より詳しく"
+    "（要点ごとに複数文または箇条書きで）書いてください。"
 )
 
 _ANALYZE_INSTR_AUDIO = (
@@ -62,6 +65,8 @@ _ANALYZE_INSTR_AUDIO = (
     "scenes は映像や音声の内容・雰囲気が変わるたびに新しい場面として追加してください（目安: 6〜8場面）。"
     "label には場面の内容を表す短いタイトルを付けてください。"
     "description は各場面につき1文だけ、短く書いてください。"
+    "summary は1〜2文の概要、detail は映像と音声を総合した内容のまとめを概要より詳しく"
+    "（要点ごとに複数文または箇条書きで）書いてください。"
 )
 
 # refine パス用: summary/tags/genre は不要で scenes のみ欲しい場合に使う
@@ -236,11 +241,14 @@ class VideoReviewer:
     @classmethod
     def _salvage_analysis_fields(cls, raw: str) -> dict:
         summary = ""
+        detail = ""
         genre = ""
         tags: list[str] = []
 
         if m := re.search(r'"summary"\s*:\s*"((?:\\.|[^"\\])*)"', raw, flags=re.S):
             summary = cls._decode_json_string(m.group(1)).strip()
+        if m := re.search(r'"detail"\s*:\s*"((?:\\.|[^"\\])*)"', raw, flags=re.S):
+            detail = cls._decode_json_string(m.group(1)).strip()
         if m := re.search(r'"genre"\s*:\s*"((?:\\.|[^"\\])*)"', raw, flags=re.S):
             genre = cls._decode_json_string(m.group(1)).strip()
         if m := re.search(r'"tags"\s*:\s*\[(.*?)\]', raw, flags=re.S):
@@ -251,6 +259,7 @@ class VideoReviewer:
 
         return {
             "summary": summary or "分析結果のJSONを最後まで生成できませんでした。",
+            "detail": detail,
             "scenes": [],
             "tags": tags,
             "genre": genre or "不明",

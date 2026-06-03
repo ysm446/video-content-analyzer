@@ -129,7 +129,8 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   "transcript": "文字起こし全文テキスト",
   "meta": {
     "genre": "ジャンル",
-    "summary": "動画全体の概要",
+    "summary": "動画全体の概要（1〜2文）",
+    "detail": "内容のまとめ（概要より詳しい複数文／箇条書き）",
     "tags": ["タグ1", "タグ2"]
   },
   "scenes": [
@@ -161,7 +162,7 @@ asr_done         → 書き起こし完了 {chars: int}
 loading_model    → VL モデルが未ロードの場合のみ
 extracting_frames
 analyzing        → {count, interval, duration}
-done             → {result: {summary, scenes, tags, genre}, meta, transcript}
+done             → {result: {summary, detail, scenes, tags, genre}, meta, transcript}
 error            → {message}
 ```
 

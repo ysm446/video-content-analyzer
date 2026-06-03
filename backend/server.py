@@ -424,6 +424,7 @@ class UISettingsRequest(BaseModel):
     subtitle_font: Optional[str] = None  # "noto" | "biz" | "yugothic" | "meiryo"
     analysis_actions_expanded: Optional[bool] = None
     analysis_summary_expanded: Optional[bool] = None
+    analysis_detail_expanded: Optional[bool] = None
     analysis_tags_expanded: Optional[bool] = None
     analysis_scenes_expanded: Optional[bool] = None
     show_analysis_panel: Optional[bool] = None
@@ -592,6 +593,7 @@ def get_ui_settings():
         "subtitle_font": s.get("subtitle_font", "noto"),
         "analysis_actions_expanded": s.get("analysis_actions_expanded", True),
         "analysis_summary_expanded": s.get("analysis_summary_expanded", True),
+        "analysis_detail_expanded": s.get("analysis_detail_expanded", False),
         "analysis_tags_expanded": s.get("analysis_tags_expanded", True),
         "analysis_scenes_expanded": s.get("analysis_scenes_expanded", True),
         "show_analysis_panel": s.get("show_analysis_panel", True),
@@ -620,6 +622,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["analysis_actions_expanded"] = bool(req.analysis_actions_expanded)
     if req.analysis_summary_expanded is not None:
         to_save["analysis_summary_expanded"] = bool(req.analysis_summary_expanded)
+    if req.analysis_detail_expanded is not None:
+        to_save["analysis_detail_expanded"] = bool(req.analysis_detail_expanded)
     if req.analysis_tags_expanded is not None:
         to_save["analysis_tags_expanded"] = bool(req.analysis_tags_expanded)
     if req.analysis_scenes_expanded is not None:
@@ -1044,6 +1048,7 @@ async def review_analyze(req: ReviewRequest):
 
             result = {
                 "summary": coarse_result.get("summary", ""),
+                "detail": coarse_result.get("detail", ""),
                 "genre": coarse_result.get("genre", "不明"),
                 "tags": coarse_result.get("tags", []),
                 "scenes": [
