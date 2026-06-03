@@ -49,6 +49,9 @@
     .status-bar-dot.error{background:var(--error)}
     .status-bar-label{color:var(--text);white-space:nowrap}
     .status-bar-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .status-stop-btn{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border:1px solid rgba(229,83,75,.5);border-radius:4px;background:transparent;color:#e5534b;font-size:11px;cursor:pointer;flex-shrink:0}
+    .status-stop-btn:hover{background:rgba(229,83,75,.14)}
+    .status-stop-btn svg{width:12px;height:12px}
     .status-bar-sysinfo{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0;font-size:11px;color:var(--text-dim);white-space:nowrap}
     .sysinfo-item{display:flex;align-items:center;gap:5px}
     .sysinfo-label{opacity:.65}
@@ -515,6 +518,7 @@
     <span class="status-bar-dot" id="globalStatusDot"></span>
     <span class="status-bar-label" id="globalStatusLabel">ステータス</span>
     <span class="status-bar-text" id="globalStatusText">待機中</span>
+    <button class="status-stop-btn" id="cancelBtn" type="button" style="display:none" title="実行中の処理を中止"><i data-lucide="square"></i> 中止</button>
     <span class="status-bar-sysinfo" id="sysInfo"></span>
   </div>
 
@@ -758,6 +762,38 @@
           }
         }
       }
+    }
+
+    // ---- 実行中処理の中止 ----
+    // POST /cancel でバックエンドにフラグを立て、推論ループが安全に停止してから
+    // unload する（推論中 unload による事故を避けるため fetch の abort は使わない）。
+    // 停止すると SSE で {status:'canceled'} が届き、各ハンドラが markCanceled する。
+    let _runningJobs = 0
+    function updateCancelButton(){
+      const btn=document.getElementById('cancelBtn')
+      if(btn) btn.style.display = _runningJobs>0 ? '' : 'none'
+    }
+    function beginCancelable(){
+      _runningJobs++
+      const btn=document.getElementById('cancelBtn')
+      if(btn) btn.disabled=false
+      updateCancelButton()
+      return null
+    }
+    function endCancelable(){
+      _runningJobs=Math.max(0,_runningJobs-1)
+      updateCancelButton()
+    }
+    async function cancelAllProcesses(){
+      const btn=document.getElementById('cancelBtn')
+      if(btn){ btn.disabled=true }
+      updateGlobalStatus('app','running','中止しています...')
+      try{ await fetch(`${API}/cancel`,{method:'POST'}) }catch{}
+    }
+    // ユーザー操作による中止時の表示（赤いエラーではなく中立表示にする）
+    function markCanceled(kind){
+      resetSection(kind)
+      updateGlobalStatus(kind,'','中止しました')
     }
 
     function escHtml(str){
@@ -1775,16 +1811,19 @@
       const btn=document.getElementById('transcribeBtn'); btn.disabled=true
       updateProcessButtons('transcribe')
       resetSection('transcribe'); setProgress('transcribe',5,'準備中...')
+      const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,language:null})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
           else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
           else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
+          else if(event.status==='canceled'){ markCanceled('transcribe'); updateProcessButtons() }
           else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; state.correctedSrtPath=null; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
           else if(event.status==='error'){ setResult('transcribe',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`); updateProcessButtons() }
+      finally{ endCancelable(ac) }
       btn.disabled=!state.videoPath
       updateProcessButtons()
     })
@@ -1794,15 +1833,18 @@
       const btn=document.getElementById('refineBtn'); btn.disabled=true
       updateProcessButtons('refine')
       resetSection('refine'); setProgress('refine',0,'準備中...')
+      const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/refine`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:state.origSrtPath})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('refine',5,'補正モデルをロード中...')
           else if(event.status==='refining'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('refine',pct,`補正中 ${event.current}/${event.total}`) }
+          else if(event.status==='canceled'){ markCanceled('refine'); updateProcessButtons() }
           else if(event.status==='done'){ setProgress('refine',100,'完了'); state.correctedSrtPath=event.srt_path; setResult('refine',true,state.correctedSrtPath); updateProcessButtons(); loadSrt(state.correctedSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
           else if(event.status==='error'){ setResult('refine',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('refine',false,`接続エラー: ${e.message}`); updateProcessButtons() }
+      finally{ endCancelable(ac) }
       updateProcessButtons()
     })
 
@@ -1811,16 +1853,19 @@
       const btn=document.getElementById('translateBtn'); btn.disabled=true
       updateProcessButtons('translate')
       resetSection('translate'); setProgress('translate',0,'準備中...')
+      const ac=beginCancelable()
       try{
         const srcSrt=state.correctedSrtPath || state.origSrtPath
         const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
           else if(event.status==='translating'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('translate',pct,`翻訳中 ${event.current}/${event.total}`) }
+          else if(event.status==='canceled'){ markCanceled('translate'); updateProcessButtons() }
           else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); updateProcessButtons(); loadSrt(state.jpSrtPath,'jp') }
           else if(event.status==='error'){ setResult('translate',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('translate',false,`接続エラー: ${e.message}`); updateProcessButtons() }
+      finally{ endCancelable(ac) }
       btn.disabled=false
       updateProcessButtons()
     })
@@ -1829,6 +1874,7 @@
       if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
       resetSection('analyze')
+      const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang()})})
         await readSSE(res,event=>{
@@ -1849,9 +1895,11 @@
             markTocDraftDirty()
             fetchReviewModelStatus()
           }
+          else if(event.status==='canceled'){ markCanceled('analyze') }
           else if(event.status==='error'){ setResult('analyze',false,event.message) }
         })
       }catch(e){ setResult('analyze',false,`接続エラー: ${e.message}`) }
+      finally{ endCancelable(ac) }
       btn.disabled=!state.videoPath
     })
 
@@ -1902,6 +1950,7 @@
         elapsed.textContent=`${label}: ${s}秒`
       }
 
+      const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode()})})
         await readSSE(res,event=>{
@@ -1935,15 +1984,21 @@
             stopQaTimer('完了')
             updateGlobalStatus('qa','done','回答を生成しました')
           }
+          else if(event.status==='canceled'){
+            if(qaRaw.trim().length===0){ thinking.textContent='中止しました'; thinking.style.display='' }
+            stopQaTimer('中止'); updateGlobalStatus('qa','','中止しました')
+          }
           else if(event.status==='error'){ thinking.textContent='❌ '+event.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',event.message) }
         })
       }catch(e){ thinking.textContent='❌ 接続エラー: '+e.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',`接続エラー: ${e.message}`) }
+      finally{ endCancelable(ac) }
 
       qaBtn.disabled=false
     }
 
     qaBtn.addEventListener('click',submitQuestion)
     qaInput.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.isComposing) submitQuestion() })
+    document.getElementById('cancelBtn').addEventListener('click',cancelAllProcesses)
     document.getElementById('clearHistoryBtn').addEventListener('click',()=>{
       const ph=document.getElementById('qaPlaceholder')
       qaHistory.innerHTML=''

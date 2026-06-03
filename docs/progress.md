@@ -2,6 +2,15 @@
 
 最終更新: 2026-06-03
 
+## 実行中処理の中止ボタン（進行中の推論も即停止・2026-06-03 完了）
+- [x] `backend/cancel.py`: グローバル中断フラグ（Event）＋ `CanceledError`
+- [x] `server.py`: `POST /cancel`、各ハンドラで `clear_cancel()`＋`CanceledError`→`canceled` 送出
+- [x] `llama_server.py`: `chat()` ストリーミング化、トークン行ごとに中断確認→接続クローズで生成停止
+- [x] `asr.py`: セグメント走査で中断確認
+- [x] `app.html`: 中止ボタンは `POST /cancel` 方式（fetch abort はしない＝推論中 unload 事故回避）
+- [x] `py_compile` / 実 import / フラグ動作を検証
+- 既知の制約: プロンプト処理中（最初のトークン前）は反映されず、生成開始後にほぼ即停止
+
 ## 動画分析「内容のまとめ」(detail) 追加（2026-06-03 完了）
 - [x] `video_reviewer.py`: JSON スキーマ・指示文・salvage に `detail` を追加
 - [x] `server.py`: `/review/analyze` result に `detail`、UISettings に `analysis_detail_expanded`（既定 false）

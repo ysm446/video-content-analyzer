@@ -27,6 +27,7 @@ from .translator import Translator, available_translator_models, get_prompts as 
 from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_output_path, split_long_segments
 from .video_reviewer import VideoReviewer, available_review_models, get_prompts as _review_prompts
 from . import prompts as _prompts
+from . import cancel
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -477,6 +478,17 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/cancel")
+def cancel_processing():
+    """実行中の処理（文字起こし・補正・字幕生成・分析・Q&A）の中断を要求する。
+
+    推論ループ側が中断フラグをポーリングし、安全に停止してから
+    （モデルを使い終えてから）unload する。
+    """
+    cancel.request_cancel()
+    return {"status": "ok"}
+
+
 @app.get("/prompts")
 def list_prompts():
     """システムプロンプト一覧を返す。editable 項目には presets / active を含む。"""
@@ -684,6 +696,7 @@ async def transcribe(req: TranscribeRequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
 
         # ASR モデルが未ロードならロード（使用後は解放するため毎回必要になることがある）
         if asr.model is None:
@@ -699,11 +712,14 @@ async def transcribe(req: TranscribeRequest):
             segments = await loop.run_in_executor(
                 None, asr.transcribe, str(video_path), req.language
             )
+        except cancel.CanceledError:
+            yield sse({"status": "canceled"})
+            return
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
             return
         finally:
-            # 文字起こし完了（成功・失敗問わず）後に VRAM を解放
+            # 文字起こし完了（成功・失敗・中断問わず）後に VRAM を解放
             await loop.run_in_executor(None, asr.unload)
 
         segments = split_long_segments(segments)
@@ -741,6 +757,7 @@ async def translate(req: TranslateRequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
         translated = []
 
         # Translator が未ロードならロード（翻訳終了後に必ずアンロード）
@@ -765,6 +782,9 @@ async def translate(req: TranslateRequest):
                     jp_text = await loop.run_in_executor(
                         None, translator.translate, seg["text"], ctx
                     )
+                except cancel.CanceledError:
+                    yield sse({"status": "canceled"})
+                    return
                 except Exception as e:
                     yield sse({"status": "error", "message": str(e)})
                     return
@@ -776,7 +796,7 @@ async def translate(req: TranslateRequest):
                 translated.append({**seg, "text": jp_text})
                 yield sse({"status": "translating", "current": i + 1, "total": total})
         finally:
-            # 翻訳完了（成功・失敗問わず）後に VRAM を解放
+            # 翻訳完了（成功・失敗・中断問わず）後に VRAM を解放
             await loop.run_in_executor(None, translator.unload)
 
         # japanese.srt を保存
@@ -817,6 +837,7 @@ async def refine(req: TranslateRequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
         refined = []
 
         # Translator が未ロードならロード（補正終了後に必ずアンロード）
@@ -841,6 +862,9 @@ async def refine(req: TranslateRequest):
                     fixed = await loop.run_in_executor(
                         None, translator.refine, seg["text"], ctx
                     )
+                except cancel.CanceledError:
+                    yield sse({"status": "canceled"})
+                    return
                 except Exception as e:
                     yield sse({"status": "error", "message": str(e)})
                     return
@@ -852,7 +876,7 @@ async def refine(req: TranslateRequest):
                 refined.append({**seg, "text": fixed})
                 yield sse({"status": "refining", "current": i + 1, "total": total})
         finally:
-            # 補正完了（成功・失敗問わず）後に VRAM を解放
+            # 補正完了（成功・失敗・中断問わず）後に VRAM を解放
             await loop.run_in_executor(None, translator.unload)
 
         # corrected.srt を保存
@@ -958,6 +982,7 @@ async def review_analyze(req: ReviewRequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
         transcript = req.transcript
         plan = _analysis_plan(req.analysis_mode, req.max_frames)
 
@@ -994,6 +1019,9 @@ async def review_analyze(req: ReviewRequest):
                 coarse_result = await loop.run_in_executor(
                     None, video_reviewer.analyze_frames, frames, transcript, meta.get("timestamps", []), req.output_lang
                 )
+            except cancel.CanceledError:
+                yield sse({"status": "canceled"})
+                return
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
@@ -1034,6 +1062,8 @@ async def review_analyze(req: ReviewRequest):
                             r_result, start, end, duration
                         )
                         refined_entries.extend(rel_entries)
+                    except cancel.CanceledError:
+                        raise
                     except Exception as e:
                         yield sse({
                             "status": "refine_warning",
@@ -1064,6 +1094,9 @@ async def review_analyze(req: ReviewRequest):
 
             video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
+        except cancel.CanceledError:
+            yield sse({"status": "canceled"})
+            return
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
             return
@@ -1091,6 +1124,7 @@ async def review_qa(req: QARequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
 
         if not video_reviewer.loaded:
             yield sse({"status": "loading_model"})
@@ -1141,6 +1175,8 @@ async def review_qa(req: QARequest):
                 )
                 answer = video_reviewer._clean_generated_text("".join(parts))
                 q.put(("done", json.dumps({"answer": answer, "meta": answer_meta}, ensure_ascii=False)))
+            except cancel.CanceledError:
+                q.put(("canceled", ""))
             except Exception as e:
                 q.put(("error", str(e)))
 
@@ -1155,6 +1191,9 @@ async def review_qa(req: QARequest):
             elif status == "done":
                 done_payload = json.loads(payload)
                 yield sse({"status": "done", "answer": done_payload.get("answer", ""), "meta": done_payload.get("meta", {})})
+                break
+            elif status == "canceled":
+                yield sse({"status": "canceled"})
                 break
             else:
                 yield sse({"status": "error", "message": payload})
@@ -1262,6 +1301,8 @@ async def review_build_toc(req: TOCBuildRequest):
                             r_result, start, end, duration
                         )
                         refined_entries.extend(rel_entries)
+                    except cancel.CanceledError:
+                        raise
                     except Exception as e:
                         yield sse({
                             "status": "refine_warning",

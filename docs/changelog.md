@@ -1,6 +1,22 @@
 # 変更履歴
 
 ## 2026-06-03
+- **実行中処理の「中止」ボタンを追加（進行中の推論も即停止）**: 文字起こし・補正・字幕生成・
+  動画分析・Q&A の SSE 処理を、進行中の推論ごと中断できるようにした
+  - `backend/cancel.py`（新規）: 単一ユーザー前提のグローバル `threading.Event`。
+    `request_cancel`/`clear_cancel`/`is_canceled`/`raise_if_canceled` と `CanceledError`
+  - `server.py`: `POST /cancel` を追加。各 SSE ハンドラは開始時に `clear_cancel()`、
+    推論呼び出しの `CanceledError` を捕捉して `{status:'canceled'}` を送出（VRAM は `finally` で解放）
+  - `llama_server.py`: `chat()` をストリーミング受信に変更し、`stream_chat_with_meta()` と共に
+    トークン行ごとに `is_canceled()` を確認。中断時は HTTP 接続を閉じて llama-server の生成を止め
+    `CanceledError` を送出（翻訳・補正・辞書・VL 分析・Q&A をカバー）
+  - `asr.py`: 書き起こしの遅延ジェネレータ走査でセグメントごとに `raise_if_canceled()`
+  - `app.html`: ステータスバー右側に「中止」ボタン（実行中のみ表示）。`AbortController` ではなく
+    `POST /cancel` を呼ぶ方式に変更（推論が安全に止まってから unload するため、特に ASR の
+    CTranslate2 モデルを推論中に `del` してクラッシュする事故を回避）。`canceled` 受信で
+    「中止しました」と中立表示（`markCanceled`）
+  - 制約: プロンプト処理中（最初のトークン生成前。多フレーム VL 等）はトークン行が来ないため、
+    最初のトークンが出るまで中断は反映されない。生成が始まればほぼ即停止
 - **動画分析に「内容のまとめ」(detail) を追加**: 概要（1〜2文）とは別に、内容を詳しく
   まとめた `detail` を生成し、概要の下に折りたたみセクションで表示
   - `video_reviewer.py`: `_ANALYZE_JSON_FORMAT` に `detail` を追加、分析指示文（visual/audio）に

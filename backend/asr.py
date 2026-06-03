@@ -11,6 +11,8 @@ import site
 
 import re
 
+from . import cancel
+
 # モデル名: large-v3-turbo（高速）。精度重視なら WHISPER_MODEL=large-v3 で上書き可。
 MODEL_ID = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 # モデルキャッシュ先（HF_HOME と同じ models/ 配下に置く）
@@ -104,8 +106,11 @@ class ASRProcessor:
             vad_filter=True,
         )
 
+        # segments は遅延ジェネレータ（反復で実際の書き起こしが進む）。
+        # セグメントごとに中断要求を確認し、要求があれば即座に中断する。
         result: list[dict] = []
         for seg in segments:
+            cancel.raise_if_canceled()
             words = list(seg.words or [])
             if words:
                 result.extend(self._words_to_segments(words))

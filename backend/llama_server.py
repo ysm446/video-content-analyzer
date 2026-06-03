@@ -17,6 +17,8 @@ from urllib import error, request
 
 import torch
 
+from . import cancel
+
 LLAMA_CPP_DIR = Path(os.environ.get(
     "LLAMA_CPP_DIR",
     str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8763-bin-win-cuda-13.1-x64"),
@@ -188,35 +190,8 @@ class LlamaServerManager:
     # ------------------------------------------------------------------ #
     #  推論
     # ------------------------------------------------------------------ #
-    def chat(self, model_id: str, messages: list[dict], max_tokens: int) -> str:
-        self.ensure_model(model_id)
-        payload = {
-            "messages": messages,
-            "think": False,
-            "temperature": 0,
-            "top_p": 1,
-            "max_tokens": max_tokens,
-            "cache_prompt": True,
-            "stream": False,
-        }
-        try:
-            response = self._request_json("POST", "/v1/chat/completions", payload=payload, timeout=300.0)
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"{self._label} llama-cpp サーバーに接続できません: {exc}") from exc
-        choices = response.get("choices") or []
-        if not choices:
-            raise RuntimeError("llama-cpp API の応答に choices がありません")
-        message = choices[0].get("message") or {}
-        content = message.get("content", "")
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return str(content).strip()
-
-    def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int):
-        self.ensure_model(model_id)
+    def _open_stream(self, messages: list[dict], max_tokens: int):
+        """/v1/chat/completions をストリーミングで開き、HTTPResponse を返す。"""
         payload = {
             "messages": messages,
             "think": False,
@@ -232,11 +207,51 @@ class LlamaServerManager:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
+        return request.urlopen(req, timeout=300.0)
+
+    def chat(self, model_id: str, messages: list[dict], max_tokens: int) -> str:
+        # 中断に即応するため非ストリーミングではなくストリーミングで受信し、
+        # トークン行ごとに cancel.is_canceled() を確認する。中断時は接続を閉じて
+        # llama-server の生成を止め、CanceledError を送出する。
+        self.ensure_model(model_id)
+        cancel.raise_if_canceled()
+        parts: list[str] = []
+        try:
+            with self._open_stream(messages, max_tokens) as resp:
+                for raw_line in resp:
+                    if cancel.is_canceled():
+                        resp.close()
+                        raise cancel.CanceledError()
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    event = json.loads(data)
+                    for choice in event.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            parts.append(content)
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"{self._label} llama-cpp サーバーに接続できません: {exc}") from exc
+        return "".join(parts).strip()
+
+    def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int):
+        self.ensure_model(model_id)
+        cancel.raise_if_canceled()
         usage: dict | None = None
         finish_reason: str | None = None
         try:
-            with request.urlopen(req, timeout=300.0) as resp:
+            with self._open_stream(messages, max_tokens) as resp:
                 for raw_line in resp:
+                    if cancel.is_canceled():
+                        resp.close()
+                        raise cancel.CanceledError()
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line.startswith("data:"):
                         continue

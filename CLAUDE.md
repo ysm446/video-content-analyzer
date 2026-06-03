@@ -91,6 +91,7 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### 字幕生成
 - `GET  /health` — 起動確認
+- `POST /cancel` — 実行中処理の中断要求（全 SSE 処理共通。`backend/cancel.py` のフラグを立てる）
 - `GET  /models` — 翻訳モデル一覧・状態
 - `POST /models` — 翻訳モデル切り替え（`{translator: model_id}`）
 - `POST /transcribe` — 動画→原文SRT（SSE）
@@ -162,6 +163,7 @@ asr_done         → 書き起こし完了 {chars: int}
 loading_model    → VL モデルが未ロードの場合のみ
 extracting_frames
 analyzing        → {count, interval, duration}
+canceled         → ユーザーが POST /cancel で中断したとき
 done             → {result: {summary, detail, scenes, tags, genre}, meta, transcript}
 error            → {message}
 ```
@@ -171,9 +173,12 @@ error            → {message}
 loading_model
 extracting_frames
 answering        → {count}
+canceled         → ユーザーが POST /cancel で中断したとき
 done             → {answer}
 error            → {message}
 ```
+
+※ `canceled` は `/transcribe` `/refine` `/translate` `/review/analyze` `/review/qa` 共通の中断イベント。
 
 ## 依存パッケージの注意点
 
@@ -225,6 +230,7 @@ video.mp4
 | 左サイドバー | ページ切り替え（プレイヤー / 設定）+ モデル管理ボタン |
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
+| 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |
 | Ctrl+R / F5 | 開発用リロードショートカット（main.js で登録） |
 
 ## アイコン
