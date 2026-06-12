@@ -2,6 +2,13 @@
 
 最終更新: 2026-06-12
 
+## チャプター保存を cache に一本化（2026-06-12 完了）
+- [x] `.toc.json` の書き込みを廃止（保存は `video.cache/data.json` のみ）
+- [x] `POST /review/toc/save` / `POST /review/toc/build`（フロント未使用のレガシー）を削除
+- [x] `POST /review/toc/load` は旧 `.toc.json` の読み取り専用フォールバックとして存続
+- [x] CLAUDE.md / README.md 更新、`py_compile` OK
+- 副産物: 残課題だった refine ループ重複（analyze / toc/build）は toc/build 削除で解消
+
 ## コードレビュー指摘の修正（2026-06-12 完了）
 - [x] API 保護: Origin/Host ガード追加、CORS 絞り込み、thumbnail filename サニタイズ、
       cache/image の `is_relative_to` 化（curl で全パターン実機検証済み）
@@ -10,7 +17,8 @@
 - [x] QA の Enter 連打ガード、Markdown サニタイズ（XSS 対策）、サムネール `seeked` タイムアウト
 - [x] lucide / marked を `frontend/vendor/` にローカル同梱（CDN 依存解消）
 - [x] corrected.srt のみで字幕生成可、辞書 max_tokens 256、ffmpeg エラー詳細化、`qa_frames()` 削除
-- [ ] 残課題: analyze / toc/build の refine ループ重複解消、`vram.py` キャップの実効性見直し
+- [x] 残課題のうち refine ループ重複は toc/build 削除（2026-06-12）で解消
+- [ ] 残課題: `vram.py` キャップの実効性見直し
       （llama-server・CTranslate2 には効かない。torch 依存の整理も検討）
 
 ## 実行中処理の中止ボタン（進行中の推論も即停止・2026-06-03 完了）

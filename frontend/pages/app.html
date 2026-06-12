@@ -1190,23 +1190,16 @@
       next.toc=normalizeTocRows(data.toc||[])
       next.scenes=Array.isArray(data.scenes)?data.scenes:(Array.isArray(next.scenes)?next.scenes:[])
       try{
-        const res=await fetch(`${API}/review/toc/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:next})})
-        if(!res.ok){
-          const t=await res.text()
-          setResult('toc',false,`保存失敗: ${t}`)
-          return false
-        }
-        const body=await res.json()
         state.tocData=next
-        state.tocPath=body.toc_path
-        state.tocDirty=false
         await saveDraftArtifacts()
+        state.tocPath=null
+        state.tocDirty=false
         renderAnalysisDetail(analysisFromTocData(next))
-        setResult('toc',true,successText || state.tocPath)
+        setResult('toc',true,successText || 'キャッシュに保存しました')
         updateTocSaveButton()
         return true
       }catch(e){
-        setResult('toc',false,`接続エラー: ${e.message}`)
+        setResult('toc',false,`保存失敗: ${e.message}`)
         return false
       }
     }

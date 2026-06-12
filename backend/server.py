@@ -414,23 +414,8 @@ class UISettingsRequest(BaseModel):
     show_qa_panel: Optional[bool] = None
 
 
-class TOCBuildRequest(BaseModel):
-    video_path: str
-    max_frames: int = 30
-    min_interval: float = 5.0
-    transcript: str = ""
-    frame_mode: str = "scene"  # "uniform" | "scene"
-    analysis_mode: str = "speed"  # "speed" | "balanced" | "quality"
-    output_lang: str = "ja"  # "ja" | "en"
-
-
 class TOCLoadRequest(BaseModel):
     video_path: str
-
-
-class TOCSaveRequest(BaseModel):
-    video_path: str
-    data: dict
 
 
 class CacheSaveRequest(BaseModel):
@@ -1182,159 +1167,9 @@ async def review_qa(req: QARequest):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-@app.post("/review/toc/build")
-async def review_build_toc(req: TOCBuildRequest):
-    """
-    視覚モデル＋字幕テキストから目次データを生成し、
-    動画と同じフォルダに .toc.json として保存する（SSE）。
-    """
-    video_path = Path(req.video_path)
-    if not video_path.exists():
-        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
-    if req.frame_mode not in {"uniform", "scene"}:
-        raise HTTPException(400, f"無効な frame_mode: {req.frame_mode}")
-    _validate_analysis_mode(req.analysis_mode)
-    _validate_output_lang(req.output_lang)
-
-    async def stream():
-        loop = asyncio.get_event_loop()
-        cancel.clear_cancel()
-        plan = _analysis_plan(req.analysis_mode, req.max_frames)
-        try:
-            if not video_reviewer.loaded:
-                yield sse({"status": "loading_model"})
-                try:
-                    await loop.run_in_executor(None, video_reviewer.load)
-                except Exception as e:
-                    yield sse({"status": "error", "message": str(e)})
-                    return
-
-            yield sse({"status": "extracting_frames", "pass": "coarse"})
-            try:
-                if req.frame_mode == "scene":
-                    frames, meta = await loop.run_in_executor(
-                        None,
-                        video_reviewer.extract_frames_scene,
-                        str(video_path),
-                        int(plan["coarse_frames"]),
-                    )
-                else:
-                    frames, meta = await loop.run_in_executor(
-                        None,
-                        video_reviewer.extract_frames,
-                        str(video_path),
-                        int(plan["coarse_frames"]),
-                        req.min_interval,
-                    )
-            except Exception as e:
-                yield sse({"status": "error", "message": str(e)})
-                return
-
-            yield sse({
-                "status": "analyzing",
-                "count": meta.get("count", 0),
-                "mode": meta.get("mode", req.frame_mode),
-                "pass": "coarse",
-                "analysis_mode": req.analysis_mode,
-            })
-            try:
-                coarse_analysis = await loop.run_in_executor(
-                    None, video_reviewer.analyze_frames,
-                    frames, req.transcript, meta.get("timestamps", []), req.output_lang
-                )
-            except cancel.CanceledError:
-                raise
-            except Exception as e:
-                yield sse({"status": "error", "message": str(e)})
-                return
-
-            duration = float(meta.get("duration") or 0.0)
-            entries = _build_toc_entries(coarse_analysis, duration)
-            if int(plan["refine_limit"]) > 0 and entries:
-                targets = _select_refine_targets(entries, duration, plan)
-                refined_entries: list[dict] = []
-                for idx, ch in enumerate(targets, start=1):
-                    start = float(ch.get("start_sec", 0.0))
-                    end = float(ch.get("end_sec", start))
-                    if end - start < 10.0:
-                        continue
-                    yield sse({
-                        "status": "extracting_frames",
-                        "pass": "refine",
-                        "current": idx,
-                        "total": len(targets),
-                        "range": {"start_sec": start, "end_sec": end},
-                    })
-                    try:
-                        r_frames, r_meta = await loop.run_in_executor(
-                            None,
-                            video_reviewer.extract_frames_between,
-                            str(video_path),
-                            start,
-                            end,
-                            int(plan["refine_frames"]),
-                            req.min_interval,
-                        )
-                        r_transcript = _slice_transcript(req.transcript, start, end)
-                        r_result = await loop.run_in_executor(
-                            None, video_reviewer.analyze_frames,
-                            r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang, True
-                        )
-                        rel_entries = _entries_from_refine_result(
-                            r_result, start, end, duration
-                        )
-                        refined_entries.extend(rel_entries)
-                    except cancel.CanceledError:
-                        raise
-                    except Exception as e:
-                        yield sse({
-                            "status": "refine_warning",
-                            "message": f"refine失敗のため coarse 結果で継続します: {e}",
-                            "current": idx,
-                            "total": len(targets),
-                            "range": {"start_sec": start, "end_sec": end},
-                        })
-                        continue
-                entries = _merge_toc_entries(entries + refined_entries, duration)
-            toc_doc = {
-                "version": 1,
-                "video_path": str(video_path),
-                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "model": {
-                    "vl_model": video_reviewer.model_id,
-                    "source": "vision+subtitle",
-                },
-                "meta": {
-                    "genre": coarse_analysis.get("genre", "不明"),
-                    "summary": coarse_analysis.get("summary", ""),
-                    "tags": coarse_analysis.get("tags", []),
-                    "frame_mode": req.frame_mode,
-                    "analysis_mode": req.analysis_mode,
-                    "output_lang": req.output_lang,
-                    "max_frames": req.max_frames,
-                    "min_interval": req.min_interval,
-                    "duration_sec": duration,
-                },
-                "toc": entries,
-                "bookmarks": [],
-            }
-
-            yield sse({"status": "saving"})
-            toc_path = video_path.with_suffix(".toc.json")
-            toc_path.write_text(json.dumps(toc_doc, ensure_ascii=False, indent=2), encoding="utf-8")
-            yield sse({"status": "done", "toc_path": str(toc_path), "data": toc_doc})
-        except cancel.CanceledError:
-            yield sse_canceled()
-            return
-        except Exception as e:
-            yield sse({"status": "error", "message": str(e)})
-            return
-    return StreamingResponse(stream(), media_type="text/event-stream")
-
-
 @app.post("/review/toc/load")
 def review_load_toc(req: TOCLoadRequest):
-    """動画と同じフォルダの .toc.json を読み込む。"""
+    """旧形式（動画の横の .toc.json）を読み込む。後方互換の読み取り専用。"""
     video_path = Path(req.video_path)
     if not video_path.exists():
         raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
@@ -1346,31 +1181,6 @@ def review_load_toc(req: TOCLoadRequest):
     except Exception as e:
         raise HTTPException(500, f"目次ファイルの読み込みに失敗: {e}")
     return {"status": "ok", "toc_path": str(toc_path), "data": data}
-
-
-@app.post("/review/toc/save")
-def review_save_toc(req: TOCSaveRequest):
-    """目次データを動画と同じフォルダの .toc.json に保存する。"""
-    video_path = Path(req.video_path)
-    if not video_path.exists():
-        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
-
-    toc_path = video_path.with_suffix(".toc.json")
-    data = req.data if isinstance(req.data, dict) else {}
-    data["video_path"] = str(video_path)
-    data["created_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    if "version" not in data:
-        data["version"] = 1
-    if "toc" not in data or not isinstance(data["toc"], list):
-        data["toc"] = []
-    if "bookmarks" not in data or not isinstance(data["bookmarks"], list):
-        data["bookmarks"] = []
-
-    try:
-        toc_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception as e:
-        raise HTTPException(500, f"目次ファイルの保存に失敗: {e}")
-    return {"status": "ok", "toc_path": str(toc_path)}
 
 
 # ---------- キャッシュ API ----------

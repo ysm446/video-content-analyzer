@@ -1,6 +1,16 @@
 # 変更履歴
 
 ## 2026-06-12
+- **チャプター保存を `video.cache/data.json` に一本化（`.toc.json` の書き込み廃止）**
+  - 保存ボタンが `.toc.json`（動画の横）と `data.json`（cache 内）へ同じ内容を二重に
+    書き込んでいた冗長を解消。`app.html` の `persistTocData()` は `/cache/save`
+    （`saveDraftArtifacts()`）のみ使用するように変更
+  - `server.py` から `POST /review/toc/save` と、フロントエンドから一切呼ばれていなかった
+    レガシーの `POST /review/toc/build` を削除（`TOCBuildRequest` / `TOCSaveRequest` も削除）
+  - `POST /review/toc/load` は旧動画の `.toc.json` を読むための後方互換として
+    読み取り専用で存続（cache が無い場合のフォールバック動作は従来どおり）
+  - これに伴い残課題だった「analyze / toc/build の refine ループ重複」は toc/build 削除で解消
+  - CLAUDE.md / README.md の API 一覧・出力ファイル構成を更新、`py_compile` OK
 - **コードレビューで見つかった不具合・脆弱性をまとめて修正**
   - **API 保護（ローカル API がブラウザ上の任意サイトから叩けた問題）**:
     - `server.py`: CORS を `allow_origins=["*"]` → `["null", "file://"]`（Electron の file:// レンダラーは

@@ -106,9 +106,7 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /review/unload` — VL モデルを VRAM から解放
 - `POST /review/analyze` — 動画分析（SSE）
 - `POST /review/qa` — 動画への質問（SSE）
-- `POST /review/toc/build` — 動画分析→チャプター生成（SSE）
-- `POST /review/toc/save` — チャプター JSON 保存（旧形式、互換用）
-- `POST /review/toc/load` — チャプター JSON 読み込み（旧形式、互換用）
+- `POST /review/toc/load` — 旧形式 `.toc.json` の読み込み（後方互換・読み取り専用。保存は `/cache/save` に一本化済み）
 
 ### キャッシュ
 - `POST /cache/save` — `{動画名}.cache/data.json` を保存（上書き）

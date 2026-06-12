@@ -17,7 +17,7 @@
 - **フレームモード選択**: 均等サンプリングとシーン変化検出（ffmpeg）から選択可能
 - **音声連携**: ASR 書き起こしを VL 分析に組み合わせて精度向上
 - **Q&A**: 分析後にフレームを参照したまま自由質問が可能
-- **チャプター下書き**: 分析直後は一時的な下書きとして保持し、保存ボタンを押したときだけ `.toc.json` とキャッシュに書き込み
+- **チャプター下書き**: 分析直後は一時的な下書きとして保持し、保存ボタンを押したときだけキャッシュ（`{動画名}.cache/data.json`）に書き込み
 - **チャプター編集**: シーン分析結果から自動生成したチャプター一覧をタイトル・時刻・概要を編集して保存
 - **近接チャプター抑制**: 動画長に応じた最小チャプター間隔で、近すぎる分割を自動で統合
 - **長区間の再分割**: 長すぎるチャプター候補は追加 refine して、後半だけ大きな空白が残りにくいよう補正
@@ -137,9 +137,7 @@ npm start
 | `POST` | `/review/unload` | VL モデルを VRAM から解放 |
 | `POST` | `/review/analyze` | 動画分析（SSE） |
 | `POST` | `/review/qa` | 動画への質問（SSE） |
-| `POST` | `/review/toc/build` | 動画分析→チャプター生成（SSE） |
-| `POST` | `/review/toc/save` | チャプター JSON 保存 |
-| `POST` | `/review/toc/load` | チャプター JSON 読み込み（旧形式） |
+| `POST` | `/review/toc/load` | 旧形式 `.toc.json` の読み込み（後方互換・読み取り専用） |
 
 ### キャッシュ
 
@@ -162,12 +160,11 @@ npm start
 
 ```
 video.mp4
-├── video.toc.json           # 保存したチャプター情報
 └── video.cache/
     ├── video.original.srt   # 文字起こし結果
     ├── video.corrected.srt  # LLM 補正後の字幕（任意・翻訳はこれを優先）
     ├── video.japanese.srt   # 日本語翻訳字幕
-    ├── data.json            # 保存後のシーン・メタ・文字起こしキャッシュ
+    ├── data.json            # シーン・メタ・チャプター・文字起こしキャッシュ
     └── thumbnails/
         ├── scene_0.jpg
         ├── scene_1.jpg
