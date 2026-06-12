@@ -259,52 +259,6 @@ def _slice_transcript(transcript: str, start_sec: float, end_sec: float) -> str:
     return "\n".join(rows)
 
 
-def _transcript_lines_only(transcript_chunk: str) -> list[str]:
-    lines: list[str] = []
-    for line in transcript_chunk.splitlines():
-        m = re.match(r"^\[\d+:\d{2}\]\s*(.*)$", line.strip())
-        text = (m.group(1) if m else line).strip()
-        if text:
-            lines.append(text)
-    return lines
-
-
-def _has_japanese(text: str) -> bool:
-    return bool(re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]", text or ""))
-
-
-def _ground_entries_with_transcript(
-    entries: list[dict],
-    transcript: str,
-    duration: float,
-    output_lang: str = "ja",
-) -> list[dict]:
-    """
-    各チャプターの [start, next_start) 区間で実際に発話された字幕を使い、
-    summary を区間内事実に寄せる。
-    """
-    if not transcript or not entries:
-        return entries
-    rows = sorted(entries, key=lambda x: float(x.get("start_sec", 0.0)))
-    for i, e in enumerate(rows):
-        start = float(e.get("start_sec", 0.0))
-        end = float(rows[i + 1].get("start_sec", duration)) if i + 1 < len(rows) else float(duration)
-        if end <= start:
-            continue
-        chunk = _slice_transcript(transcript, start, end)
-        texts = _transcript_lines_only(chunk)
-        if not texts:
-            continue
-        snippet = " / ".join(texts[:2])
-        if len(snippet) > 220:
-            snippet = snippet[:220].rstrip() + "…"
-        # 出力言語が日本語の時は、英語字幕で日本語要約を上書きしない。
-        if output_lang == "ja" and not _has_japanese(snippet):
-            continue
-        e["summary"] = snippet
-    return rows
-
-
 def _merge_toc_entries(entries: list[dict], duration: float) -> list[dict]:
     if not entries:
         return []
@@ -1074,8 +1028,6 @@ async def review_analyze(req: ReviewRequest):
                         })
                         continue
                 entries = _merge_toc_entries(entries + refined_entries, duration)
-            entries = _ground_entries_with_transcript(entries, transcript, duration, req.output_lang)
-
             result = {
                 "summary": coarse_result.get("summary", ""),
                 "detail": coarse_result.get("detail", ""),
@@ -1313,7 +1265,6 @@ async def review_build_toc(req: TOCBuildRequest):
                         })
                         continue
                 entries = _merge_toc_entries(entries + refined_entries, duration)
-            entries = _ground_entries_with_transcript(entries, req.transcript, duration, req.output_lang)
             toc_doc = {
                 "version": 1,
                 "video_path": str(video_path),
