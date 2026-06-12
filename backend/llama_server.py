@@ -24,7 +24,7 @@ LLAMA_CPP_DIR = Path(os.environ.get(
     str(Path(__file__).parent.parent / "bin" / "llama-server" / "llama-b8763-bin-win-cuda-13.1-x64"),
 ))
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
-LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "32768"))
+LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "16384"))
 
 
 class LlamaServerManager:
