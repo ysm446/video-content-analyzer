@@ -248,8 +248,9 @@ class Translator:
                 {"role": "user", "content": word.strip()},
             ]
 
+            # 品詞・意味・例文（最大2義）を出し切れるよう 256 を確保（128 だと例文が途中で切れる）
             if self._is_gguf_model():
-                return self._chat_llama_cpp(messages, max_tokens=128)
+                return self._chat_llama_cpp(messages, max_tokens=256)
 
             prompt = self.tokenizer.apply_chat_template(
                 messages,
@@ -259,7 +260,7 @@ class Translator:
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
             from transformers import GenerationConfig
-            gen_config = GenerationConfig(do_sample=False, max_new_tokens=128)
+            gen_config = GenerationConfig(do_sample=False, max_new_tokens=256)
             with torch.no_grad():
                 output_ids = self.model.generate(
                     **inputs,

@@ -388,6 +388,16 @@ class VideoReviewer:
             meta["tokens_per_sec"] = completion_tokens_num / elapsed
         return meta
 
+    @staticmethod
+    def _run_ffmpeg_extract(stream) -> None:
+        """フレーム抽出の ffmpeg を実行する。失敗時は stderr 末尾を含めて報告する。"""
+        try:
+            stream.run(quiet=True)
+        except ffmpeg.Error as e:
+            stderr = (e.stderr or b"").decode("utf-8", errors="replace")
+            tail = " / ".join(stderr.strip().splitlines()[-3:])
+            raise RuntimeError(f"ffmpeg フレーム抽出に失敗: {tail}") from e
+
     def _get_duration(self, video_path: str) -> float:
         probe = ffmpeg.probe(video_path)
         fmt = probe.get("format") or {}
@@ -464,12 +474,11 @@ class VideoReviewer:
         frames: list[Image.Image] = []
         with tempfile.TemporaryDirectory() as tmpdir:
             outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
-            (
+            self._run_ffmpeg_extract(
                 ffmpeg.input(video_path)
                 .filter("fps", fps=f"1/{interval:.4f}")
                 .output(outpattern, format="image2", vcodec="mjpeg", q=2)
                 .overwrite_output()
-                .run(quiet=True)
             )
             for fname in sorted(os.listdir(tmpdir)):
                 if fname.startswith("frame_") and fname.endswith(".jpg"):
@@ -490,12 +499,11 @@ class VideoReviewer:
         frames: list[Image.Image] = []
         with tempfile.TemporaryDirectory() as tmpdir:
             outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
-            (
+            self._run_ffmpeg_extract(
                 ffmpeg.input(video_path, ss=start, to=end)
                 .filter("fps", fps=f"1/{interval:.4f}")
                 .output(outpattern, format="image2", vcodec="mjpeg", q=2)
                 .overwrite_output()
-                .run(quiet=True)
             )
             for fname in sorted(os.listdir(tmpdir)):
                 if fname.startswith("frame_") and fname.endswith(".jpg"):
@@ -705,11 +713,6 @@ class VideoReviewer:
         if isinstance(result.get("scenes"), list):
             result["scenes"] = self._dedup_scenes(result["scenes"])
         return result
-
-    def qa_frames(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = []) -> str:
-        self._ensure_loaded()
-        prompt = self._build_qa_prompt(question, transcript, timestamps)
-        return self._infer(frames, prompts.resolve("qa", QA_SYSTEM), prompt, max_new_tokens=QA_MAX_NEW_TOKENS, timestamps=timestamps or None)
 
     def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None) -> dict:
         self._ensure_loaded()

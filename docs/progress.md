@@ -1,6 +1,17 @@
 # 進捗状況
 
-最終更新: 2026-06-03
+最終更新: 2026-06-12
+
+## コードレビュー指摘の修正（2026-06-12 完了）
+- [x] API 保護: Origin/Host ガード追加、CORS 絞り込み、thumbnail filename サニタイズ、
+      cache/image の `is_relative_to` 化（curl で全パターン実機検証済み）
+- [x] 中止フラグ残留の解消（`sse_canceled()` で canceled 送出時に `clear_cancel()`）
+- [x] `/review/toc/build` に `clear_cancel()` と `CanceledError` 処理を追加
+- [x] QA の Enter 連打ガード、Markdown サニタイズ（XSS 対策）、サムネール `seeked` タイムアウト
+- [x] lucide / marked を `frontend/vendor/` にローカル同梱（CDN 依存解消）
+- [x] corrected.srt のみで字幕生成可、辞書 max_tokens 256、ffmpeg エラー詳細化、`qa_frames()` 削除
+- [ ] 残課題: analyze / toc/build の refine ループ重複解消、`vram.py` キャップの実効性見直し
+      （llama-server・CTranslate2 には効かない。torch 依存の整理も検討）
 
 ## 実行中処理の中止ボタン（進行中の推論も即停止・2026-06-03 完了）
 - [x] `backend/cancel.py`: グローバル中断フラグ（Event）＋ `CanceledError`

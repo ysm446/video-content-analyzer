@@ -1,5 +1,39 @@
 # 変更履歴
 
+## 2026-06-12
+- **コードレビューで見つかった不具合・脆弱性をまとめて修正**
+  - **API 保護（ローカル API がブラウザ上の任意サイトから叩けた問題）**:
+    - `server.py`: CORS を `allow_origins=["*"]` → `["null", "file://"]`（Electron の file:// レンダラーは
+      `Origin: null`）に変更し、Origin が外部サイトのリクエストと Host がローカル以外のリクエスト
+      （DNS リバインディング対策）を 403 で拒否するミドルウェアを追加
+    - `POST /cache/thumbnail`: `filename` のパストラバーサル対策（パス区切りを含む名前を 400 で拒否）。
+      従来は `..\..\foo.exe` 等で任意の場所に任意バイナリを書き込めた
+    - `GET /cache/image`: パス検証を文字列 `startswith` → `Path.is_relative_to` に変更
+      （`video.cache_evil` のような兄弟フォルダ素通りを防止）
+    - curl で実機検証済み（Origin null/外部・Host 偽装・filename `/`・`\` トラバーサル全パターン）
+  - **中止フラグの残留バグ**: 中止完了後もフラグが立ったままで、次の SSE 処理開始まで
+    `/lookup`（ホバー辞書）が `CanceledError` で全滅していた。`canceled` イベント送出時に
+    `clear_cancel()` する `sse_canceled()` ヘルパーを導入し全ハンドラで使用
+  - **`/review/toc/build` の中断処理欠落**: `clear_cancel()` が無く、`CanceledError` も
+    `error` として報告されていたのを他ハンドラと同様に修正
+  - **Q&A の Enter 連打ガード**: 回答生成中に Enter で並行リクエストが走り、後発の
+    `clear_cancel()` が先行ジョブの中止を無効化し得た。`submitQuestion()` 冒頭でガード
+  - **Markdown サニタイズ（XSS 対策）**: marked は生 HTML を素通しするため、モデル出力
+    （動画内容由来＝信頼できないテキスト）を innerHTML に入れる前に許可タグのみ残す
+    `sanitizeHtml()` を追加（属性は `<a href="http(s)://">` 以外すべて除去）
+  - **CDN 依存をローカル同梱に変更**: lucide / marked を `frontend/vendor/` に同梱し、
+    オフラインでもアイコン・Markdown 描画が動くようにした
+  - **サムネールキャプチャのハング対策**: `seeked` が発火しないケース（同一時刻への
+    シーク等）で Promise が永久に未解決になるのを 2 秒タイムアウトで回避
+  - **corrected.srt のみ存在する場合に字幕生成できなかった問題**: 翻訳ボタンの判定を
+    `correctedSrtPath || origSrtPath` に変更、自動読込時も翻訳ボタンを有効化
+  - **小修正**: 辞書検索の `max_tokens` 128→256（例文が途中で切れるため）、
+    フレーム抽出 ffmpeg 失敗時に stderr 末尾を含めてエラー報告、未使用の
+    `VideoReviewer.qa_frames()` を削除
+  - 既知の残課題（今回見送り）: `/review/analyze` と `/review/toc/build` の refine ループ
+    約 80 行の重複解消、`vram.py` のハードキャップが llama-server / CTranslate2 に
+    効かない件（torch 依存の整理含む）
+
 ## 2026-06-03
 - **実行中処理の「中止」ボタンを追加（進行中の推論も即停止）**: 文字起こし・補正・字幕生成・
   動画分析・Q&A の SSE 処理を、進行中の推論ごと中断できるようにした

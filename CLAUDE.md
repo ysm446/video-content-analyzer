@@ -235,5 +235,15 @@ video.mp4
 
 ## アイコン
 
-Lucide Icons（CDN）を使用。絵文字は使わない。
+Lucide Icons（`frontend/vendor/` にローカル同梱。marked も同様）を使用。絵文字は使わない。
 `lucide.createIcons()` をスクリプト末尾と動的生成後に呼ぶこと。
+
+## セキュリティ注意
+
+- バックエンド API には Origin/Host ガードあり（`server.py` の `_local_only_guard`）。
+  Electron レンダラー（file:// ページ）の Origin は `null` なので許可リストに含めている。
+  外部サイトの Origin と非ローカル Host（DNS リバインディング）は 403
+- モデル出力（動画内容由来＝信頼できないテキスト）を innerHTML に入れるときは必ず
+  `renderMarkdown()`（内部で `sanitizeHtml()`）を通す
+- `/cache/thumbnail` の `filename` はパス区切りを含む名前を拒否。`/cache/image` は
+  `Path.is_relative_to` でキャッシュフォルダ外参照を拒否

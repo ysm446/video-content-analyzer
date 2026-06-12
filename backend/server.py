@@ -12,9 +12,9 @@ from datetime import datetime
 import base64
 import psutil
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
 
 # モデルロード前に HF_HOME を設定
@@ -72,9 +72,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Video Content Analyzer API", lifespan=lifespan)
 
+# Electron レンダラー（file:// ページ）からの fetch は Origin: "null" になる。
+# ブラウザで開いた外部サイトからの呼び出し（Origin: https://... ）は拒否し、
+# DNS リバインディング対策として Host もローカルのみ許可する。
+_ALLOWED_ORIGINS = {"null", "file://"}
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+
+
+@app.middleware("http")
+async def _local_only_guard(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
+        return JSONResponse({"detail": "forbidden origin"}, status_code=403)
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if host and host not in _ALLOWED_HOSTS:
+        return JSONResponse({"detail": "forbidden host"}, status_code=403)
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(_ALLOWED_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -83,6 +101,16 @@ app.add_middleware(
 def sse(data: dict) -> str:
     """Server-Sent Events 形式にシリアライズ"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def sse_canceled() -> str:
+    """中断完了イベントを返す。
+
+    フラグを残したままにすると、次の SSE 処理が始まるまで /lookup などの
+    非 SSE 推論が CanceledError で失敗し続けるため、ここでクリアする。
+    """
+    cancel.clear_cancel()
+    return sse({"status": "canceled"})
 
 
 def _parse_timestamp_seconds(value: str | None) -> float | None:
@@ -667,7 +695,7 @@ async def transcribe(req: TranscribeRequest):
                 None, asr.transcribe, str(video_path), req.language
             )
         except cancel.CanceledError:
-            yield sse({"status": "canceled"})
+            yield sse_canceled()
             return
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
@@ -737,7 +765,7 @@ async def translate(req: TranslateRequest):
                         None, translator.translate, seg["text"], ctx
                     )
                 except cancel.CanceledError:
-                    yield sse({"status": "canceled"})
+                    yield sse_canceled()
                     return
                 except Exception as e:
                     yield sse({"status": "error", "message": str(e)})
@@ -817,7 +845,7 @@ async def refine(req: TranslateRequest):
                         None, translator.refine, seg["text"], ctx
                     )
                 except cancel.CanceledError:
-                    yield sse({"status": "canceled"})
+                    yield sse_canceled()
                     return
                 except Exception as e:
                     yield sse({"status": "error", "message": str(e)})
@@ -974,7 +1002,7 @@ async def review_analyze(req: ReviewRequest):
                     None, video_reviewer.analyze_frames, frames, transcript, meta.get("timestamps", []), req.output_lang
                 )
             except cancel.CanceledError:
-                yield sse({"status": "canceled"})
+                yield sse_canceled()
                 return
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
@@ -1047,7 +1075,7 @@ async def review_analyze(req: ReviewRequest):
             video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
         except cancel.CanceledError:
-            yield sse({"status": "canceled"})
+            yield sse_canceled()
             return
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
@@ -1145,7 +1173,7 @@ async def review_qa(req: QARequest):
                 yield sse({"status": "done", "answer": done_payload.get("answer", ""), "meta": done_payload.get("meta", {})})
                 break
             elif status == "canceled":
-                yield sse({"status": "canceled"})
+                yield sse_canceled()
                 break
             else:
                 yield sse({"status": "error", "message": payload})
@@ -1170,6 +1198,7 @@ async def review_build_toc(req: TOCBuildRequest):
 
     async def stream():
         loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
         plan = _analysis_plan(req.analysis_mode, req.max_frames)
         try:
             if not video_reviewer.loaded:
@@ -1213,6 +1242,8 @@ async def review_build_toc(req: TOCBuildRequest):
                     None, video_reviewer.analyze_frames,
                     frames, req.transcript, meta.get("timestamps", []), req.output_lang
                 )
+            except cancel.CanceledError:
+                raise
             except Exception as e:
                 yield sse({"status": "error", "message": str(e)})
                 return
@@ -1292,6 +1323,9 @@ async def review_build_toc(req: TOCBuildRequest):
             toc_path = video_path.with_suffix(".toc.json")
             toc_path.write_text(json.dumps(toc_doc, ensure_ascii=False, indent=2), encoding="utf-8")
             yield sse({"status": "done", "toc_path": str(toc_path), "data": toc_doc})
+        except cancel.CanceledError:
+            yield sse_canceled()
+            return
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
             return
@@ -1372,6 +1406,9 @@ def cache_load(req: CacheLoadRequest):
 @app.post("/cache/thumbnail")
 def cache_thumbnail(req: CacheThumbnailRequest):
     """base64 画像をキャッシュフォルダの thumbnails/ に保存する。"""
+    # パストラバーサル対策: filename はファイル名そのもの（パス区切りなし）のみ許可
+    if req.filename != Path(req.filename).name or req.filename in {"", ".", ".."}:
+        raise HTTPException(400, f"不正なファイル名: {req.filename}")
     thumb_dir = _cache_dir(req.video_path) / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
     b64 = req.image_base64
@@ -1410,7 +1447,8 @@ def cache_image(video_path: str, name: str):
     """キャッシュフォルダの画像ファイルを返す。"""
     cache = _cache_dir(video_path).resolve()
     img_path = (cache / name).resolve()
-    if not str(img_path).startswith(str(cache)):
+    # 文字列 prefix 比較だと「video.cache_evil」のような兄弟フォルダを許してしまう
+    if not img_path.is_relative_to(cache):
         raise HTTPException(403, "不正なパス")
     if not img_path.exists():
         raise HTTPException(404, "画像が見つかりません")

@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Content Analyzer</title>
   <link rel="stylesheet" href="../css/common.css">
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-  <script src="https://unpkg.com/marked@12/marked.min.js"></script>
+  <!-- オフラインでも動くようローカル同梱（frontend/vendor/）を読み込む -->
+  <script src="../vendor/lucide.min.js"></script>
+  <script src="../vendor/marked.min.js"></script>
   <style>
     svg.lucide{width:14px;height:14px;stroke-width:1.75;vertical-align:-2px;flex-shrink:0}
     .time-label svg.lucide{vertical-align:0}
@@ -800,13 +801,33 @@
       return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
     }
 
+    // モデル出力（＝動画内容由来の信頼できないテキスト）を innerHTML に入れる前のサニタイズ。
+    // marked は生 HTML を素通しするため、許可タグ以外は丸ごと除去し、属性も
+    // <a href="http(s)://..."> 以外すべて落とす。
+    const SAFE_TAGS=new Set(['P','BR','STRONG','B','EM','I','DEL','S','UL','OL','LI','H1','H2','H3','H4','CODE','PRE','BLOCKQUOTE','A','TABLE','THEAD','TBODY','TR','TH','TD','HR','SPAN'])
+    function sanitizeHtml(html){
+      const doc=new DOMParser().parseFromString(String(html||''),'text/html')
+      const sanitizeNode=node=>{
+        for(const el of Array.from(node.children)){
+          if(!SAFE_TAGS.has(el.tagName)){ el.remove(); continue }
+          for(const attr of Array.from(el.attributes)){
+            if(el.tagName==='A' && attr.name==='href' && /^https?:\/\//i.test(attr.value)) continue
+            el.removeAttribute(attr.name)
+          }
+          sanitizeNode(el)
+        }
+      }
+      sanitizeNode(doc.body)
+      return doc.body.innerHTML
+    }
+
     // チャット回答を Markdown としてレンダリング。marked 未読込時は素のテキスト（改行保持）にフォールバック。
     function renderMarkdown(text){
       const src=String(text || '')
       if(typeof marked==='undefined' || !marked.parse){
         return `<p style="white-space:pre-wrap">${escHtml(src)}</p>`
       }
-      return marked.parse(src, {gfm:true, breaks:true})
+      return sanitizeHtml(marked.parse(src, {gfm:true, breaks:true}))
     }
 
     function clearAnalysisDetail(){
@@ -971,12 +992,25 @@
         const img = document.getElementById(`scene-thumb-${i}`)
         const scene = {id: s.id||`scene_${i}`, start_sec: start, end_sec: s.end_sec??null, label: s.label||'', description: s.description||'', source:'auto'}
         if(!Number.isFinite(start) || !img){ enriched.push(scene); continue }
+        // seeked が発火しないケース（現在位置と同一時刻へのシーク等）でハングしないようタイムアウトを設ける
         const dataUrl = await new Promise(resolve=>{
-          video.addEventListener('seeked',()=>{ ctx.drawImage(video,0,0,canvas.width,canvas.height); resolve(canvas.toDataURL('image/jpeg',0.8)) },{once:true})
+          let settled=false
+          const finish=ok=>{
+            if(settled) return
+            settled=true
+            clearTimeout(timer)
+            video.removeEventListener('seeked',onSeeked)
+            resolve(ok ? canvas.toDataURL('image/jpeg',0.8) : null)
+          }
+          const onSeeked=()=>{ ctx.drawImage(video,0,0,canvas.width,canvas.height); finish(true) }
+          const timer=setTimeout(()=>finish(false),2000)
+          video.addEventListener('seeked',onSeeked,{once:true})
           video.currentTime = Math.min(start, video.duration - 0.1)
         })
-        img.src = dataUrl
-        scene.thumbnail = dataUrl
+        if(dataUrl){
+          img.src = dataUrl
+          scene.thumbnail = dataUrl
+        }
         enriched.push(scene)
       }
       video.currentTime = savedTime
@@ -1384,7 +1418,7 @@
           const result=await window.electronAPI.readFile(path)
           if(result.ok){
             if(kind==='orig'){ state.origSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
-            else if(kind==='corrected'){ state.correctedSrtPath=path; await loadSrt(path,'orig'); setResult('refine',true,path) }
+            else if(kind==='corrected'){ state.correctedSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('refine',true,path) }
             else { state.jpSrtPath=path; await loadSrt(path,'jp'); setResult('translate',true,path) }
             break
           }
@@ -1849,13 +1883,13 @@
     })
 
     document.getElementById('translateBtn').addEventListener('click',async()=>{
-      if(!state.origSrtPath){ setResult('translate',false,'先に文字起こしを実行してください'); return }
+      const srcSrt=state.correctedSrtPath || state.origSrtPath
+      if(!srcSrt){ setResult('translate',false,'先に文字起こしを実行してください'); return }
       const btn=document.getElementById('translateBtn'); btn.disabled=true
       updateProcessButtons('translate')
       resetSection('translate'); setProgress('translate',0,'準備中...')
       const ac=beginCancelable()
       try{
-        const srcSrt=state.correctedSrtPath || state.origSrtPath
         const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
@@ -1913,6 +1947,8 @@
     const qaHistory=document.getElementById('qaHistory')
 
     async function submitQuestion(){
+      // 回答生成中の Enter 連打で並行リクエストが走らないようにする
+      if(qaBtn.disabled) return
       const q=qaInput.value.trim()
       if(!q || !state.videoPath) return
       qaInput.value=''; qaBtn.disabled=true
