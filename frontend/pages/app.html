@@ -222,7 +222,8 @@
     .qa-answering{font-size:12px;color:var(--text-dim)}
     .qa-elapsed{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
     .qa-suggest-row{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:0 10px 10px;flex-shrink:0}
-    .qa-suggest-chip{border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;padding:6px 14px;border-radius:99px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:background .15s,border-color .15s}
+    .qa-suggest-chip{border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;padding:6px 14px;border-radius:99px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:background .15s,border-color .15s;animation:chip-in .2s ease}
+    @keyframes chip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
     .qa-suggest-chip:hover{background:var(--accent-tint-bg);border-color:var(--accent-tint-border)}
     .qa-input-row{padding:12px 10px 14px;border-top:1px solid var(--border);display:flex;gap:8px}
     .qa-input{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius)}
@@ -613,7 +614,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[] }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[], qaSuggestions:null }
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -854,6 +855,7 @@
     function setCurrentVideo(path){
       state.videoPath = path
       state.qaChat = []  // チャット履歴は動画ごと（別動画の文脈を混ぜない）
+      state.qaSuggestions = null
       const name = path ? (path.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/, '') : '動画未選択'
       document.getElementById('currentVideoName').textContent = name
       document.getElementById('settingsVideoPath').textContent = path || '動画未選択（プレイヤータブで読み込み）'
@@ -967,16 +969,20 @@
       btn.disabled=!enabled
       if(ph) ph.style.display = enabled ? 'none' : 'flex'
       renderQaSuggestions()
+      // モデルがロード済みなら内容ベースの質問を遅延生成（未ロードなら固定チップのみ）
+      if(enabled && !state.qaSuggestions) setTimeout(fetchQaSuggestions, 300)
     }
 
-    // テンプレート質問チップ（固定＋分析で生成された内容ベースの質問）
+    // テンプレート質問チップ（固定は即表示、内容ベースはモデルロード済みのとき遅延生成で差し替え）
     const QA_STATIC_SUGGESTIONS=['この動画を要約して','重要なポイントを3つ挙げて']
     function renderQaSuggestions(){
       const row=document.getElementById('qaSuggestRow')
       const input=document.getElementById('qaInput')
       if(!row||!input) return
       if(input.disabled||!state.videoPath){ row.style.display='none'; row.innerHTML=''; return }
-      const dynamic=(state.tocData?.meta?.questions||[]).filter(q=>typeof q==='string'&&q.trim()).slice(0,3)
+      // 動的質問は遅延生成のみ（キャッシュには保存しない。YouTube と同様、固定チップ→遅れて内容ベースが出る）
+      const source=state.qaSuggestions||[]
+      const dynamic=source.filter(q=>typeof q==='string'&&q.trim()&&!QA_STATIC_SUGGESTIONS.includes(q.trim())).slice(0,3)
       const all=[...QA_STATIC_SUGGESTIONS,...dynamic]
       row.innerHTML=all.map(q=>`<button class="qa-suggest-chip" type="button" title="${escHtml(q)}">${escHtml(q)}</button>`).join('')
       row.style.display=all.length?'flex':'none'
@@ -985,6 +991,25 @@
         document.getElementById('qaInput').value=all[i]
         submitQuestion()
       }))
+    }
+    let _qaSuggestBusy=false
+    async function fetchQaSuggestions(){
+      // モデルがロード済みのときだけサーバー側で生成される（未ロード時は空が返り、既存表示を維持）
+      if(_qaSuggestBusy||!state.videoPath) return
+      if(document.getElementById('qaInput')?.disabled) return
+      if(_runningJobs>0) return  // 推論中は割り込まない（回答完了後に呼ばれる）
+      _qaSuggestBusy=true
+      try{
+        const res=await fetch(`${API}/review/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,transcript:state.origTranscript,history:state.qaChat.slice(-2)})})
+        if(res.ok){
+          const {questions}=await res.json()
+          if(Array.isArray(questions)&&questions.length){
+            state.qaSuggestions=questions.slice(0,3)
+            renderQaSuggestions()
+          }
+        }
+      }catch{}
+      _qaSuggestBusy=false
     }
 
     function trimLeadingChatWhitespace(text){
@@ -1397,7 +1422,6 @@
           summary:result?.summary||'',
           detail:result?.detail||'',
           tags:Array.isArray(result?.tags)?result.tags:[],
-          questions:Array.isArray(result?.questions)?result.questions:[],
         },
         toc,
         bookmarks:Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[],
@@ -2121,6 +2145,7 @@
         btn.classList.remove('loading')
         await fetchReviewModelStatus()
       }
+      fetchQaSuggestions()  // ロード完了後に内容ベースの質問チップを生成
     })
 
     document.getElementById('modalUnloadBtn').addEventListener('click',unloadCurrentModel)
@@ -2320,6 +2345,7 @@
         })
       }catch(e){ thinking.textContent='接続エラー: '+e.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',`接続エラー: ${e.message}`) }
       finally{ endCancelable(ac) }
+      fetchQaSuggestions()  // 回答後、会話を踏まえたフォローアップ質問に差し替え（モデルはロード済み）
 
       qaBtn.disabled=false
     }

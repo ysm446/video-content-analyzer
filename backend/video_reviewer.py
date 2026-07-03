@@ -45,8 +45,7 @@ _ANALYZE_JSON_FORMAT = (
     "    ... （場面転換ごとに繰り返す）\n"
     "  ],\n"
     '  "tags": ["タグ1", "タグ2", "タグ3"],\n'
-    '  "genre": "ジャンル（例：アクション映画、料理動画、講義、スポーツなど）",\n'
-    '  "questions": ["動画の内容についての質問1", "質問2", "質問3"]\n'
+    '  "genre": "ジャンル（例：アクション映画、料理動画、講義、スポーツなど）"\n'
     "}"
 )
 
@@ -60,7 +59,6 @@ _ANALYZE_INSTR_VISUAL = (
     "description は各場面につき1文だけ、短く書いてください。"
     "summary は1〜2文の概要、detail は動画全体の内容のまとめを概要より詳しく"
     "（要点ごとに複数文または箇条書きで）書いてください。"
-    "questions には、この動画の内容に基づいて視聴者が聞きたくなる具体的な質問を3つ書いてください。"
 )
 
 _ANALYZE_INSTR_AUDIO = (
@@ -72,7 +70,6 @@ _ANALYZE_INSTR_AUDIO = (
     "description は各場面につき1文だけ、短く書いてください。"
     "summary は1〜2文の概要、detail は映像と音声を総合した内容のまとめを概要より詳しく"
     "（要点ごとに複数文または箇条書きで）書いてください。"
-    "questions には、この動画の内容に基づいて視聴者が聞きたくなる具体的な質問を3つ書いてください。"
 )
 
 # 構造化出力（llama-server の response_format → GBNF 制約）用スキーマ。
@@ -95,9 +92,8 @@ _ANALYZE_SCHEMA = {
         "scenes": {"type": "array", "items": _SCENE_ITEM_SCHEMA},
         "tags": {"type": "array", "items": {"type": "string"}},
         "genre": {"type": "string"},
-        "questions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["summary", "detail", "scenes", "tags", "genre", "questions"],
+    "required": ["summary", "detail", "scenes", "tags", "genre"],
 }
 
 _ANALYZE_SCHEMA_SCENES = {
@@ -141,6 +137,21 @@ QA_SYSTEM = (
     "提供されたフレーム画像と、必要に応じて音声書き起こしに基づいて質問に日本語で答えてください。"
     "具体的に回答してください。"
 )
+
+# チャットのテンプレート質問チップ用（テキストのみ・フレーム不要の軽い生成）
+QUESTIONS_SYSTEM = (
+    "/no_think\n"
+    "あなたは動画視聴者向けのアシスタントです。動画の内容情報と、あればこれまでの会話をもとに、"
+    "視聴者が次に聞きたくなる質問を日本語で提案します。"
+)
+
+_QUESTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["questions"],
+}
 
 _TRANSCRIPT_MAX_CHARS = 3000
 QA_MAX_NEW_TOKENS = 2048
@@ -334,7 +345,6 @@ class VideoReviewer:
             "scenes": [],
             "tags": tags,
             "genre": genre or "不明",
-            "questions": [],
         }
 
     def _frame_to_data_url(self, frame: Image.Image, max_pixels: int | None = None) -> str:
@@ -922,7 +932,7 @@ class VideoReviewer:
         fields = (
             "scenes[].label / scenes[].description"
             if scenes_only
-            else "summary / scenes[].label / scenes[].description / tags / genre / questions"
+            else "summary / scenes[].label / scenes[].description / tags / genre"
         )
         lang_word = "日本語" if output_lang == "ja" else "英語"
         lang_instr = f"{fields} は{lang_word}で記述してください。"
@@ -994,6 +1004,55 @@ class VideoReviewer:
             result["scenes"] = self._dedup_scenes(result["scenes"])
         result["_analysis_meta"] = gen_meta
         return result
+
+    def suggest_questions(self, video_info: str, transcript: str = "", history: list[dict] | None = None, count: int = 3) -> list[str]:
+        """チャット用のおすすめ質問をテキストのみで生成する（フレーム不要）。
+
+        モデルがロード済みのときに呼ぶ想定（呼び出し側でロード状態を確認する）。
+        会話履歴があれば「次に聞きたくなるフォローアップ」を提案させる。
+        """
+        self._ensure_loaded()
+        parts: list[str] = []
+        if video_info:
+            parts.append(f"[動画の情報]\n{video_info}")
+        if transcript:
+            parts.append(f"[字幕サンプル]\n{self._sample_transcript_uniform(transcript, 2000)}")
+        if history:
+            turns = []
+            for h in history[-2:]:
+                if not isinstance(h, dict):
+                    continue
+                hq = str(h.get("question") or "").strip()
+                ha = str(h.get("answer") or "").strip()
+                if hq and ha:
+                    turns.append(f"Q: {hq}\nA: {ha[:200]}")
+            if turns:
+                parts.append("[これまでの会話]\n" + "\n\n".join(turns))
+        parts.append(
+            f"この動画について視聴者が次に聞きたくなる具体的な質問を{count}つ提案してください。"
+            "各質問は30文字以内の自然な日本語で、すでに会話で聞かれた内容の繰り返しは避けてください。"
+        )
+        messages = [
+            {"role": "system", "content": QUESTIONS_SYSTEM},
+            {"role": "user", "content": "\n\n".join(parts)},
+        ]
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {"name": "suggested_questions", "schema": _QUESTIONS_SCHEMA},
+        }
+        raw, _meta = _vision_server.chat_with_meta(self.model_id, messages, 384, response_format)
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return []
+        out: list[str] = []
+        for q in data.get("questions", []):
+            q = str(q).strip()
+            if q and q not in out:
+                out.append(q)
+            if len(out) >= count:
+                break
+        return out
 
     def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None, history: list[dict] | None = None) -> dict:
         self._ensure_loaded()

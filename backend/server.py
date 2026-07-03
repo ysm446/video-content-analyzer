@@ -435,6 +435,12 @@ class ReviewRequest(BaseModel):
     output_lang: str = "ja"          # "ja" | "en"
 
 
+class QuestionsRequest(BaseModel):
+    video_path: str
+    transcript: str = ""
+    history: Optional[list[dict]] = None  # 直近の [{question, answer}, ...]
+
+
 class QARequest(BaseModel):
     video_path:   str
     question:     str
@@ -1353,14 +1359,11 @@ async def review_analyze(req: ReviewRequest):
                         })
                         continue
                 entries = _merge_toc_entries(entries + refined_entries, duration)
-            questions = coarse_result.get("questions")
-            questions = [str(q).strip() for q in questions if str(q).strip()][:3] if isinstance(questions, list) else []
             result = {
                 "summary": coarse_result.get("summary", ""),
                 "detail": coarse_result.get("detail", ""),
                 "genre": coarse_result.get("genre", "不明"),
                 "tags": coarse_result.get("tags", []),
-                "questions": questions,
                 "scenes": [
                     {
                         "timestamp": e.get("timestamp", "0:00"),
@@ -1383,6 +1386,55 @@ async def review_analyze(req: ReviewRequest):
             yield sse({"status": "error", "message": str(e)})
             return
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+def _video_meta_text(video_path: str) -> str:
+    """分析キャッシュの meta からおすすめ質問生成用の文脈テキストを作る。"""
+    try:
+        data = json.loads((_cache_dir(video_path) / "data.json").read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    meta = data.get("meta") if isinstance(data, dict) else None
+    if not isinstance(meta, dict):
+        return ""
+    parts = []
+    if meta.get("genre"):
+        parts.append(f"ジャンル: {meta['genre']}")
+    if meta.get("summary"):
+        parts.append(f"概要: {meta['summary']}")
+    if meta.get("detail"):
+        parts.append(f"詳細: {str(meta['detail'])[:600]}")
+    tags = meta.get("tags")
+    if isinstance(tags, list) and tags:
+        parts.append("タグ: " + ", ".join(str(t) for t in tags[:10]))
+    return "\n".join(parts)
+
+
+@app.post("/review/questions")
+async def review_questions(req: QuestionsRequest):
+    """チャット用のおすすめ質問を生成する（非SSE・軽量）。
+
+    モデル未ロード時はロードを誘発せず空リストを返す（フロントは
+    キャッシュ済みの質問・固定テンプレートにフォールバックする）。
+    """
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    if not video_reviewer.loaded:
+        return {"questions": []}
+    loop = asyncio.get_event_loop()
+    try:
+        questions = await loop.run_in_executor(
+            None,
+            video_reviewer.suggest_questions,
+            _video_meta_text(str(video_path)),
+            req.transcript,
+            req.history,
+        )
+    except Exception as e:
+        print(f"[QA] おすすめ質問の生成に失敗: {e}")
+        return {"questions": []}
+    return {"questions": questions}
 
 
 @app.post("/review/qa")
