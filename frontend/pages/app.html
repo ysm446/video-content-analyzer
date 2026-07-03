@@ -628,54 +628,156 @@
       if(mm && mm.style.display!=='none') mm.style.display='none'
     })
 
-    // ランタイム管理（llama-cpp / Whisper モデル / ffmpeg のインストール）
-    const RUNTIME_DEFS=[
-      {key:'llama_cpp', component:'llama-cpp', name:'llama.cpp（llama-server）', desc:'翻訳・動画分析の推論エンジン。GitHub の最新リリースを取得します'},
-      {key:'whisper', component:'whisper', name:'Whisper モデル', desc:'音声書き起こし（faster-whisper）のモデル重み'},
-      {key:'ffmpeg', component:'ffmpeg', name:'ffmpeg', desc:'フレーム抽出・動画情報の取得に使用'},
-    ]
+    // ランタイム管理（llama-cpp / Whisper モデル / ffmpeg のインストールと切り替え）
     let _runtimeInstalling=null
+    let _runtimeStatus=null
+    let _llamaBuilds=null
+    const RUNTIME_SEL_STYLE='background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;max-width:340px'
     function _fmtBytes(n){ if(typeof n!=='number') return ''; const mb=n/1048576; return mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(1)+' MB' }
+    function _runtimeRowHead(installed,name,statusText,extraNote){
+      return `<div style="display:flex;align-items:center;gap:8px">
+        <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${installed?'#3fb950':'#d29922'}"></span>
+        <span style="font-size:13px;font-weight:600">${escHtml(name)}</span>
+        <span style="font-size:11px;color:var(--text-dim)">${escHtml(statusText)}</span>
+        ${extraNote?`<span style="font-size:11px;color:var(--warn,#d29922)">${escHtml(extraNote)}</span>`:''}
+      </div>`
+    }
     async function loadRuntimeStatus(){
       const el=document.getElementById('runtimeList')
       if(!el || _runtimeInstalling) return
       try{
         const res=await fetch(`${API}/runtime/status`)
         if(!res.ok) throw new Error(`HTTP ${res.status}`)
-        const s=await res.json()
-        el.innerHTML=RUNTIME_DEFS.map(def=>{
-          const info=s[def.key]||{}
-          const installed=!!info.installed
-          const detail=info.version||info.model||''
-          return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${installed?'#3fb950':'#d29922'}"></span>
-              <span style="font-size:13px;font-weight:600">${escHtml(def.name)}</span>
-              <span style="font-size:11px;color:var(--text-dim)">${installed?'インストール済み':'未インストール'}</span>
-              <button class="btn ${installed?'btn-ghost':'btn-primary'}" style="margin-left:auto;padding:4px 12px;font-size:12px;flex-shrink:0" data-runtime-install="${def.component}">${installed?'更新 / 再インストール':'インストール'}</button>
-            </div>
-            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">${escHtml(def.desc)}${detail?` ｜ ${escHtml(detail)}`:''}</div>
-            ${info.path?`<div style="font-size:11px;color:var(--text-dim);margin-top:2px;word-break:break-all">${escHtml(info.path)}</div>`:''}
-            <div id="runtime-progress-${def.component}" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
-          </div>`
-        }).join('')
-        el.querySelectorAll('[data-runtime-install]').forEach(b=>b.addEventListener('click',()=>installRuntime(b.getAttribute('data-runtime-install'))))
+        _runtimeStatus=await res.json()
+        renderRuntimeList()
       }catch(e){
         el.innerHTML=`<div style="font-size:12px;color:var(--text-dim)">状態の取得に失敗しました: ${escHtml(String(e.message||e))}</div>`
       }
     }
-    async function installRuntime(component){
-      if(_runtimeInstalling) return
-      if(!confirm('ダウンロードを開始しますか？（コンポーネントにより数百 MB の通信が発生します）')) return
+    function renderRuntimeList(){
+      const el=document.getElementById('runtimeList')
+      if(!el || !_runtimeStatus) return
+      const s=_runtimeStatus
+
+      // --- llama.cpp ---
+      const lc=s.llama_cpp||{}
+      const versions=lc.versions||[]
+      const versionOptions=versions.map(v=>`<option value="${escHtml(v)}"${v===lc.version?' selected':''}>${escHtml(v)}${v===lc.version?'（使用中）':''}</option>`).join('')
+      const buildOptions=(_llamaBuilds?.builds||[]).map(b=>`<option value="${escHtml(b.asset)}"${b.recommended?' selected':''}>${escHtml(b.variant)}（${_fmtBytes(b.size)}）${b.recommended?' ★推奨':''}</option>`).join('')
+      const llamaHtml=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        ${_runtimeRowHead(!!lc.installed,'llama.cpp（llama-server）',lc.installed?'インストール済み':'未インストール',lc.env_override?'LLAMA_CPP_DIR 環境変数で固定中':'')}
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">翻訳・動画分析の推論エンジン</div>
+        <div class="frame-setting" style="margin-top:8px">
+          <label style="font-size:12px">使用バージョン：</label>
+          ${versions.length?`<select id="llamaVersionSel" style="${RUNTIME_SEL_STYLE}"${lc.env_override?' disabled':''}>${versionOptions}</select>
+          <button class="btn btn-ghost" id="llamaVersionApply" style="padding:4px 12px;font-size:12px"${lc.env_override?' disabled':''}>適用</button>`
+          :'<span style="font-size:12px;color:var(--text-dim)">インストールされていません</span>'}
+        </div>
+        <div class="frame-setting" style="margin-top:6px">
+          <label style="font-size:12px">新規インストール：</label>
+          ${_llamaBuilds
+            ?`<select id="llamaBuildSel" style="${RUNTIME_SEL_STYLE}">${buildOptions}</select>
+              <button class="btn btn-primary" id="llamaBuildInstall" style="padding:4px 12px;font-size:12px">インストール</button>
+              <span style="font-size:11px;color:var(--text-dim)">${escHtml(_llamaBuilds.tag||'')}${_llamaBuilds.driver_cuda?` ｜ ドライバ対応 CUDA ${escHtml(_llamaBuilds.driver_cuda)}`:''}</span>`
+            :`<button class="btn btn-ghost" id="llamaBuildsFetch" style="padding:4px 12px;font-size:12px">ビルド一覧を取得</button>
+              <span style="font-size:11px;color:var(--text-dim)">GitHub から最新リリースのビルド一覧を取得します</span>`}
+        </div>
+        <div id="runtime-progress-llama-cpp" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
+      </div>`
+
+      // --- Whisper ---
+      const w=s.whisper||{}
+      const installedModels=w.installed_models||[]
+      const whisperOptions=(w.available_models||[]).map(m=>{
+        const inst=installedModels.includes(m.id)
+        return `<option value="${escHtml(m.id)}"${m.id===w.model?' selected':''}>${escHtml(m.id)}（${escHtml(m.size)}）${inst?' ✓済':''}</option>`
+      }).join('')
+      const whisperHtml=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        ${_runtimeRowHead(!!w.installed,'Whisper モデル',w.installed?`使用中: ${w.model}`:'未インストール','')}
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">音声書き起こし（faster-whisper）。切り替えは次回の文字起こしから反映されます</div>
+        <div class="frame-setting" style="margin-top:8px">
+          <label style="font-size:12px">使用モデル：</label>
+          <select id="whisperModelSel" style="${RUNTIME_SEL_STYLE}">${whisperOptions}</select>
+          <button class="btn btn-primary" id="whisperModelApply" style="padding:4px 12px;font-size:12px">適用</button>
+        </div>
+        <div id="runtime-progress-whisper" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
+      </div>`
+
+      // --- ffmpeg ---
+      const f=s.ffmpeg||{}
+      const ffmpegHtml=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${f.installed?'#3fb950':'#d29922'}"></span>
+          <span style="font-size:13px;font-weight:600">ffmpeg</span>
+          <span style="font-size:11px;color:var(--text-dim)">${f.installed?'インストール済み':'未インストール'}</span>
+          <button class="btn ${f.installed?'btn-ghost':'btn-primary'}" id="ffmpegInstall" style="margin-left:auto;padding:4px 12px;font-size:12px;flex-shrink:0">${f.installed?'更新 / 再インストール':'インストール'}</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">フレーム抽出・動画情報の取得に使用${f.version?` ｜ ${escHtml(f.version)}`:''}</div>
+        ${f.path?`<div style="font-size:11px;color:var(--text-dim);margin-top:2px;word-break:break-all">${escHtml(f.path)}</div>`:''}
+        <div id="runtime-progress-ffmpeg" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
+      </div>`
+
+      el.innerHTML=llamaHtml+whisperHtml+ffmpegHtml
+
+      // イベント
+      document.getElementById('llamaVersionApply')?.addEventListener('click',async()=>{
+        const sel=document.getElementById('llamaVersionSel')
+        if(!sel) return
+        try{
+          const res=await fetch(`${API}/runtime/llama/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:sel.value})})
+          if(!res.ok) throw new Error(await res.text())
+          await loadRuntimeStatus()
+        }catch(e){ alert('切り替えに失敗しました: '+e.message) }
+      })
+      document.getElementById('llamaBuildsFetch')?.addEventListener('click',async ev=>{
+        ev.target.disabled=true; ev.target.textContent='取得中...'
+        try{
+          const res=await fetch(`${API}/runtime/llama/builds`)
+          if(!res.ok) throw new Error(`HTTP ${res.status}`)
+          _llamaBuilds=await res.json()
+          renderRuntimeList()
+        }catch(e){ ev.target.disabled=false; ev.target.textContent='ビルド一覧を取得'; alert('取得に失敗しました: '+e.message) }
+      })
+      document.getElementById('llamaBuildInstall')?.addEventListener('click',()=>{
+        const sel=document.getElementById('llamaBuildSel')
+        if(sel) installRuntime('llama-cpp',{asset:sel.value})
+      })
+      document.getElementById('whisperModelApply')?.addEventListener('click',async()=>{
+        const sel=document.getElementById('whisperModelSel')
+        if(!sel) return
+        const model=sel.value
+        const applySelect=async()=>{
+          const res=await fetch(`${API}/runtime/whisper/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model})})
+          if(!res.ok) throw new Error(await res.text())
+        }
+        try{
+          if(installedModels.includes(model)){ await applySelect(); await loadRuntimeStatus() }
+          else{
+            const ok=await installRuntime('whisper',{model})
+            if(ok){ await applySelect(); await loadRuntimeStatus() }
+          }
+        }catch(e){ alert('切り替えに失敗しました: '+e.message) }
+      })
+      document.getElementById('ffmpegInstall')?.addEventListener('click',()=>installRuntime('ffmpeg'))
+    }
+    function _setRuntimeButtonsDisabled(disabled){
+      for(const id of ['llamaVersionApply','llamaBuildInstall','llamaBuildsFetch','whisperModelApply','ffmpegInstall']){
+        const b=document.getElementById(id)
+        if(b) b.disabled=disabled
+      }
+    }
+    async function installRuntime(component,extra={}){
+      if(_runtimeInstalling) return false
+      if(!confirm('ダウンロードを開始しますか？（コンポーネントにより数百 MB の通信が発生します）')) return false
       _runtimeInstalling=component
-      document.querySelectorAll('[data-runtime-install]').forEach(b=>b.disabled=true)
+      _setRuntimeButtonsDisabled(true)
       const prog=document.getElementById(`runtime-progress-${component}`)
       const show=t=>{ if(prog){ prog.style.display=''; prog.textContent=t } }
       show('開始しています...')
       const ac=beginCancelable()
       let failed=false
       try{
-        const res=await fetch(`${API}/runtime/install`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({component})})
+        const res=await fetch(`${API}/runtime/install`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({component,...extra})})
         await readSSE(res,event=>{
           if(event.status==='resolving') show(event.message||'リリースを確認中...')
           else if(event.status==='downloading'){
@@ -692,7 +794,8 @@
       finally{ endCancelable(ac) }
       _runtimeInstalling=null
       if(!failed) await loadRuntimeStatus()
-      else document.querySelectorAll('[data-runtime-install]').forEach(b=>b.disabled=false)
+      else _setRuntimeButtonsDisabled(false)
+      return !failed
     }
 
     function updateProcessButtons(runningKind=null){

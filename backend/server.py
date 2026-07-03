@@ -59,6 +59,9 @@ if _m := _s.get("vl_model"):
         translator.set_model_id(_m)
 elif _m := _s.get("translator_model"):
     translator.set_model_id(_m)
+if _w := _s.get("whisper_model"):
+    if _w in runtime_manager.WHISPER_MODEL_IDS:
+        asr.set_model_id(_w)
 
 
 @asynccontextmanager
@@ -446,6 +449,16 @@ class SetVLModelRequest(BaseModel):
 
 class RuntimeInstallRequest(BaseModel):
     component: str  # "llama-cpp" | "whisper" | "ffmpeg"
+    asset: Optional[str] = None   # llama-cpp: インストールするビルドのアセット名（省略時は推奨）
+    model: Optional[str] = None   # whisper: インストールするモデル名（省略時はデフォルト）
+
+
+class LlamaSelectRequest(BaseModel):
+    version: str  # runtime/llama-server/ 配下のフォルダ名
+
+
+class WhisperSelectRequest(BaseModel):
+    model: str  # WHISPER_MODELS のいずれか
 
 
 class UISettingsRequest(BaseModel):
@@ -672,7 +685,37 @@ def post_ui_settings(req: UISettingsRequest):
 async def runtime_status():
     """外部ランタイム（llama-cpp / Whisper モデル / ffmpeg）のインストール状態を返す"""
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, runtime_manager.get_status)
+    return await loop.run_in_executor(None, runtime_manager.get_status, asr.model_id)
+
+
+@app.get("/runtime/llama/builds")
+async def runtime_llama_builds():
+    """llama.cpp 最新リリースの Windows ビルド一覧（推奨フラグ付き）を返す"""
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, runtime_manager.list_llama_builds)
+    except Exception as e:
+        raise HTTPException(502, f"リリース情報の取得に失敗しました: {e}")
+
+
+@app.post("/runtime/llama/select")
+async def runtime_llama_select(req: LlamaSelectRequest):
+    """使用する llama-server のバージョン（フォルダ）を切り替える"""
+    if req.version not in runtime_manager.installed_llama_versions():
+        raise HTTPException(400, f"インストールされていないバージョンです: {req.version}")
+    save_settings({"llama_version": req.version})
+    return {"status": "ok", "version": req.version}
+
+
+@app.post("/runtime/whisper/select")
+async def runtime_whisper_select(req: WhisperSelectRequest):
+    """使用する Whisper モデルを切り替える（次回の文字起こしから反映）"""
+    if req.model not in runtime_manager.WHISPER_MODEL_IDS:
+        raise HTTPException(400, f"未対応の Whisper モデルです: {req.model}")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, asr.set_model_id, req.model)
+    save_settings({"whisper_model": req.model})
+    return {"status": "ok", "model": req.model}
 
 
 @app.post("/runtime/install")
@@ -698,7 +741,12 @@ async def runtime_install(req: RuntimeInstallRequest):
 
         def run_install():
             try:
-                status = runtime_manager.install(req.component, lambda ev: q.put(("progress", json.dumps(ev, ensure_ascii=False))))
+                status = runtime_manager.install(
+                    req.component,
+                    lambda ev: q.put(("progress", json.dumps(ev, ensure_ascii=False))),
+                    asset=req.asset,
+                    model=req.model,
+                )
                 q.put(("done", json.dumps(status, ensure_ascii=False)))
             except cancel.CanceledError:
                 q.put(("canceled", ""))

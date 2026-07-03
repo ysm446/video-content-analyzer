@@ -1,6 +1,21 @@
 # 変更履歴
 
 ## 2026-07-03
+- **ランタイムを手動選択式に拡張（llama-cpp のビルド選択・Whisper のモデル選択）**
+  - llama-cpp: `GET /runtime/llama/builds` で最新リリースの Windows ビルド一覧
+    （cuda-x.y / cpu / vulkan 等）を取得し、選んでインストールできるように変更。
+    推奨マークは nvidia-smi のドライバ対応 CUDA バージョン以下で最大の CUDA ビルド
+    （NVIDIA GPU なしなら CPU）を自動判定
+  - llama-cpp: インストール済みバージョンをプルダウンで切り替え
+    （`POST /runtime/llama/select` → settings.json の `llama_version`。
+    `LLAMA_CPP_DIR` 環境変数が最優先、未設定時は最新を自動検出）
+  - Whisper: tiny / base / small / medium / large-v3 / large-v3-turbo から選んで
+    インストール（`POST /runtime/install` の `model` 指定）。使用モデルの切り替えは
+    `POST /runtime/whisper/select`（settings.json の `whisper_model`、次回文字起こしから反映）。
+    未インストールのモデルを「適用」すると自動でダウンロード → 切り替え
+  - `asr.py`: 使用モデルを `ASRProcessor.model_id` に持たせ `set_model_id` で切り替え
+    （起動時に settings.json から復元）
+  - 実 GitHub API で b9864 の7ビルドから cuda-13.3 が推奨判定されることを確認
 - **設定にランタイム項目を追加（llama-cpp / Whisper / ffmpeg のインストール対応）**
   - `backend/runtime_manager.py` 新規: 状態検出（インストール済み判定・バージョン・パス）と
     ダウンロード・展開（cancel 対応、zip-slip 対策）

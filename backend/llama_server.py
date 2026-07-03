@@ -22,14 +22,11 @@ from . import cancel
 def resolve_llama_dir() -> Path:
     """llama-server の実行フォルダを解決する。
 
-    優先順: LLAMA_CPP_DIR 環境変数 → runtime/llama-server/ 配下の自動検出
-    （設定画面からのインストールで新バージョンが増えても再設定不要）。
+    優先順: LLAMA_CPP_DIR 環境変数 → settings.json の llama_version（設定画面で選択）
+    → runtime/llama-server/ 配下の自動検出（最新）。
     """
-    env = os.environ.get("LLAMA_CPP_DIR")
-    if env:
-        return Path(env)
-    from .runtime_manager import find_llama_server_dir
-    found = find_llama_server_dir()
+    from .runtime_manager import resolve_active_llama_dir
+    found = resolve_active_llama_dir()
     if found is not None:
         return found
     # 未インストール時のフォールバック（エラーメッセージ用の位置を返す）

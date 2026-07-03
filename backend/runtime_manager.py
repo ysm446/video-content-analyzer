@@ -29,6 +29,18 @@ RUNTIME_DIR = ROOT / "runtime"
 LLAMA_SERVER_DIR = RUNTIME_DIR / "llama-server"
 FFMPEG_DIR = RUNTIME_DIR / "ffmpeg"
 MODELS_DIR = ROOT / "models"
+SETTINGS_PATH = ROOT / "settings.json"
+
+# 設定画面で選べる Whisper モデル（faster-whisper のモデル名）
+WHISPER_MODELS = [
+    {"id": "tiny", "size": "約 75 MB"},
+    {"id": "base", "size": "約 145 MB"},
+    {"id": "small", "size": "約 480 MB"},
+    {"id": "medium", "size": "約 1.5 GB"},
+    {"id": "large-v3", "size": "約 3.1 GB"},
+    {"id": "large-v3-turbo", "size": "約 1.6 GB"},
+]
+WHISPER_MODEL_IDS = {m["id"] for m in WHISPER_MODELS}
 
 _UA_HEADERS = {"User-Agent": "video-content-analyzer"}
 LLAMA_LATEST_RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
@@ -45,21 +57,54 @@ _PROGRESS_EVERY_BYTES = 4 * 1024 * 1024  # 進捗イベントの間引き
 #  状態検出
 # ------------------------------------------------------------------ #
 
+def _load_settings() -> dict:
+    """settings.json を読む（読み取り専用。書き込みは server.py の save_settings が行う）。"""
+    try:
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _has_llama_exe(child: Path) -> bool:
+    return (child / "llama-server.exe").exists() or (child / "bin" / "llama-server.exe").exists()
+
+
+def installed_llama_versions() -> list[str]:
+    """runtime/llama-server/ 配下の llama-server.exe を含むフォルダ名一覧。"""
+    if not LLAMA_SERVER_DIR.is_dir():
+        return []
+    return sorted(
+        child.name for child in LLAMA_SERVER_DIR.iterdir()
+        if child.is_dir() and _has_llama_exe(child)
+    )
+
+
 def find_llama_server_dir() -> Path | None:
     """runtime/llama-server/ 配下で llama-server.exe を含むフォルダを返す（複数なら最新）。"""
-    if not LLAMA_SERVER_DIR.is_dir():
-        return None
     candidates: list[tuple[float, Path]] = []
-    for child in sorted(LLAMA_SERVER_DIR.iterdir()):
-        if not child.is_dir():
-            continue
-        for exe in (child / "llama-server.exe", child / "bin" / "llama-server.exe"):
-            if exe.exists():
-                candidates.append((child.stat().st_mtime, child))
-                break
+    for name in installed_llama_versions():
+        child = LLAMA_SERVER_DIR / name
+        candidates.append((child.stat().st_mtime, child))
     if not candidates:
         return None
     return max(candidates)[1]
+
+
+def resolve_active_llama_dir() -> Path | None:
+    """使用する llama-server フォルダを解決する。
+
+    優先順: LLAMA_CPP_DIR 環境変数 → settings.json の llama_version（設定画面で選択）
+    → 自動検出（最新）。
+    """
+    env = os.environ.get("LLAMA_CPP_DIR")
+    if env:
+        return Path(env)
+    selected = _load_settings().get("llama_version")
+    if selected:
+        child = LLAMA_SERVER_DIR / str(selected)
+        if child.is_dir() and _has_llama_exe(child):
+            return child
+    return find_llama_server_dir()
 
 
 def ffmpeg_runtime_bin() -> Path | None:
@@ -92,15 +137,15 @@ def _ffmpeg_version_line() -> str:
         return ""
 
 
-def find_whisper_model_dir() -> Path | None:
+def find_whisper_model_dir(model_id: str) -> Path | None:
     """models/ の HF キャッシュから Whisper モデル（model.bin を含む snapshot）を探す。
 
     faster-whisper のモデル名→リポジトリの対応は組織名が変わりうるので
-    `models--*faster-whisper-{MODEL_ID}` をワイルドカードで照合する。
+    `models--*faster-whisper-{model_id}` をワイルドカードで照合する。
     """
     if not MODELS_DIR.is_dir():
         return None
-    pattern = f"models--*faster-whisper-{WHISPER_MODEL_ID}"
+    pattern = f"models--*faster-whisper-{model_id}"
     for repo_dir in sorted(MODELS_DIR.glob(pattern)):
         for snap in sorted((repo_dir / "snapshots").glob("*")):
             if (snap / "model.bin").exists():
@@ -108,28 +153,40 @@ def find_whisper_model_dir() -> Path | None:
     return None
 
 
-def get_status() -> dict:
-    """3コンポーネントのインストール状態を返す。"""
-    llama_dir = find_llama_server_dir()
+def installed_whisper_models() -> list[str]:
+    """インストール済み（model.bin あり）の Whisper モデル名一覧。"""
+    return [m["id"] for m in WHISPER_MODELS if find_whisper_model_dir(m["id"]) is not None]
+
+
+def get_status(whisper_active: str | None = None) -> dict:
+    """3コンポーネントのインストール状態を返す。
+
+    whisper_active: 現在使用中の Whisper モデル ID（server が asr.model_id を渡す）。
+    """
+    active_llama = resolve_active_llama_dir()
     env_dir = os.environ.get("LLAMA_CPP_DIR")
 
     ffmpeg_path = shutil.which("ffmpeg")
     ffprobe_ok = shutil.which("ffprobe") is not None
 
-    whisper_dir = find_whisper_model_dir()
+    whisper_model = whisper_active or WHISPER_MODEL_ID
+    whisper_dir = find_whisper_model_dir(whisper_model)
 
     return {
         "llama_cpp": {
-            "installed": llama_dir is not None or bool(env_dir),
-            "version": llama_dir.name if llama_dir else "",
-            "path": env_dir or (str(llama_dir) if llama_dir else ""),
+            "installed": active_llama is not None,
+            "version": active_llama.name if active_llama else "",
+            "path": env_dir or (str(active_llama) if active_llama else ""),
             "env_override": bool(env_dir),
+            "versions": installed_llama_versions(),
             "cuda": torch.cuda.is_available(),
         },
         "whisper": {
             "installed": whisper_dir is not None,
-            "model": WHISPER_MODEL_ID,
+            "model": whisper_model,
             "path": str(whisper_dir) if whisper_dir else "",
+            "installed_models": installed_whisper_models(),
+            "available_models": WHISPER_MODELS,
         },
         "ffmpeg": {
             "installed": ffmpeg_path is not None and ffprobe_ok,
@@ -201,45 +258,100 @@ def _safe_extract_zip(zip_path: Path, dest_dir: Path) -> None:
 #  llama-cpp
 # ------------------------------------------------------------------ #
 
-def _pick_llama_assets(assets: list[dict]) -> tuple[dict, dict | None]:
-    """リリースアセットから (本体 zip, cudart zip または None) を選ぶ。
+_LLAMA_WIN_ASSET_RE = re.compile(r"^llama-b\d+-bin-win-([a-z0-9.-]+)-x64\.zip$")
+_CUDA_VARIANT_RE = re.compile(r"^cuda-([\d.]+)$")
 
-    CUDA が使える環境では win-cuda x64 ビルド（複数あれば CUDA バージョン最大）を、
-    無ければ win-cpu x64 ビルドを選ぶ。
+
+def _driver_cuda_version() -> tuple | None:
+    """NVIDIA ドライバが対応する CUDA バージョンを nvidia-smi から取得する（例: (13, 0)）。"""
+    try:
+        out = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=10)
+        m = re.search(r"CUDA Version:\s*([\d.]+)", out.stdout or "")
+        if m:
+            return tuple(int(x) for x in m.group(1).split(".") if x.isdigit())
+    except Exception:
+        pass
+    return None
+
+
+def _ver_tuple(s: str) -> tuple:
+    return tuple(int(x) for x in s.split(".") if x.isdigit())
+
+
+def list_llama_builds() -> dict:
+    """llama.cpp 最新リリースの Windows x64 ビルド一覧を返す。
+
+    各ビルドに variant（cuda-13.1 / cpu / vulkan 等）と、この環境への推奨フラグを付ける。
+    推奨は「NVIDIA ドライバの対応 CUDA バージョン以下で最大の CUDA ビルド」
+    （NVIDIA GPU が無ければ CPU ビルド）。
     """
-    cuda_re = re.compile(r"^llama-b\d+-bin-win-cuda-([\d.]+)-x64\.zip$")
-    cpu_re = re.compile(r"^llama-b\d+-bin-win-cpu-x64\.zip$")
-
-    def ver_tuple(s: str) -> tuple:
-        return tuple(int(x) for x in s.split(".") if x.isdigit())
-
-    if torch.cuda.is_available():
-        cuda_hits = []
-        for a in assets:
-            m = cuda_re.match(a.get("name", ""))
-            if m:
-                cuda_hits.append((ver_tuple(m.group(1)), m.group(1), a))
-        if cuda_hits:
-            _ver, ver_str, asset = max(cuda_hits)
-            cudart = next(
-                (a for a in assets
-                 if a.get("name", "") == f"cudart-llama-bin-win-cuda-{ver_str}-x64.zip"),
-                None,
-            )
-            return asset, cudart
-
-    cpu_hit = next((a for a in assets if cpu_re.match(a.get("name", ""))), None)
-    if cpu_hit:
-        return cpu_hit, None
-    raise RuntimeError("対応する Windows ビルドがリリースに見つかりませんでした")
-
-
-def install_llama_cpp(progress_cb) -> dict:
-    """llama.cpp の最新リリースをダウンロードして runtime/llama-server/ に展開する。"""
-    progress_cb({"status": "resolving", "message": "最新リリースを確認中..."})
     release = _fetch_json(LLAMA_LATEST_RELEASE_API)
     assets = release.get("assets") or []
-    main_asset, cudart_asset = _pick_llama_assets(assets)
+    builds = []
+    for a in assets:
+        m = _LLAMA_WIN_ASSET_RE.match(a.get("name", ""))
+        if not m:
+            continue
+        builds.append({
+            "asset": a["name"],
+            "variant": m.group(1),
+            "size": int(a.get("size") or 0),
+            "recommended": False,
+        })
+
+    driver_cuda = _driver_cuda_version() if torch.cuda.is_available() else None
+    recommended = None
+    if driver_cuda:
+        cuda_builds = []
+        for b in builds:
+            cm = _CUDA_VARIANT_RE.match(b["variant"])
+            if cm and _ver_tuple(cm.group(1))[:1] <= driver_cuda[:1]:
+                cuda_builds.append((_ver_tuple(cm.group(1)), b))
+        if cuda_builds:
+            recommended = max(cuda_builds)[1]
+    if recommended is None:
+        recommended = next((b for b in builds if b["variant"] == "cpu"), None)
+    if recommended:
+        recommended["recommended"] = True
+
+    return {
+        "tag": release.get("tag_name") or "",
+        "driver_cuda": ".".join(str(x) for x in driver_cuda) if driver_cuda else "",
+        "builds": builds,
+    }
+
+
+def install_llama_cpp(progress_cb, asset_name: str | None = None) -> dict:
+    """llama.cpp の最新リリースからビルドをダウンロードして runtime/llama-server/ に展開する。
+
+    asset_name: インストールするアセット名（設定画面で選択）。省略時は推奨ビルド。
+    CUDA ビルドの場合は対応する cudart 同梱 zip も一緒に展開する。
+    """
+    progress_cb({"status": "resolving", "message": "リリース情報を確認中..."})
+    release = _fetch_json(LLAMA_LATEST_RELEASE_API)
+    assets = release.get("assets") or []
+
+    if asset_name:
+        main_asset = next((a for a in assets if a.get("name") == asset_name), None)
+        if main_asset is None or not _LLAMA_WIN_ASSET_RE.match(asset_name):
+            raise ValueError(f"リリースに存在しないビルドです: {asset_name}")
+    else:
+        info = list_llama_builds()
+        rec = next((b for b in info["builds"] if b["recommended"]), None)
+        if rec is None:
+            raise RuntimeError("対応する Windows ビルドがリリースに見つかりませんでした")
+        main_asset = next(a for a in assets if a.get("name") == rec["asset"])
+
+    # CUDA ビルドなら cudart 同梱 zip も取得（ランタイム DLL が本体 zip に含まれないため）
+    cudart_asset = None
+    vm = _LLAMA_WIN_ASSET_RE.match(main_asset["name"])
+    cm = _CUDA_VARIANT_RE.match(vm.group(1)) if vm else None
+    if cm:
+        cudart_asset = next(
+            (a for a in assets
+             if a.get("name", "") == f"cudart-llama-bin-win-cuda-{cm.group(1)}-x64.zip"),
+            None,
+        )
 
     name = main_asset["name"]
     dest_dir = LLAMA_SERVER_DIR / name[: -len(".zip")]
@@ -257,8 +369,7 @@ def install_llama_cpp(progress_cb) -> dict:
         for _asset, zip_path in zips:
             zip_path.unlink(missing_ok=True)
 
-    exe = dest_dir / "llama-server.exe"
-    if not exe.exists() and not (dest_dir / "bin" / "llama-server.exe").exists():
+    if not _has_llama_exe(dest_dir):
         raise RuntimeError(f"展開後に llama-server.exe が見つかりません: {dest_dir}")
     print(f"[Runtime] llama-cpp をインストール: {dest_dir.name}")
     return get_status()
@@ -289,31 +400,35 @@ def install_ffmpeg(progress_cb) -> dict:
 #  Whisper モデル
 # ------------------------------------------------------------------ #
 
-def install_whisper(progress_cb) -> dict:
+def install_whisper(progress_cb, model: str | None = None) -> dict:
     """faster-whisper のモデル重みを models/ へ事前ダウンロードする。
 
+    model: ダウンロードするモデル名（WHISPER_MODELS のいずれか）。省略時はデフォルト。
     Hugging Face Hub のダウンロードはバイト単位の進捗を取りにくいため
     不定長（indeterminate）の進捗イベントのみ通知する。中断（cancel）は非対応。
     """
+    model_id = model or WHISPER_MODEL_ID
+    if model_id not in WHISPER_MODEL_IDS:
+        raise ValueError(f"未対応の Whisper モデルです: {model_id}")
     progress_cb({
         "status": "downloading",
-        "asset": f"faster-whisper {WHISPER_MODEL_ID}",
+        "asset": f"faster-whisper {model_id}",
         "received": 0,
         "total": 0,
         "percent": None,
     })
     from faster_whisper.utils import download_model  # 重い import を遅延
 
-    path = download_model(WHISPER_MODEL_ID, cache_dir=str(MODELS_DIR))
+    path = download_model(model_id, cache_dir=str(MODELS_DIR))
     print(f"[Runtime] Whisper モデルをダウンロード: {path}")
     return get_status()
 
 
-def install(component: str, progress_cb) -> dict:
+def install(component: str, progress_cb, asset: str | None = None, model: str | None = None) -> dict:
     if component == "llama-cpp":
-        return install_llama_cpp(progress_cb)
+        return install_llama_cpp(progress_cb, asset_name=asset)
     if component == "ffmpeg":
         return install_ffmpeg(progress_cb)
     if component == "whisper":
-        return install_whisper(progress_cb)
+        return install_whisper(progress_cb, model=model)
     raise ValueError(f"未対応のコンポーネント: {component}")

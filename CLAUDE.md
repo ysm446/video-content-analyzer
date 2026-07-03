@@ -124,10 +124,17 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### ランタイム
 - `GET  /runtime/status` — llama-cpp / Whisper モデル / ffmpeg のインストール状態
-- `POST /runtime/install` — `{component: "llama-cpp" | "whisper" | "ffmpeg"}` をダウンロード・
-  インストール（SSE: resolving / downloading / extracting / canceled / done / error）。
-  llama-cpp は GitHub 最新リリースから CUDA/CPU ビルドを自動選択、ffmpeg は BtbN ビルド、
-  Whisper は faster-whisper モデル重みを models/ へ事前ダウンロード
+  （llama はインストール済みバージョン一覧、whisper は選択可能モデル一覧を含む）
+- `GET  /runtime/llama/builds` — llama.cpp 最新リリースの Windows ビルド一覧。
+  NVIDIA ドライバの対応 CUDA バージョン（nvidia-smi）以下で最大の CUDA ビルドに推奨フラグ
+- `POST /runtime/llama/select` — 使用する llama-server バージョンの切り替え
+  （settings.json の `llama_version`。`LLAMA_CPP_DIR` 環境変数が最優先）
+- `POST /runtime/whisper/select` — 使用する Whisper モデルの切り替え
+  （settings.json の `whisper_model`。次回の文字起こしから反映）
+- `POST /runtime/install` — `{component, asset?, model?}` をダウンロード・インストール
+  （SSE: resolving / downloading / extracting / canceled / done / error）。
+  llama-cpp は asset でビルドを指定（省略時は推奨ビルド）、whisper は model でモデルを指定、
+  ffmpeg は BtbN ビルド固定
 
 ## キャッシュデータ形式（`{動画名}.cache/data.json`）
 
@@ -262,7 +269,7 @@ video.mp4
 | `frontend/pages/app.html` | 統合UI（字幕生成・2言語プレイヤー・動画レビュー・Q&A・チャプター編集） |
 | 左サイドバー | プレイヤータブ + 設定ボタン（設定ポップアップを開く）+ モデル管理ボタン |
 | 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
-| ランタイム設定 | llama-cpp / Whisper モデル / ffmpeg の状態表示とインストールボタン。ダウンロード進捗は行内に表示し、ステータスバーの中止ボタンで中断可（Whisper を除く） |
+| ランタイム設定 | llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |

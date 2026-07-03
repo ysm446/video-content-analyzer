@@ -13,7 +13,8 @@ import re
 
 from . import cancel
 
-# モデル名: large-v3-turbo（高速）。精度重視なら WHISPER_MODEL=large-v3 で上書き可。
+# デフォルトモデル: large-v3-turbo（高速）。環境変数 WHISPER_MODEL で上書き可。
+# 実際に使うモデルは ASRProcessor.model_id（設定画面から切り替え、settings.json に永続化）。
 MODEL_ID = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 # モデルキャッシュ先（HF_HOME と同じ models/ 配下に置く）
 DOWNLOAD_ROOT = os.environ.get("WHISPER_DOWNLOAD_ROOT", "models")
@@ -61,6 +62,15 @@ _add_nvidia_dlls()
 class ASRProcessor:
     def __init__(self):
         self.model = None
+        self.model_id = MODEL_ID
+
+    def set_model_id(self, model_id: str):
+        """使用する Whisper モデルを切り替える（ロード済みならアンロードして次回ロード時に反映）。"""
+        if self.model_id == model_id:
+            return
+        self.unload()
+        self.model_id = model_id
+        print(f"[ASR] モデルを {model_id} に変更（次回使用時にロード）")
 
     def load(self):
         import ctranslate2
@@ -72,12 +82,12 @@ class ASRProcessor:
             device, compute = "cpu", "int8"
 
         self.model = WhisperModel(
-            MODEL_ID,
+            self.model_id,
             device=device,
             compute_type=compute,
             download_root=DOWNLOAD_ROOT,
         )
-        print(f"[ASR] Loaded faster-whisper {MODEL_ID} ({device}/{compute})")
+        print(f"[ASR] Loaded faster-whisper {self.model_id} ({device}/{compute})")
 
     def unload(self):
         if self.model is not None:

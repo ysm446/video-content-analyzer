@@ -2,6 +2,13 @@
 
 最終更新: 2026-07-03
 
+## ランタイムの手動選択対応（2026-07-03 完了）
+- [x] llama-cpp: ビルド一覧（推奨マーク＝ドライバ CUDA 基準）から選択インストール
+- [x] llama-cpp: インストール済みバージョンの切り替え（settings.json `llama_version`）
+- [x] Whisper: モデル一覧（tiny〜large-v3-turbo）から選択インストール・使用モデル切り替え
+- [x] ロジックはユニットテスト済み（推奨判定・選択解決・バリデーション）、live API 確認済み
+- [ ] UI からの通し操作（切り替え→文字起こし/分析）の実機確認は未実施
+
 ## ランタイム管理（2026-07-03 完了）
 - [x] `backend/runtime_manager.py`（状態検出・ダウンロード・展開・zip-slip 対策）
 - [x] `GET /runtime/status` / `POST /runtime/install`（SSE 進捗）
