@@ -28,6 +28,7 @@ from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_outp
 from .video_reviewer import VideoReviewer, available_review_models, get_prompts as _review_prompts, parse_timestamp_seconds
 from . import prompts as _prompts
 from . import cancel
+from . import runtime_manager
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -62,6 +63,8 @@ elif _m := _s.get("translator_model"):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # runtime/ffmpeg がインストール済みなら PATH に追加（システムに ffmpeg が無い環境向け）
+    runtime_manager.add_ffmpeg_to_path()
     print("Video Content Analyzer API が起動しました（モデルはオンデマンドでロード）")
     yield
     # シャットダウン時に VRAM を解放
@@ -441,6 +444,10 @@ class SetVLModelRequest(BaseModel):
     model_id: str
 
 
+class RuntimeInstallRequest(BaseModel):
+    component: str  # "llama-cpp" | "whisper" | "ffmpeg"
+
+
 class UISettingsRequest(BaseModel):
     frame_mode: Optional[str] = None  # "uniform" | "scene"
     max_frames: Optional[int] = None
@@ -659,6 +666,63 @@ def post_ui_settings(req: UISettingsRequest):
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
+
+
+@app.get("/runtime/status")
+async def runtime_status():
+    """外部ランタイム（llama-cpp / Whisper モデル / ffmpeg）のインストール状態を返す"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, runtime_manager.get_status)
+
+
+@app.post("/runtime/install")
+async def runtime_install(req: RuntimeInstallRequest):
+    """
+    ランタイムをダウンロード・インストールする（SSE）。
+
+    Events:
+      {"status": "resolving", "message": str}          ← リリース情報の取得中（llama-cpp）
+      {"status": "downloading", "asset": str, "received": int, "total": int, "percent": float|null}
+      {"status": "extracting", "message": str}
+      {"status": "canceled"}                            ← POST /cancel で中断（whisper は非対応）
+      {"status": "done", "runtime": {...}}              ← 完了後の /runtime/status と同形式
+      {"status": "error", "message": str}
+    """
+    if req.component not in runtime_manager.COMPONENTS:
+        raise HTTPException(400, f"未対応のコンポーネント: {req.component}")
+
+    async def stream():
+        loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
+        q: queue.Queue[tuple[str, str]] = queue.Queue()
+
+        def run_install():
+            try:
+                status = runtime_manager.install(req.component, lambda ev: q.put(("progress", json.dumps(ev, ensure_ascii=False))))
+                q.put(("done", json.dumps(status, ensure_ascii=False)))
+            except cancel.CanceledError:
+                q.put(("canceled", ""))
+            except Exception as e:
+                q.put(("error", str(e)))
+
+        th = threading.Thread(target=run_install, daemon=True)
+        th.start()
+
+        while True:
+            kind, payload = await loop.run_in_executor(None, q.get)
+            if kind == "progress":
+                yield sse(json.loads(payload))
+            elif kind == "done":
+                yield sse({"status": "done", "runtime": json.loads(payload)})
+                break
+            elif kind == "canceled":
+                yield sse_canceled()
+                break
+            else:
+                yield sse({"status": "error", "message": payload})
+                break
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.get("/models")

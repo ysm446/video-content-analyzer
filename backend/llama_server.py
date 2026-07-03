@@ -19,10 +19,24 @@ import torch
 
 from . import cancel
 
-LLAMA_CPP_DIR = Path(os.environ.get(
-    "LLAMA_CPP_DIR",
-    str(Path(__file__).parent.parent / "runtime" / "llama-server" / "llama-b8763-bin-win-cuda-13.1-x64"),
-))
+def resolve_llama_dir() -> Path:
+    """llama-server の実行フォルダを解決する。
+
+    優先順: LLAMA_CPP_DIR 環境変数 → runtime/llama-server/ 配下の自動検出
+    （設定画面からのインストールで新バージョンが増えても再設定不要）。
+    """
+    env = os.environ.get("LLAMA_CPP_DIR")
+    if env:
+        return Path(env)
+    from .runtime_manager import find_llama_server_dir
+    found = find_llama_server_dir()
+    if found is not None:
+        return found
+    # 未インストール時のフォールバック（エラーメッセージ用の位置を返す）
+    return Path(__file__).parent.parent / "runtime" / "llama-server"
+
+
+LLAMA_CPP_DIR = resolve_llama_dir()
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "16384"))
 
@@ -53,10 +67,14 @@ class LlamaServerManager:
         return f"http://{LLAMA_CPP_HOST}:{self.port}"
 
     def _find_executable(self) -> Path:
-        for candidate in (LLAMA_CPP_DIR / "llama-server.exe", LLAMA_CPP_DIR / "bin" / "llama-server.exe"):
+        # 呼び出しごとに解決する（設定画面からインストールした直後も再起動なしで使える）
+        base = resolve_llama_dir()
+        for candidate in (base / "llama-server.exe", base / "bin" / "llama-server.exe"):
             if candidate.exists():
                 return candidate
-        raise FileNotFoundError(f"llama-server.exe が見つかりません: {LLAMA_CPP_DIR}")
+        raise FileNotFoundError(
+            f"llama-server.exe が見つかりません: {base}（設定 → ランタイム からインストールできます）"
+        )
 
     def _request_json(self, method: str, path: str, payload: Optional[dict] = None, timeout: float = 30.0) -> dict:
         data = None
