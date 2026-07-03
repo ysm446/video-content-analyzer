@@ -221,6 +221,9 @@
     .qa-meta-item svg.lucide{width:13px;height:13px;stroke-width:1.9}
     .qa-answering{font-size:12px;color:var(--text-dim)}
     .qa-elapsed{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
+    .qa-suggest-row{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:0 10px 10px;flex-shrink:0}
+    .qa-suggest-chip{border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;padding:6px 14px;border-radius:99px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:background .15s,border-color .15s}
+    .qa-suggest-chip:hover{background:var(--accent-tint-bg);border-color:var(--accent-tint-border)}
     .qa-input-row{padding:12px 10px 14px;border-top:1px solid var(--border);display:flex;gap:8px}
     .qa-input{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--radius)}
 
@@ -449,6 +452,7 @@
             <div class="qa-history" id="qaHistory">
               <div class="qa-placeholder" id="qaPlaceholder">動画を読み込むと質問できます</div>
             </div>
+            <div class="qa-suggest-row" id="qaSuggestRow" style="display:none"></div>
             <div class="qa-input-row">
               <input type="text" class="qa-input" id="qaInput" disabled placeholder="例：この動画の要点は？">
               <button class="btn btn-primary" id="qaBtn" disabled style="padding:8px 14px">送信</button>
@@ -962,6 +966,25 @@
       input.disabled=!enabled
       btn.disabled=!enabled
       if(ph) ph.style.display = enabled ? 'none' : 'flex'
+      renderQaSuggestions()
+    }
+
+    // テンプレート質問チップ（固定＋分析で生成された内容ベースの質問）
+    const QA_STATIC_SUGGESTIONS=['この動画を要約して','重要なポイントを3つ挙げて']
+    function renderQaSuggestions(){
+      const row=document.getElementById('qaSuggestRow')
+      const input=document.getElementById('qaInput')
+      if(!row||!input) return
+      if(input.disabled||!state.videoPath){ row.style.display='none'; row.innerHTML=''; return }
+      const dynamic=(state.tocData?.meta?.questions||[]).filter(q=>typeof q==='string'&&q.trim()).slice(0,3)
+      const all=[...QA_STATIC_SUGGESTIONS,...dynamic]
+      row.innerHTML=all.map(q=>`<button class="qa-suggest-chip" type="button" title="${escHtml(q)}">${escHtml(q)}</button>`).join('')
+      row.style.display=all.length?'flex':'none'
+      row.querySelectorAll('.qa-suggest-chip').forEach((b,i)=>b.addEventListener('click',()=>{
+        if(document.getElementById('qaBtn').disabled) return
+        document.getElementById('qaInput').value=all[i]
+        submitQuestion()
+      }))
     }
 
     function trimLeadingChatWhitespace(text){
@@ -1327,6 +1350,7 @@
       if(!Array.isArray(state.tocData.scenes)) state.tocData.scenes=[]
       updateTocSaveButton()
       renderAnalysisDetail(analysisFromTocData(data))
+      renderQaSuggestions()
     }
 
     function analysisFromTocData(data){
@@ -1373,6 +1397,7 @@
           summary:result?.summary||'',
           detail:result?.detail||'',
           tags:Array.isArray(result?.tags)?result.tags:[],
+          questions:Array.isArray(result?.questions)?result.questions:[],
         },
         toc,
         bookmarks:Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[],

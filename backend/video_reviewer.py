@@ -45,7 +45,8 @@ _ANALYZE_JSON_FORMAT = (
     "    ... （場面転換ごとに繰り返す）\n"
     "  ],\n"
     '  "tags": ["タグ1", "タグ2", "タグ3"],\n'
-    '  "genre": "ジャンル（例：アクション映画、料理動画、講義、スポーツなど）"\n'
+    '  "genre": "ジャンル（例：アクション映画、料理動画、講義、スポーツなど）",\n'
+    '  "questions": ["動画の内容についての質問1", "質問2", "質問3"]\n'
     "}"
 )
 
@@ -59,6 +60,7 @@ _ANALYZE_INSTR_VISUAL = (
     "description は各場面につき1文だけ、短く書いてください。"
     "summary は1〜2文の概要、detail は動画全体の内容のまとめを概要より詳しく"
     "（要点ごとに複数文または箇条書きで）書いてください。"
+    "questions には、この動画の内容に基づいて視聴者が聞きたくなる具体的な質問を3つ書いてください。"
 )
 
 _ANALYZE_INSTR_AUDIO = (
@@ -70,6 +72,7 @@ _ANALYZE_INSTR_AUDIO = (
     "description は各場面につき1文だけ、短く書いてください。"
     "summary は1〜2文の概要、detail は映像と音声を総合した内容のまとめを概要より詳しく"
     "（要点ごとに複数文または箇条書きで）書いてください。"
+    "questions には、この動画の内容に基づいて視聴者が聞きたくなる具体的な質問を3つ書いてください。"
 )
 
 # 構造化出力（llama-server の response_format → GBNF 制約）用スキーマ。
@@ -92,8 +95,9 @@ _ANALYZE_SCHEMA = {
         "scenes": {"type": "array", "items": _SCENE_ITEM_SCHEMA},
         "tags": {"type": "array", "items": {"type": "string"}},
         "genre": {"type": "string"},
+        "questions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["summary", "detail", "scenes", "tags", "genre"],
+    "required": ["summary", "detail", "scenes", "tags", "genre", "questions"],
 }
 
 _ANALYZE_SCHEMA_SCENES = {
@@ -330,6 +334,7 @@ class VideoReviewer:
             "scenes": [],
             "tags": tags,
             "genre": genre or "不明",
+            "questions": [],
         }
 
     def _frame_to_data_url(self, frame: Image.Image, max_pixels: int | None = None) -> str:
@@ -917,7 +922,7 @@ class VideoReviewer:
         fields = (
             "scenes[].label / scenes[].description"
             if scenes_only
-            else "summary / scenes[].label / scenes[].description / tags / genre"
+            else "summary / scenes[].label / scenes[].description / tags / genre / questions"
         )
         lang_word = "日本語" if output_lang == "ja" else "英語"
         lang_instr = f"{fields} は{lang_word}で記述してください。"

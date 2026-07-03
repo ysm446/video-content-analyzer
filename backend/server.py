@@ -1353,11 +1353,14 @@ async def review_analyze(req: ReviewRequest):
                         })
                         continue
                 entries = _merge_toc_entries(entries + refined_entries, duration)
+            questions = coarse_result.get("questions")
+            questions = [str(q).strip() for q in questions if str(q).strip()][:3] if isinstance(questions, list) else []
             result = {
                 "summary": coarse_result.get("summary", ""),
                 "detail": coarse_result.get("detail", ""),
                 "genre": coarse_result.get("genre", "不明"),
                 "tags": coarse_result.get("tags", []),
+                "questions": questions,
                 "scenes": [
                     {
                         "timestamp": e.get("timestamp", "0:00"),
