@@ -110,7 +110,9 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /review/load` — VL モデルを明示的にロード
 - `POST /review/unload` — VL モデルを VRAM から解放
 - `POST /review/analyze` — 動画分析（SSE）
-- `POST /review/qa` — 動画への質問（SSE）
+- `POST /review/qa` — 動画への質問（SSE）。`history` で直近ターンを渡すマルチターン対応。
+  フレームは「メモリキャッシュ → 分析キャッシュのサムネール → ffmpeg 並列シーク抽出」の
+  順で取得（詳細: docs/design/qa-chat.md）
 - `POST /review/toc/load` — 旧形式 `.toc.json` の読み込み（後方互換・読み取り専用。保存は `/cache/save` に一本化済み）
 
 ### キャッシュ
@@ -201,7 +203,7 @@ error             → {message}
 ### `/review/qa`
 ```
 loading_model
-extracting_frames
+extracting_frames → フレームキャッシュ・分析キャッシュサムネールが使えない場合のみ
 answering        → {count}
 answer_delta     → {delta}（ストリーミング回答）
 qa_warning       → {message}（トークン上限打ち切り・フレーム縮小の通知）

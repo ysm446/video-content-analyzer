@@ -6,10 +6,13 @@ import re
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import ffmpeg
 from PIL import Image
+
+from . import cancel
 
 from .model_catalog import (
     available_review_models as catalog_review_models,
@@ -611,27 +614,111 @@ class VideoReviewer:
             "mode": "scene",
         }
 
+    @staticmethod
+    def _grab_frame_at(video_path: str, ts: float) -> Image.Image | None:
+        """指定時刻へ入力シークして1フレームだけ取り出す（全編デコードしない）。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = str(Path(tmpdir) / "f.jpg")
+            cmd = [
+                "ffmpeg", "-ss", f"{max(0.0, ts):.3f}", "-i", video_path,
+                "-frames:v", "1", "-q:v", "2", out, "-y",
+            ]
+            result = subprocess.run(cmd, capture_output=True)
+            if result.returncode != 0 or not Path(out).exists():
+                return None
+            return Image.open(out).copy()
+
+    def _extract_frames_at(self, video_path: str, timestamps: list[float]) -> tuple[list[Image.Image], list[float]]:
+        """複数時刻のフレームを並列シークで取り出す。取得できた (frames, timestamps) を返す。"""
+        def grab(ts: float) -> Image.Image | None:
+            if cancel.is_canceled():
+                return None
+            return self._grab_frame_at(video_path, ts)
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            results = list(ex.map(grab, timestamps))
+        cancel.raise_if_canceled()
+        frames: list[Image.Image] = []
+        ok_ts: list[float] = []
+        for ts, frame in zip(timestamps, results):
+            if frame is not None:
+                frames.append(frame)
+                ok_ts.append(ts)
+        return frames, ok_ts
+
     def extract_frames(self, video_path: str, max_frames: int, min_interval: float) -> tuple[list[Image.Image], dict]:
+        """均等間隔サンプリング。
+
+        以前は fps フィルタで全編をデコードしていたが、長い動画では抽出だけで
+        数十秒かかるため、各時刻への入力シーク（-ss）×並列実行に変更した。
+        """
         duration = self._get_duration(video_path)
         interval = max(duration / max(max_frames, 1), min_interval)
+        count = max(1, min(int(max_frames), int(duration / interval) + 1))
+        want_ts: list[float] = []
+        for i in range(count):
+            ts = round(min(i * interval, max(duration - 0.1, 0.0)), 1)
+            if not want_ts or ts > want_ts[-1]:
+                want_ts.append(ts)
 
-        frames: list[Image.Image] = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
-            self._run_ffmpeg_extract(
-                ffmpeg.input(video_path)
-                .filter("fps", fps=f"1/{interval:.4f}")
-                .output(outpattern, format="image2", vcodec="mjpeg", q=2)
-                .overwrite_output()
-            )
-            for fname in sorted(os.listdir(tmpdir)):
-                if fname.startswith("frame_") and fname.endswith(".jpg"):
-                    frames.append(Image.open(str(Path(tmpdir) / fname)).copy())
+        frames, timestamps = self._extract_frames_at(video_path, want_ts)
+        if not frames:
+            raise RuntimeError("ffmpeg フレーム抽出に失敗しました（フレームを1枚も取得できません）")
 
-        timestamps = [round(i * interval, 1) for i in range(len(frames))]
         meta = {"count": len(frames), "interval": interval, "duration": duration, "timestamps": timestamps, "mode": "uniform"}
         m, s = divmod(int(duration), 60)
-        print(f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚 (動画 {m}分{s}秒 / 間隔 {interval:.1f}秒 / 最大 {max_frames}枚指定)")
+        print(f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚 (動画 {m}分{s}秒 / 間隔 {interval:.1f}秒 / 最大 {max_frames}枚指定 / 並列シーク)")
+        return frames, meta
+
+    def load_frames_from_analysis_cache(self, video_path: str) -> tuple[list[Image.Image], dict] | None:
+        """分析キャッシュ（data.json のシーン＋サムネール）から QA 用フレームを復元する。
+
+        分析済みの動画なら ffmpeg での再抽出なしに即チャットを開始できる。
+        シーンサムネールは場面転換ごとの代表フレームなので、均等サンプリングより
+        むしろ内容の網羅性が高い。シーンが少なすぎる（4枚未満）場合は None。
+        """
+        p = Path(video_path)
+        cache_dir = p.parent / (p.stem + ".cache")
+        data_file = cache_dir / "data.json"
+        if not data_file.exists():
+            return None
+        try:
+            data = json.loads(data_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        scenes = data.get("scenes") if isinstance(data, dict) else None
+        if not isinstance(scenes, list):
+            return None
+        frames: list[Image.Image] = []
+        timestamps: list[float] = []
+        cache_resolved = cache_dir.resolve()
+        for s in sorted(scenes, key=lambda x: float(x.get("start_sec") or 0.0) if isinstance(x, dict) else 0.0):
+            if not isinstance(s, dict):
+                continue
+            thumb = s.get("thumbnail")
+            start = s.get("start_sec")
+            if not thumb or not isinstance(start, (int, float)):
+                continue
+            tp = cache_dir / str(thumb)
+            try:
+                if not tp.resolve().is_relative_to(cache_resolved):
+                    continue  # キャッシュフォルダ外への参照は無視
+                if not tp.exists():
+                    continue
+                frames.append(Image.open(tp).convert("RGB").copy())
+            except Exception:
+                continue
+            timestamps.append(float(start))
+        if len(frames) < 4:
+            return None
+        meta = {
+            "count": len(frames),
+            "interval": None,
+            "duration": float(data.get("duration") or 0.0),
+            "timestamps": timestamps,
+            "mode": "analysis-cache",
+        }
+        print(f"[VideoReviewer] 分析キャッシュのサムネール {len(frames)}枚 を QA フレームに再利用")
         return frames, meta
 
     def extract_frames_between(self, video_path: str, start_sec: float, end_sec: float, max_frames: int, min_interval: float) -> tuple[list[Image.Image], dict]:
@@ -845,10 +932,24 @@ class VideoReviewer:
         return f"[音声書き起こし]\n{truncated}\n\n{instr_audio}{ts_hint}\n{lang_instr}\n\n{json_format}"
 
     @staticmethod
-    def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = []) -> str:
+    def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = [], history: list[dict] | None = None) -> str:
         parts = []
         if timestamps:
             parts.append("各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。時刻を参考にしてください。")
+        if history:
+            turns: list[str] = []
+            for h in history[-4:]:
+                if not isinstance(h, dict):
+                    continue
+                hq = str(h.get("question") or "").strip()
+                ha = str(h.get("answer") or "").strip()
+                if not hq or not ha:
+                    continue
+                if len(ha) > 400:
+                    ha = ha[:400] + "…"
+                turns.append(f"Q: {hq}\nA: {ha}")
+            if turns:
+                parts.append("[これまでのやり取り（参考）]\n" + "\n\n".join(turns))
         if transcript:
             selected = VideoReviewer._select_relevant_transcript(transcript, question)
             parts.append(f"[字幕テキスト]\n{selected}")
@@ -889,9 +990,9 @@ class VideoReviewer:
         result["_analysis_meta"] = gen_meta
         return result
 
-    def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None) -> dict:
+    def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None, history: list[dict] | None = None) -> dict:
         self._ensure_loaded()
-        prompt = self._build_qa_prompt(question, transcript, timestamps)
+        prompt = self._build_qa_prompt(question, transcript, timestamps, history)
         callback = on_delta or (lambda _delta: None)
         return self._infer_stream_with_meta(
             frames,

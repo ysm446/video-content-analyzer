@@ -442,6 +442,7 @@ class QARequest(BaseModel):
     min_interval: float = Field(5.0, ge=0.1, le=600.0)
     transcript:   str   = ""
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
+    history:      Optional[list[dict]] = None  # 直近の [{question, answer}, ...]（マルチターン用）
 
 
 class SetVLModelRequest(BaseModel):
@@ -1412,30 +1413,45 @@ async def review_qa(req: QARequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
+        # フレームの取得順: ①メモリキャッシュ → ②分析キャッシュのサムネール（ffmpeg 不要・即開始）
+        # → ③ffmpeg 抽出（並列シーク）。②③の結果はメモリキャッシュに載せて次の質問から即応答。
         cached = video_reviewer.get_cached_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval)
         if cached is not None:
             frames, meta = cached
         else:
-            yield sse({"status": "extracting_frames"})
+            frames = meta = None
             try:
-                if req.frame_mode == "scene":
-                    frames, meta = await loop.run_in_executor(
-                        None,
-                        video_reviewer.extract_frames_scene,
-                        str(video_path),
-                        req.max_frames,
-                    )
-                else:
-                    frames, meta = await loop.run_in_executor(
-                        None,
-                        video_reviewer.extract_frames,
-                        str(video_path),
-                        req.max_frames,
-                        req.min_interval,
-                    )
+                restored = await loop.run_in_executor(
+                    None, video_reviewer.load_frames_from_analysis_cache, str(video_path)
+                )
+                if restored is not None:
+                    frames, meta = restored
             except Exception as e:
-                yield sse({"status": "error", "message": str(e)})
-                return
+                print(f"[QA] 分析キャッシュの再利用に失敗（抽出にフォールバック）: {e}")
+            if frames is None:
+                yield sse({"status": "extracting_frames"})
+                try:
+                    if req.frame_mode == "scene":
+                        frames, meta = await loop.run_in_executor(
+                            None,
+                            video_reviewer.extract_frames_scene,
+                            str(video_path),
+                            req.max_frames,
+                        )
+                    else:
+                        frames, meta = await loop.run_in_executor(
+                            None,
+                            video_reviewer.extract_frames,
+                            str(video_path),
+                            req.max_frames,
+                            req.min_interval,
+                        )
+                except cancel.CanceledError:
+                    yield sse_canceled()
+                    return
+                except Exception as e:
+                    yield sse({"status": "error", "message": str(e)})
+                    return
             video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
 
         yield sse({"status": "answering", "count": meta["count"]})
@@ -1450,6 +1466,7 @@ async def review_qa(req: QARequest):
                     req.transcript,
                     meta.get("timestamps", []),
                     on_delta=lambda delta: (parts.append(delta), q.put(("answer_delta", delta))),
+                    history=req.history,
                 )
                 answer = video_reviewer._clean_generated_text("".join(parts))
                 q.put(("done", json.dumps({"answer": answer, "meta": answer_meta}, ensure_ascii=False)))

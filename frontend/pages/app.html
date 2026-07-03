@@ -610,7 +610,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true} }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[] }
 
     function switchTab(name){
       document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
@@ -856,6 +856,7 @@
 
     function setCurrentVideo(path){
       state.videoPath = path
+      state.qaChat = []  // チャット履歴は動画ごと（別動画の文脈を混ぜない）
       const name = path ? (path.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/, '') : '動画未選択'
       document.getElementById('currentVideoName').textContent = name
       document.getElementById('settingsVideoPath').textContent = path || '動画未選択（プレイヤータブで読み込み）'
@@ -2237,7 +2238,7 @@
 
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode()})})
+        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),history:state.qaChat.slice(-3)})})
         await readSSE(res,event=>{
           if(event.status==='extracting_frames'){ thinking.textContent='フレーム抽出中...'; updateGlobalStatus('qa','running','フレーム抽出中...') }
           else if(event.status==='answering'){ thinking.textContent='回答生成中...'; updateGlobalStatus('qa','running','回答生成中...') }
@@ -2267,6 +2268,8 @@
               ansMeta.innerHTML=metaHtml
               lucide.createIcons({nodes:[ansMeta]})
             }
+            state.qaChat.push({question:q,answer:qaRaw})
+            if(state.qaChat.length>6) state.qaChat.shift()
             stopQaTimer('完了')
             updateGlobalStatus('qa','done','回答を生成しました')
           }
@@ -2288,6 +2291,7 @@
     document.getElementById('clearHistoryBtn').addEventListener('click',()=>{
       const ph=document.getElementById('qaPlaceholder')
       qaHistory.innerHTML=''
+      state.qaChat=[]
       if(ph) qaHistory.appendChild(ph)
       ph.style.display=qaInput.disabled?'flex':'none'
     })
