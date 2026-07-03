@@ -18,8 +18,16 @@ LLAMA_CPP_PORT = int(os.environ.get("LLAMA_CPP_PORT", "8766"))
 # /no_think でthinkingモードをOFF → 字幕バッチ翻訳に最適化
 SYSTEM_PROMPT = (
     "/no_think\n"
-    "You are a subtitle translator. Translate the given text to natural Japanese "
-    "suitable for subtitle display. Output only the Japanese translation, nothing else."
+    "You are a professional subtitle translator. Translate the target line to natural, "
+    "conversational Japanese suitable for on-screen subtitles.\n"
+    "Rules:\n"
+    "- Aim for concise subtitles (roughly 40 Japanese characters or fewer per line).\n"
+    "- Use the surrounding context to resolve sentences that are split across lines, "
+    "but translate ONLY the target line. Do not repeat content that belongs to other lines.\n"
+    "- Keep proper nouns consistent throughout. If a glossary is provided, follow it. "
+    "Do not force-translate names that are better left as-is.\n"
+    "- Keep tone and terminology consistent with the previous translations shown as context.\n"
+    "- Output only the Japanese translation of the target line, nothing else."
 )
 
 LOOKUP_SYSTEM_PROMPT = (
@@ -155,28 +163,74 @@ class Translator:
                 self.load()
 
     def _chat_llama_cpp(self, messages: list[dict], max_tokens: int) -> str:
-        if self._uses_shared_vision_server():
-            result = _vision_server.chat(self.model_id, messages, max_tokens)
-        else:
-            result = _llama_cpp.chat(self.model_id, messages, max_tokens)
-        if "</think>" in result:
-            result = result.split("</think>", 1)[-1].strip()
+        result, _meta = self._chat_llama_cpp_meta(messages, max_tokens)
         return result
 
-    def translate(self, text: str, context: list[tuple[str, str]] | None = None) -> str:
+    def _chat_llama_cpp_meta(self, messages: list[dict], max_tokens: int, response_format: dict | None = None) -> tuple[str, dict]:
+        if self._uses_shared_vision_server():
+            result, meta = _vision_server.chat_with_meta(self.model_id, messages, max_tokens, response_format)
+        else:
+            result, meta = _llama_cpp.chat_with_meta(self.model_id, messages, max_tokens, response_format)
+        if "</think>" in result:
+            result = result.split("</think>", 1)[-1].strip()
+        return result, meta
+
+    @staticmethod
+    def _build_translate_user_message(
+        text: str,
+        context: list[tuple[str, str]] | None,
+        lookahead: list[str] | None,
+    ) -> str:
+        """翻訳対象と参考文脈を1つの user メッセージに構造化する。
+
+        以前は過去の (原文, 訳文) を user/assistant の擬似会話履歴として渡していたが、
+        初期の誤訳を few-shot として模倣し続けるドリフトの原因になるため、
+        「参考」であることを明示したラベル付きブロックに変更した。
+        lookahead（続きの原文）は文の途中で切れたセグメントの誤訳対策。
+        """
+        parts: list[str] = []
+        if context:
+            ctx_lines = [f"Source: {orig}\nJapanese: {jp}" for orig, jp in context]
+            parts.append("[Previous lines and their translations (reference only)]\n" + "\n".join(ctx_lines))
+        if lookahead:
+            parts.append("[Upcoming source lines (reference only, do NOT translate)]\n" + "\n".join(lookahead))
+        parts.append("[Target line — translate ONLY this line]\n" + text)
+        return "\n\n".join(parts)
+
+    def translate(
+        self,
+        text: str,
+        context: list[tuple[str, str]] | None = None,
+        lookahead: list[str] | None = None,
+        extra_system: str = "",
+    ) -> str:
+        result, _meta = self.translate_ex(text, context, lookahead, extra_system)
+        return result
+
+    def translate_ex(
+        self,
+        text: str,
+        context: list[tuple[str, str]] | None = None,
+        lookahead: list[str] | None = None,
+        extra_system: str = "",
+    ) -> tuple[str, dict]:
+        """1行を翻訳して (訳文, 生成メタ) を返す。
+
+        meta の finish_reason=="length" は max_tokens 打ち切り（訳が不完全）を意味する。
+        extra_system には動画の文脈・用語集など呼び出し側が組み立てた追記を渡す。
+        """
         with self._lock:
             self._ensure_loaded()
-            messages: list[dict] = [{"role": "system", "content": prompts.resolve("translate", SYSTEM_PROMPT)}]
-
-            if context:
-                for orig, jp in context:
-                    messages.append({"role": "user", "content": f"Translate to Japanese:\n{orig}"})
-                    messages.append({"role": "assistant", "content": jp})
-
-            messages.append({"role": "user", "content": f"Translate to Japanese:\n{text}"})
+            system = prompts.resolve("translate", SYSTEM_PROMPT)
+            if extra_system:
+                system = f"{system}\n\n{extra_system}"
+            messages: list[dict] = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": self._build_translate_user_message(text, context, lookahead)},
+            ]
 
             if self._is_gguf_model():
-                return self._chat_llama_cpp(messages, max_tokens=256)
+                return self._chat_llama_cpp_meta(messages, max_tokens=256)
 
             prompt = self.tokenizer.apply_chat_template(
                 messages,
@@ -199,7 +253,7 @@ class Translator:
         if "</think>" in result:
             result = result.split("</think>", 1)[-1].strip()
 
-        return result
+        return result, {}
 
     def refine(self, text: str, context: list[tuple[str, str]] | None = None) -> str:
         """ASR 字幕行を保守的に補正する。原文の言語・意味を保ち誤認識だけ直す。"""

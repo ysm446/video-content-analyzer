@@ -783,16 +783,18 @@ async def translate(req: TranslateRequest):
 
         yield sse({"status": "translating", "current": 0, "total": total})
 
-        # 直前 CONTEXT_WINDOW 件の (原文, 翻訳) ペアをスライディング窓として保持
+        # 直前 CONTEXT_WINDOW 件の (原文, 翻訳) ペアと、次 LOOKAHEAD 行の原文を参考文脈に使う
         CONTEXT_WINDOW = 5
+        LOOKAHEAD = 2
         context_history: list[tuple[str, str]] = []
 
         try:
             for i, seg in enumerate(segments):
                 ctx = context_history[-CONTEXT_WINDOW:] or None
+                lookahead = [s["text"] for s in segments[i + 1: i + 1 + LOOKAHEAD]] or None
                 try:
-                    jp_text = await loop.run_in_executor(
-                        None, translator.translate, seg["text"], ctx
+                    jp_text, gen_meta = await loop.run_in_executor(
+                        None, translator.translate_ex, seg["text"], ctx, lookahead
                     )
                 except cancel.CanceledError:
                     yield sse_canceled()
@@ -800,6 +802,12 @@ async def translate(req: TranslateRequest):
                 except Exception as e:
                     yield sse({"status": "error", "message": str(e)})
                     return
+
+                if gen_meta.get("finish_reason") == "length":
+                    yield sse({
+                        "status": "translate_warning",
+                        "message": f"{i + 1}行目の訳がトークン上限で打ち切られた可能性があります",
+                    })
 
                 if not str(jp_text).strip():
                     jp_text = seg["text"]
