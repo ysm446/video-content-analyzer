@@ -1266,45 +1266,32 @@
     }
 
     async function captureSceneThumbnails(scenes, analysisResult){
-      const video = document.getElementById('video')
-      if(!video.src || !video.duration) return
-      const savedTime = video.currentTime
-      const wasPaused = video.paused
-      if(!wasPaused) video.pause()
-      const canvas = document.createElement('canvas')
-      const aspect = video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 16/9
-      canvas.width = 160; canvas.height = Math.round(160 / aspect)
-      const ctx = canvas.getContext('2d')
-      const enriched = []
-      for(let i=0;i<scenes.length;i++){
-        const s = scenes[i]
-        const start = Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp)
-        const img = document.getElementById(`scene-thumb-${i}`)
-        const scene = {id: s.id||`scene_${i}`, start_sec: start, end_sec: s.end_sec??null, label: s.label||'', description: s.description||'', source:'auto'}
-        if(!Number.isFinite(start) || !img){ enriched.push(scene); continue }
-        // seeked が発火しないケース（現在位置と同一時刻へのシーク等）でハングしないようタイムアウトを設ける
-        const dataUrl = await new Promise(resolve=>{
-          let settled=false
-          const finish=ok=>{
-            if(settled) return
-            settled=true
-            clearTimeout(timer)
-            video.removeEventListener('seeked',onSeeked)
-            resolve(ok ? canvas.toDataURL('image/jpeg',0.8) : null)
-          }
-          const onSeeked=()=>{ ctx.drawImage(video,0,0,canvas.width,canvas.height); finish(true) }
-          const timer=setTimeout(()=>finish(false),2000)
-          video.addEventListener('seeked',onSeeked,{once:true})
-          video.currentTime = Math.min(start, video.duration - 0.1)
+      // サムネールはサーバー側で生成する（ffmpeg の入力シーク）。
+      // 以前の <video> シーク＋canvas 方式は seeked とフレーム描画のレースで
+      // 「前チャプターの絵」「重複」が発生し、再生位置も動いてしまっていた。
+      if(!state.videoPath) return
+      const enriched = scenes.map((s,i)=>({
+        id: s.id||`scene_${i}`,
+        start_sec: Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp),
+        end_sec: s.end_sec??null,
+        label: s.label||'',
+        description: s.description||'',
+        source:'auto',
+      }))
+      try{
+        const res=await fetch(`${API}/cache/thumbnails/generate`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({video_path:state.videoPath,scenes:enriched.map(s=>({start_sec:s.start_sec}))})
         })
-        if(dataUrl){
-          img.src = dataUrl
-          scene.thumbnail = dataUrl
+        if(res.ok){
+          const {thumbnails}=await res.json()
+          for(const t of thumbnails||[]){
+            const scene=enriched[t.index]
+            if(scene) scene.thumbnail=t.thumbnail
+          }
         }
-        enriched.push(scene)
-      }
-      video.currentTime = savedTime
-      if(!wasPaused) video.play()
+      }catch(e){ console.warn('サムネール生成に失敗:', e) }
       if(analysisResult && state.tocData){
         state.tocData.scenes = enriched
         renderAnalysisDetail(analysisFromTocData(state.tocData))

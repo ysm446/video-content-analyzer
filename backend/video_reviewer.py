@@ -685,6 +685,44 @@ class VideoReviewer:
         print(f"[VideoReviewer] フレーム抽出完了: {len(frames)}枚 (動画 {m}分{s}秒 / 間隔 {interval:.1f}秒 / 最大 {max_frames}枚指定 / 並列シーク)")
         return frames, meta
 
+    def generate_scene_thumbnails(self, video_path: str, scenes: list[dict], max_side: int = 480) -> list[dict]:
+        """各シーン開始時刻のフレームを抽出して {動画名}.cache/thumbnails/ に保存する。
+
+        以前はフロントが <video> 要素をシークして canvas でキャプチャしていたが、
+        seeked とフレーム描画のレースで「前チャプターの絵」「重複」が起きるため、
+        ffmpeg の入力シーク（_grab_frame_at）によるサーバー側生成に切り替えた。
+
+        戻り値: [{"index", "start_sec", "thumbnail"(cache 相対パス)}, ...]（取得失敗分は含まない）
+        """
+        p = Path(video_path)
+        thumbs_dir = p.parent / (p.stem + ".cache") / "thumbnails"
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
+
+        valid: list[tuple[int, float]] = []
+        for i, s in enumerate(scenes):
+            if not isinstance(s, dict):
+                continue
+            start = s.get("start_sec")
+            if isinstance(start, (int, float)) and float(start) >= 0:
+                valid.append((i, float(start)))
+        if not valid:
+            return []
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            results = list(ex.map(lambda t: self._grab_frame_at(str(p), t), [t for _i, t in valid]))
+
+        out: list[dict] = []
+        for (idx, start), frame in zip(valid, results):
+            if frame is None:
+                continue
+            img = frame.convert("RGB")
+            img.thumbnail((max_side, max_side))
+            name = f"scene_{idx}.jpg"
+            img.save(thumbs_dir / name, format="JPEG", quality=85)
+            out.append({"index": idx, "start_sec": start, "thumbnail": f"thumbnails/{name}"})
+        print(f"[VideoReviewer] シーンサムネール生成: {len(out)}/{len(scenes)}枚 → {thumbs_dir}")
+        return out
+
     def load_frames_from_analysis_cache(self, video_path: str) -> tuple[list[Image.Image], dict] | None:
         """分析キャッシュ（data.json のシーン＋サムネール）から QA 用フレームを復元する。
 

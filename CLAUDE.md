@@ -79,8 +79,8 @@ video.cache/video.{original|corrected}.srt
 
 【キャッシュパイプライン】
 分析完了後
-  → フロントエンドで各シーンのフレームをキャプチャ
-  → POST /cache/thumbnail でサムネール保存
+  → POST /cache/thumbnails/generate でサーバー側がシーン開始時刻のフレームを
+    ffmpeg 入力シークで抽出し thumbnails/scene_N.jpg に保存（最大辺 480px）
   → POST /cache/save で data.json 保存（シーン・メタ・transcript）
 動画オープン時
   → POST /cache/load で data.json 復元
@@ -123,8 +123,10 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /cache/save` — `{動画名}.cache/data.json` を保存（上書き）
 - `POST /cache/load` — `data.json` を読み込み（404 = キャッシュなし）
 - `POST /cache/patch` — 既存 `data.json` に部分マージ（transcript 更新等）
-- `POST /cache/thumbnail` — base64 画像を `thumbnails/{filename}` に保存
-- `GET  /cache/image?video_path=...&name=...` — サムネール画像ファイルを返す
+- `POST /cache/thumbnails/generate` — シーン開始時刻のサムネールをサーバー側で生成
+  （ffmpeg 入力シーク。旧フロント canvas キャプチャの置き換え。分析完了後に呼ばれる）
+- `POST /cache/thumbnail` — base64 画像を `thumbnails/{filename}` に保存（手動シーン等の残置経路）
+- `GET  /cache/image?video_path=...&name=...` — サムネール画像ファイルを返す（Cache-Control: no-store）
 
 ### 設定
 - `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode 等）

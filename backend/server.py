@@ -507,6 +507,11 @@ class CacheThumbnailRequest(BaseModel):
     image_base64: str
 
 
+class ThumbnailsGenerateRequest(BaseModel):
+    video_path: str
+    scenes: list[dict]  # [{start_sec: float, ...}, ...]（index 順で thumbnails/scene_N.jpg に保存）
+
+
 def _cache_dir(video_path: str) -> Path:
     p = Path(video_path)
     return p.parent / (p.stem + ".cache")
@@ -1604,6 +1609,28 @@ def cache_load(req: CacheLoadRequest):
     return {"status": "ok", "data": data}
 
 
+@app.post("/cache/thumbnails/generate")
+async def cache_thumbnails_generate(req: ThumbnailsGenerateRequest):
+    """シーン開始時刻のサムネールをサーバー側で生成して thumbnails/ に保存する。
+
+    フロントの <video> キャプチャ（seeked と描画のレースで前チャプターの絵や
+    重複が発生していた）の置き換え。ffmpeg の入力シークで正確なフレームを取る。
+    """
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    if len(req.scenes) > 100:
+        raise HTTPException(400, "scenes が多すぎます（最大100）")
+    loop = asyncio.get_event_loop()
+    try:
+        thumbnails = await loop.run_in_executor(
+            None, video_reviewer.generate_scene_thumbnails, str(video_path), req.scenes
+        )
+    except Exception as e:
+        raise HTTPException(500, f"サムネール生成に失敗: {e}")
+    return {"status": "ok", "thumbnails": thumbnails}
+
+
 @app.post("/cache/thumbnail")
 def cache_thumbnail(req: CacheThumbnailRequest):
     """base64 画像をキャッシュフォルダの thumbnails/ に保存する。"""
@@ -1653,4 +1680,5 @@ def cache_image(video_path: str, name: str):
         raise HTTPException(403, "不正なパス")
     if not img_path.exists():
         raise HTTPException(404, "画像が見つかりません")
-    return FileResponse(img_path)
+    # 再分析でファイル名そのまま上書きされるため、ブラウザキャッシュに残さない
+    return FileResponse(img_path, headers={"Cache-Control": "no-store"})
