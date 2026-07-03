@@ -1038,6 +1038,15 @@
     }
 
     async function readSSE(response,onEvent){
+      // HTTPException 等で SSE 以外のエラーが返った場合、そのまま body を読むと
+      // data: 行が無く何のイベントも発火せず UI が固まって見える。
+      // ここで非 200 を error イベントに変換して各ハンドラに届ける。
+      if(!response.ok){
+        let msg=`サーバーエラー (${response.status})`
+        try{ const body=await response.json(); if(body&&body.detail) msg=body.detail }catch{}
+        onEvent({status:'error',message:msg})
+        return
+      }
       const reader=response.body.getReader()
       const decoder=new TextDecoder()
       let buf=''

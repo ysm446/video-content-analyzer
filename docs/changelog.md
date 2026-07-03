@@ -1,6 +1,14 @@
 # 変更履歴
 
 ## 2026-07-04
+- **字幕0件で翻訳/補正を実行すると UI が固まるバグを修正**
+  - 原因: 字幕が0件のとき `/translate`・`/refine` は `HTTPException(400)` を返すが、
+    これは SSE ではなく通常の HTTP エラーレスポンス。フロントの `readSSE` は
+    `response.ok` を確認せず body を読むため、`data:` 行が無く何のイベントも
+    発火せず、進捗が「準備中...」のまま止まって見えていた
+  - `readSSE` の先頭で非 200 を検知し、`{status:'error', message}` イベントに
+    変換して各ハンドラへ届けるよう修正（全 SSE エンドポイント共通の対策）
+  - あわせてバックエンドの0件時メッセージを利用者向けの文言に変更
 - **docs / README を最新状態に更新**
   - `docs/plan/plan.md` を現在のロードマップ（実機確認・改善候補）に全面書き換え。
     完了済みの ASR 移行計画は `docs/plan/archive/asr-whisper-migration.md` へ移動

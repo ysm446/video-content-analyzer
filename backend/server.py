@@ -955,7 +955,7 @@ async def translate(req: TranslateRequest):
     segments = srt_file_to_segments(str(srt_path))
     total = len(segments)
     if total == 0:
-        raise HTTPException(400, f"SRT に有効な字幕セグメントがありません: {srt_path}")
+        raise HTTPException(400, "字幕が0件のため翻訳できません。先に文字起こしを実行してください。")
 
     async def stream():
         loop = asyncio.get_event_loop()
@@ -1114,7 +1114,7 @@ async def refine(req: TranslateRequest):
     segments = srt_file_to_segments(str(srt_path))
     total = len(segments)
     if total == 0:
-        raise HTTPException(400, f"SRT に有効な字幕セグメントがありません: {srt_path}")
+        raise HTTPException(400, "字幕が0件のため補正できません。先に文字起こしを実行してください。")
 
     async def stream():
         loop = asyncio.get_event_loop()
