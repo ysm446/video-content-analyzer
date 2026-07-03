@@ -1,6 +1,18 @@
 # 変更履歴
 
 ## 2026-07-03
+- **設定にランタイム項目を追加（llama-cpp / Whisper / ffmpeg のインストール対応）**
+  - `backend/runtime_manager.py` 新規: 状態検出（インストール済み判定・バージョン・パス）と
+    ダウンロード・展開（cancel 対応、zip-slip 対策）
+  - llama-cpp は GitHub の ggml-org/llama.cpp 最新リリースから CUDA/CPU ビルドを自動選択
+    （CUDA 時は cudart 同梱 zip も取得）して `runtime/llama-server/` に展開。
+    `llama_server.py` は固定パス（b8763）をやめて配下を動的検出するように変更
+    （インストール直後から再起動なしで新バージョンを使用）
+  - Whisper は faster-whisper のモデル重み（large-v3-turbo）を `models/` に事前ダウンロード
+  - ffmpeg は BtbN ビルドを `runtime/ffmpeg/` に展開し、起動時に PATH へ追加
+  - API: `GET /runtime/status` / `POST /runtime/install`（SSE で進捗ストリーミング）
+  - 設定モーダルに「ランタイム」ナビを追加。状態ドット・バージョン・パス表示と
+    インストール/更新ボタン、行内のダウンロード進捗表示（ステータスバーの中止ボタンで中断可）
 - **設定をページからポップアップウインドウに変更**
   - 左に項目ナビ（動画分析 / 字幕 / プロンプト / 情報）、右にパラメータの2カラム構成
   - 背景は暗転＋ぼかし（backdrop-filter: blur(4px)）。モデル管理ポップアップの背景も

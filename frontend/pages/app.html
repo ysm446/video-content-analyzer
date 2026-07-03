@@ -504,6 +504,7 @@
           <button class="settings-nav-btn active" data-settings-section="analysis"><i data-lucide="scan-search"></i> 動画分析</button>
           <button class="settings-nav-btn" data-settings-section="subtitle"><i data-lucide="captions"></i> 字幕</button>
           <button class="settings-nav-btn" data-settings-section="prompts"><i data-lucide="file-pen-line"></i> プロンプト</button>
+          <button class="settings-nav-btn" data-settings-section="runtime"><i data-lucide="hard-drive-download"></i> ランタイム</button>
           <button class="settings-nav-btn" data-settings-section="info"><i data-lucide="info"></i> 情報</button>
         </nav>
         <div class="settings-content">
@@ -577,6 +578,16 @@
               <div id="promptsList"><div style="font-size:12px;color:var(--text-dim)">読み込み中…</div></div>
             </div>
           </section>
+          <section class="settings-section" id="settings-section-runtime">
+            <div>
+              <div class="section-label">ランタイム</div>
+              <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+                アプリが使用する外部コンポーネントの状態です。未インストールのものはここからダウンロードできます。
+                ダウンロード中はステータスバーの「中止」ボタンで中断できます（Whisper を除く）。
+              </div>
+              <div id="runtimeList"><div style="font-size:12px;color:var(--text-dim)">読み込み中…</div></div>
+            </div>
+          </section>
           <section class="settings-section" id="settings-section-info">
             <div>
               <div class="section-label">対象動画</div>
@@ -601,7 +612,7 @@
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
-    function openSettingsModal(){ settingsModal.style.display='flex' }
+    function openSettingsModal(){ settingsModal.style.display='flex'; loadRuntimeStatus() }
     function closeSettingsModal(){ settingsModal.style.display='none' }
     document.getElementById('settingsBtn').addEventListener('click',openSettingsModal)
     document.getElementById('settingsModalClose').addEventListener('click',closeSettingsModal)
@@ -616,6 +627,73 @@
       const mm=document.getElementById('modelModal')
       if(mm && mm.style.display!=='none') mm.style.display='none'
     })
+
+    // ランタイム管理（llama-cpp / Whisper モデル / ffmpeg のインストール）
+    const RUNTIME_DEFS=[
+      {key:'llama_cpp', component:'llama-cpp', name:'llama.cpp（llama-server）', desc:'翻訳・動画分析の推論エンジン。GitHub の最新リリースを取得します'},
+      {key:'whisper', component:'whisper', name:'Whisper モデル', desc:'音声書き起こし（faster-whisper）のモデル重み'},
+      {key:'ffmpeg', component:'ffmpeg', name:'ffmpeg', desc:'フレーム抽出・動画情報の取得に使用'},
+    ]
+    let _runtimeInstalling=null
+    function _fmtBytes(n){ if(typeof n!=='number') return ''; const mb=n/1048576; return mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(1)+' MB' }
+    async function loadRuntimeStatus(){
+      const el=document.getElementById('runtimeList')
+      if(!el || _runtimeInstalling) return
+      try{
+        const res=await fetch(`${API}/runtime/status`)
+        if(!res.ok) throw new Error(`HTTP ${res.status}`)
+        const s=await res.json()
+        el.innerHTML=RUNTIME_DEFS.map(def=>{
+          const info=s[def.key]||{}
+          const installed=!!info.installed
+          const detail=info.version||info.model||''
+          return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${installed?'#3fb950':'#d29922'}"></span>
+              <span style="font-size:13px;font-weight:600">${escHtml(def.name)}</span>
+              <span style="font-size:11px;color:var(--text-dim)">${installed?'インストール済み':'未インストール'}</span>
+              <button class="btn ${installed?'btn-ghost':'btn-primary'}" style="margin-left:auto;padding:4px 12px;font-size:12px;flex-shrink:0" data-runtime-install="${def.component}">${installed?'更新 / 再インストール':'インストール'}</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">${escHtml(def.desc)}${detail?` ｜ ${escHtml(detail)}`:''}</div>
+            ${info.path?`<div style="font-size:11px;color:var(--text-dim);margin-top:2px;word-break:break-all">${escHtml(info.path)}</div>`:''}
+            <div id="runtime-progress-${def.component}" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
+          </div>`
+        }).join('')
+        el.querySelectorAll('[data-runtime-install]').forEach(b=>b.addEventListener('click',()=>installRuntime(b.getAttribute('data-runtime-install'))))
+      }catch(e){
+        el.innerHTML=`<div style="font-size:12px;color:var(--text-dim)">状態の取得に失敗しました: ${escHtml(String(e.message||e))}</div>`
+      }
+    }
+    async function installRuntime(component){
+      if(_runtimeInstalling) return
+      if(!confirm('ダウンロードを開始しますか？（コンポーネントにより数百 MB の通信が発生します）')) return
+      _runtimeInstalling=component
+      document.querySelectorAll('[data-runtime-install]').forEach(b=>b.disabled=true)
+      const prog=document.getElementById(`runtime-progress-${component}`)
+      const show=t=>{ if(prog){ prog.style.display=''; prog.textContent=t } }
+      show('開始しています...')
+      const ac=beginCancelable()
+      let failed=false
+      try{
+        const res=await fetch(`${API}/runtime/install`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({component})})
+        await readSSE(res,event=>{
+          if(event.status==='resolving') show(event.message||'リリースを確認中...')
+          else if(event.status==='downloading'){
+            const pct=event.percent!=null?` ${event.percent}%`:''
+            const size=event.total?`（${_fmtBytes(event.received)} / ${_fmtBytes(event.total)}）`:''
+            show(`ダウンロード中: ${event.asset||''}${pct} ${size}`)
+          }
+          else if(event.status==='extracting') show(event.message||'展開中...')
+          else if(event.status==='canceled'){ failed=true; show('中止しました') }
+          else if(event.status==='error'){ failed=true; show('エラー: '+event.message) }
+          else if(event.status==='done') show('インストールが完了しました')
+        })
+      }catch(e){ failed=true; show('接続エラー: '+e.message) }
+      finally{ endCancelable(ac) }
+      _runtimeInstalling=null
+      if(!failed) await loadRuntimeStatus()
+      else document.querySelectorAll('[data-runtime-install]').forEach(b=>b.disabled=false)
+    }
 
     function updateProcessButtons(runningKind=null){
       const transcribeBtn=document.getElementById('transcribeBtn')
