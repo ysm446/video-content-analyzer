@@ -25,11 +25,28 @@
 
 - **ローカル完結 / オフライン**: モデルはローカルにキャッシュし、推論もローカル GPU/CPU で行う
 - **モデル構成**:
-  - 音声認識（ASR）= **faster-whisper (large-v3-turbo)**。タイムスタンプをネイティブ出力（2026-05-31 決定。Gemma 4 audio は時刻非対応のため不採用）
+  - 音声認識（ASR）= **faster-whisper**（既定 large-v3-turbo。設定 → ランタイム で
+    tiny〜large-v3 に切り替え可。2026-05-31 決定。Gemma 4 audio は時刻非対応のため不採用）
   - 翻訳・辞書 = GGUF テキストモデル（llama.cpp / llama-server）
   - 動画レビュー（VL）= GGUF VL モデル（llama.cpp / llama-server）
+- **ランタイム管理**（2026-07-03 決定）: llama.cpp / Whisper モデル / ffmpeg は
+  設定画面からインストール・切り替えできる。llama.cpp は `runtime/llama-server/` 配下を
+  動的検出し、使用バージョンを選択可能（`LLAMA_CPP_DIR` 環境変数が最優先）
+- **構造化出力**: LLM の JSON 出力は llama-server の `response_format`（json_schema → GBNF）で
+  構文制約する（分析・翻訳バッチ・用語集・おすすめ質問すべて）
+- **翻訳モード**（2026-07-03 決定）: quality（用語集＋文脈重視）/ fast（軽量）の2段階を
+  設定で切り替え。訳文の生成はバッチ＋行単位フォールバック
+- **チャット**（2026-07-04 決定）: マルチターン（直近3ターンをプロンプト同梱）。
+  テンプレート質問チップは「固定は即表示、内容ベースはモデルロード済み時のみ遅延生成」。
+  **生成した質問はキャッシュ（data.json）に保存しない**
+- **キャッシュ**: 解析成果物（SRT・data.json・サムネール）は `{動画名}.cache/` に集約。
+  サムネールはサーバー側生成（ffmpeg 入力シーク、2026-07-04 決定）
 - **実行環境**: Windows 11 / Python venv `.venv`（torch は Blackwell 対応の cu130 ホイール）
 - **VRAM 制約**: 1台の GPU を共有するため、ASR は使用後アンロード、VL は明示アンロードまで常駐
-- **UI / アイコン**: Electron 統合 UI、Lucide Icons（絵文字は使わない）
+- **UI**: Electron 統合 UI。コンセプトは**シンプルかつスタイリッシュ**で、他アプリと共有する
+  共通デザインの基準を [../design/ui-design-guidelines.md](../design/ui-design-guidelines.md) に定める
+  （色はトークン経由・Lucide Icons のみ・絵文字は使わない）。設定はポップアップ
+  （左ナビ＋右コンテンツの2カラム、背景は暗転＋ぼかし）
 
-詳細な進行状況は [progress.md](progress.md)、ロードマップは [plan.md](plan.md)、変更履歴は [changelog.md](changelog.md) を参照。
+詳細な進行状況は [progress.md](progress.md)、ロードマップは [plan.md](plan.md)、変更履歴は
+[../changelog.md](../changelog.md)、設計レビューは [../design/](../design/) を参照。

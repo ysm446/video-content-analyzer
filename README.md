@@ -1,88 +1,78 @@
 # Video Content Analyzer
 
-動画から字幕を自動生成・2言語同時再生し、AI による動画内容分析もできるデスクトップアプリです。
+動画から字幕を自動生成・2言語同時再生し、AI による動画内容分析・チャットができるデスクトップアプリです。
+すべてローカル（オフライン）で完結し、外部 API に依存しません。
 
 ## 機能
 
 ### 字幕生成・再生
-- **文字起こし**: Qwen3-ASR-1.7B + ForcedAligner で動画を文字起こし → 単語レベルのタイムスタンプ付き SRT 出力
-- **日本語翻訳**: GGUF モデル（llama.cpp）で原文字幕を日本語に翻訳 → 日本語 SRT 出力
-- **2言語プレイヤー**: 原文と日本語訳を同時表示（Electron）
+- **文字起こし**: faster-whisper（CTranslate2）で動画を直接書き起こし → 単語レベルのタイムスタンプ付き SRT 出力
+- **字幕補正（任意）**: LLM による保守的な誤認識補正（時刻保持）
+- **日本語翻訳**: GGUF モデル（llama.cpp）で原文字幕を日本語に翻訳 → 日本語 SRT 出力。
+  先読み文脈・用語集・動画メタを使う「高品質」と軽量な「高速」の2モード
+- **2言語プレイヤー**: 原文と日本語訳を同時表示（下部表示 / 動画に重ねるオーバーレイ）
 - **単語ホバー辞書**: 原文字幕の単語にカーソルを乗せると品詞・意味・例文をツールチップ表示
-- **再生速度変更**: 0.5× / 0.75× / 1× / 1.25× / 1.5× をワンクリックで切り替え
+- **再生速度変更**: 0.5×〜1.5× をワンクリックで切り替え
 
 ### 動画レビュー・チャプター管理
-- **内容分析**: 動画からフレームをサンプリングし、GGUF VL モデルで概要・シーン構成・タグ・ジャンルを JSON で出力
-- **シーンサムネール**: 各シーンの開始フレームをサムネール表示
-- **フレームモード選択**: 均等サンプリングとシーン変化検出（ffmpeg）から選択可能
-- **音声連携**: ASR 書き起こしを VL 分析に組み合わせて精度向上
-- **Q&A**: 分析後にフレームを参照したまま自由質問が可能
-- **チャプター下書き**: 分析直後は一時的な下書きとして保持し、保存ボタンを押したときだけキャッシュ（`{動画名}.cache/data.json`）に書き込み
-- **チャプター編集**: シーン分析結果から自動生成したチャプター一覧をタイトル・時刻・概要を編集して保存
-- **近接チャプター抑制**: 動画長に応じた最小チャプター間隔で、近すぎる分割を自動で統合
-- **長区間の再分割**: 長すぎるチャプター候補は追加 refine して、後半だけ大きな空白が残りにくいよう補正
+- **内容分析**: フレームサンプリング＋GGUF VL モデルで概要・チャプター・タグ・ジャンルを生成
+  （json_schema による構造化出力、コンテキスト予算に応じたフレーム自動調整）
+- **シーンサムネール**: チャプター開始時刻のフレームをサーバー側で正確に抽出して表示
+- **フレームモード**: 均等サンプリング / シーン変化検出（ffmpeg）
+- **解析モード**: speed / balanced / quality（長いチャプターの refine 再分析）
+- **チャプター編集**: タイトル・時刻・概要を編集して保存。近接チャプターの自動統合
+
+### チャット（Q&A）
+- 動画のフレーム＋字幕を参照するマルチターンチャット（Markdown 表示・ストリーミング）
+- 分析済み動画はサムネール再利用で即応答開始（ffmpeg 再抽出なし）
+- テンプレート質問チップ: 固定（要約等）は即表示、内容ベースの質問はモデルロード済みのとき遅延生成
+
+### ランタイム・モデル管理
+- **設定 → ランタイム** から llama.cpp（GitHub 最新リリースの CUDA/CPU/Vulkan ビルドを選択）、
+  Whisper モデル（tiny〜large-v3-turbo）、ffmpeg をダウンロード・切り替え
+- モデル管理ポップアップで GGUF（VL / テキスト）のロード・アンロード
 
 ### キャッシュ
 - 動画ファイルと同じ場所に `{動画名}.cache/` フォルダを作成
-- `data.json` にシーン・メタ情報・文字起こしテキストを保存
-- `thumbnails/` にシーンサムネール画像を保存
-- チャプター保存後、次回同じ動画を開いたとき自動復元
-
-### UI
-- 左サイドバーによるページ切り替え（プレイヤー / 設定）
-- サイドバー下部の CPU アイコンからモデル管理ポップアップを開いてロード・アンロード
-- 下部ステータスバーに文字起こし・字幕生成・動画分析・Q&A の進捗を集約表示
-- プレイヤー上部に動画 / 字幕 / 文字起こし / 字幕生成ボタン、チャプター上部に動画分析 / 保存ボタンを配置
+- SRT（原文・補正・日本語）、`data.json`（チャプター・メタ・文字起こし）、`thumbnails/` を保存
+- 次回同じ動画を開いたとき自動復元
 
 ## 必要環境
 
 | ソフトウェア | バージョン |
 |---|---|
 | Python | 3.10 以上 |
-| conda | 任意のバージョン |
 | Node.js + npm | Electron 実行用 |
-| ffmpeg | システムにインストール済みであること |
+| ffmpeg | PATH にあること（無い場合は 設定 → ランタイム からインストール可） |
 | CUDA（任意） | GPU 推論を使う場合（強く推奨） |
-
-> ffmpeg のインストール: https://ffmpeg.org/download.html  
-> インストール後、`ffmpeg -version` でパスが通っていることを確認してください。
 
 ## セットアップ
 
-### 1. conda 環境を作成
+### 1. Python venv を作成して依存をインストール
 
 ```bash
-conda create -n main python=3.11
-conda activate main
-```
-
-### 2. Python 依存パッケージをインストール
-
-```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install torch --index-url https://download.pytorch.org/whl/cu130  # Blackwell(sm_120) 対応
 pip install -r requirements.txt
 ```
 
-### 3. モデルを配置
+### 2. モデルを配置
 
-ASR モデルは初回起動時に自動ダウンロードされます。翻訳・動画レビュー用 GGUF は `models/` 配下に置いてください。
-
-> 現在の ASR 実装メモ: Gemma 4 E4B を `llama.cpp` の `llama-server` 経由で音声入力付き `/v1/chat/completions` に接続する検証を行いましたが、2026-04-07 時点では文字起こし用途では安定動作していません。詳細は `docs/asr-gemma-notes.md` を参照してください。
-
-翻訳・動画レビュー用 GGUF の配置例：
+- **Whisper**: 初回の文字起こし時に自動ダウンロード（設定 → ランタイム から事前ダウンロードも可）
+- **llama.cpp（llama-server）**: `runtime/llama-server/` に配置（設定 → ランタイム からインストール可）
+- **GGUF モデル**: `models/` 配下にフォルダごと配置
 
 ```text
 models/
-├── Huihui-Qwen3-VL-4B-GGUF/
+├── Qwen3-VL-8B-GGUF/
 │   ├── model.gguf
-│   └── model.mmproj-f16.gguf
-└── Huihui-Qwen3-VL-8B-GGUF/
-    ├── model.gguf
-    └── model.mmproj-f16.gguf
+│   └── model.mmproj-f16.gguf   ← mmproj あり = VL（動画分析・チャット・翻訳共用）
+└── SomeText-GGUF/
+    └── model.gguf              ← mmproj なし = テキスト（翻訳・辞書）
 ```
 
-> `models/` 直下のサブフォルダを再帰的にスキャンし、mmproj ファイルが存在する GGUF をレビューモデル、それ以外を翻訳モデルとして認識します。
-
-### 4. npm パッケージをインストール
+### 3. npm パッケージをインストール
 
 ```bash
 npm install
@@ -94,20 +84,7 @@ npm install
 start.bat
 ```
 
-VRAM が解放されず残ったときは、補助スクリプトで llama.cpp / バックエンドを停止できます。
-
-```bat
-release_vram.bat
-```
-
-または手動で：
-
-```bash
-conda activate main
-npm start
-```
-
-> バックエンド（`run_backend.py`）は Electron メインプロセスが子プロセスとして自動起動・終了します。
+VRAM が解放されず残ったときは `release_vram.bat` で llama.cpp / バックエンドを停止できます。
 
 起動後、`http://127.0.0.1:8765/health` で `{"status":"ok"}` が返れば準備完了です。
 
@@ -115,46 +92,50 @@ npm start
 
 ## API エンドポイント
 
+詳細（SSE イベント仕様含む）は [CLAUDE.md](CLAUDE.md) を参照。
+
 ### 字幕生成
 
 | メソッド | パス | 説明 |
 |---|---|---|
 | `GET` | `/health` | 起動確認 |
-| `GET` | `/models` | 翻訳モデル一覧・状態 |
-| `POST` | `/models` | 翻訳モデル切り替え |
+| `POST` | `/cancel` | 実行中処理の中断要求（全 SSE 処理共通） |
+| `GET/POST` | `/models` | 翻訳モデル一覧・切り替え |
 | `POST` | `/transcribe` | 動画→原文SRT（SSE） |
-| `POST` | `/refine` | 原文SRT→補正SRT（LLM 補正・SSE・任意） |
-| `POST` | `/translate` | 原文/補正SRT→日本語SRT（SSE） |
+| `POST` | `/refine` | 原文SRT→補正SRT（SSE・任意） |
+| `POST` | `/translate` | 原文/補正SRT→日本語SRT（SSE。`mode: quality \| fast`） |
 | `POST` | `/lookup` | 単語辞書検索 |
 
-### 動画レビュー
+### 動画レビュー・チャット
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| `GET` | `/review/models` | VL モデル一覧・状態 |
-| `POST` | `/review/models` | VL モデル切り替え |
-| `POST` | `/review/load` | VL モデルを明示的にロード |
-| `POST` | `/review/unload` | VL モデルを VRAM から解放 |
+| `GET/POST` | `/review/models` | VL モデル一覧・切り替え |
+| `POST` | `/review/load` / `/review/unload` | VL モデルのロード / 解放 |
 | `POST` | `/review/analyze` | 動画分析（SSE） |
-| `POST` | `/review/qa` | 動画への質問（SSE） |
-| `POST` | `/review/toc/load` | 旧形式 `.toc.json` の読み込み（後方互換・読み取り専用） |
+| `POST` | `/review/qa` | 動画への質問（SSE・マルチターン） |
+| `POST` | `/review/questions` | テンプレート質問チップ用のおすすめ質問生成 |
+| `POST` | `/review/toc/load` | 旧形式 `.toc.json` の読み込み（後方互換） |
 
 ### キャッシュ
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| `POST` | `/cache/save` | `data.json` を保存 |
-| `POST` | `/cache/load` | `data.json` を読み込み |
-| `POST` | `/cache/patch` | `data.json` に部分マージ |
-| `POST` | `/cache/thumbnail` | サムネール画像を保存 |
+| `POST` | `/cache/save` / `/cache/load` / `/cache/patch` | `data.json` の保存 / 読み込み / 部分マージ |
+| `POST` | `/cache/thumbnails/generate` | シーンサムネールをサーバー側で生成 |
+| `POST` | `/cache/thumbnail` | base64 画像の保存（手動シーン等） |
 | `GET` | `/cache/image` | サムネール画像を返す |
 
-### 設定
+### 設定・ランタイム
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| `GET` | `/ui-settings` | UI 設定取得 |
-| `POST` | `/ui-settings` | UI 設定保存 |
+| `GET/POST` | `/ui-settings` | UI 設定の取得 / 保存 |
+| `GET` | `/runtime/status` | llama-cpp / Whisper / ffmpeg のインストール状態 |
+| `GET` | `/runtime/llama/builds` | llama.cpp 最新リリースのビルド一覧（推奨付き） |
+| `POST` | `/runtime/llama/select` / `/runtime/whisper/select` | 使用バージョン / モデルの切り替え |
+| `POST` | `/runtime/install` | ランタイムのダウンロード・インストール（SSE） |
+| `GET/POST` | `/prompts` ほか | システムプロンプトのプリセット管理 |
 
 ## 出力ファイル
 
@@ -166,9 +147,7 @@ video.mp4
     ├── video.japanese.srt   # 日本語翻訳字幕
     ├── data.json            # シーン・メタ・チャプター・文字起こしキャッシュ
     └── thumbnails/
-        ├── scene_0.jpg
-        ├── scene_1.jpg
-        └── ...
+        └── scene_N.jpg
 ```
 
 ## プロジェクト構成
@@ -176,25 +155,33 @@ video.mp4
 ```
 video-content-analyzer/
 ├── models/                    # モデルファイル（gitignore）
-│   ├── hub/                   # HuggingFace キャッシュ
+│   ├── hub/                   # HuggingFace キャッシュ（Whisper 等）
 │   └── {model-name}/          # GGUF モデルフォルダ
+├── runtime/                   # 外部ランタイム（gitignore）
+│   ├── llama-server/          # llama.cpp の Windows ビルド（複数バージョン可）
+│   └── ffmpeg/                # ffmpeg（PATH に無い環境向け）
 ├── backend/
-│   ├── asr.py                 # Qwen3-ASR 推論
-│   ├── translator.py          # GGUF 翻訳・辞書検索
+│   ├── asr.py                 # faster-whisper 音声書き起こし
+│   ├── translator.py          # GGUF 翻訳・辞書・用語集
 │   ├── subtitle.py            # SRT 生成・読み込み
-│   ├── video_reviewer.py      # GGUF VL 動画分析・Q&A
+│   ├── video_reviewer.py      # GGUF VL 動画分析・Q&A・サムネール
+│   ├── llama_server.py        # llama-server プロセス管理（翻訳/VL 共用）
+│   ├── runtime_manager.py     # ランタイムの状態検出・インストール
 │   ├── model_catalog.py       # models/ フォルダスキャン
+│   ├── prompts.py             # システムプロンプトのプリセット管理
 │   ├── vram.py                # VRAM 制限ユーティリティ
+│   ├── cancel.py              # 中断フラグ
 │   └── server.py              # FastAPI サーバー（全エンドポイント）
 ├── frontend/
 │   ├── pages/app.html         # 統合 UI
-│   ├── css/common.css
+│   ├── css/common.css         # デザイントークン・共通コンポーネント
+│   ├── vendor/                # lucide / marked（ローカル同梱）
 │   ├── main.js                # Electron メインプロセス
 │   └── preload.js             # IPC ブリッジ
+├── docs/                      # ドキュメント（goals / plan / progress / changelog / design）
 ├── settings.json              # 永続化設定（自動生成）
 ├── run_backend.py             # uvicorn 起動エントリーポイント
 ├── start.bat                  # Windows 起動スクリプト
-├── release_vram.bat           # VRAM 解放補助スクリプト
 └── requirements.txt
 ```
 
@@ -202,21 +189,22 @@ video-content-analyzer/
 
 | モデル | 用途 | VRAM 目安 |
 |---|---|---|
-| [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | 音声認識（多言語対応） | ~4 GB |
-| [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B) | 単語タイムスタンプ生成 | ~1 GB |
+| faster-whisper（tiny〜large-v3-turbo） | 音声認識（単語タイムスタンプ付き） | 〜3 GB（large 系 / float16） |
 | GGUF テキストモデル（mmproj なし） | 翻訳・辞書検索 | モデルによる |
-| GGUF VL モデル（mmproj あり） | 動画レビュー・Q&A | モデルによる |
-
-## ASR の補足
-
-- Gemma 4 E4B GGUF + `llama-server` は、モデルロード自体は成功しても、音声入力付き `chat/completions` で `audio input is not supported` を返し、文字起こしには使えないケースを確認しています。
-- そのため、ASR は現時点では Gemma 4 E4B を前提にせず、専用 ASR か別の音声対応モデルで構成する前提で考えるのが安全です。
-- 検証ログと切り分け結果は `docs/asr-gemma-notes.md` にまとめています。
+| GGUF VL モデル（mmproj あり） | 動画分析・チャット（翻訳と共用可） | モデルによる |
 
 ## VRAM 管理
 
 - **CUDA ハードキャップ**: 総 VRAM の 90% を上限に設定
-- **モデル重み制限**: `max_memory` で GPU への重み配置を 90% 以内に制限
-- **視覚トークン制限**: フレーム 1 枚あたり最大 256 トークン（`vram.py` で調整可能）
-- ASR と VL モデルは同時ロードされないよう設計（分析後 ASR は自動アンロード）
-- VL モデルは分析・Q&A 後もロードしたまま常駐（サイドバーのアンロードボタンで解放）
+- **視覚トークン制限**: フレーム 1 枚あたり最大 256 トークン（`vram.py` で調整可能）。
+  コンテキスト長に収まるようフレーム枚数×解像度を送信前に自動配分
+- ASR は使用後自動アンロード（VL と VRAM を共有するため）
+- VL モデルは分析・チャット後もロードしたまま常駐（モデル管理からアンロード）
+
+## ドキュメント
+
+- [docs/plan/goals.md](docs/plan/goals.md) — 目的・要件・確定方針
+- [docs/plan/plan.md](docs/plan/plan.md) — ロードマップ
+- [docs/plan/progress.md](docs/plan/progress.md) — 進捗・現在の状態
+- [docs/changelog.md](docs/changelog.md) — 変更履歴
+- [docs/design/](docs/design/) — 設計レビュー・UI デザインガイドライン

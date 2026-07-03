@@ -1,6 +1,17 @@
 # 変更履歴
 
 ## 2026-07-04
+- **docs / README を最新状態に更新**
+  - `docs/plan/plan.md` を現在のロードマップ（実機確認・改善候補）に全面書き換え。
+    完了済みの ASR 移行計画は `docs/plan/archive/asr-whisper-migration.md` へ移動
+    （Gemma 4 audio 不採用の判断記録として保存）
+  - `docs/plan/goals.md` の確定方針を最新化（ランタイム管理・構造化出力・翻訳モード・
+    チャット方針・キャッシュ方針・UI デザイン基準を追記）
+  - `docs/plan/progress.md` の先頭に「現在の状態」サマリを追加
+  - `README.md` を全面更新: Qwen3-ASR / conda 時代の記述を faster-whisper / venv に修正、
+    存在しない `docs/asr-gemma-notes.md` への参照を削除、新機能（翻訳モード・チャット・
+    ランタイム管理・設定ポップアップ）と新 API（runtime / questions / thumbnails/generate 等）、
+    プロジェクト構成（runtime/ / llama_server.py / runtime_manager.py 等）を反映
 - **シーンサムネールの重複・前チャプター混入を修正（サーバー側生成に変更）**
   - 原因: フロントの `<video>` シーク＋canvas キャプチャは、`seeked` イベントと
     フレーム描画のレースで直前のフレーム（前チャプターの絵）を拾うことがあり、
