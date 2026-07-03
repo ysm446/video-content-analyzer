@@ -2,14 +2,27 @@
   --bg:           #0d0d0d;
   --surface:      #1a1a1a;
   --surface2:     #252525;
+  --surface3:     #343434;  /* ホバー面（surface2 の一段明るい面） */
   --border:       #2f2f2f;
+  --border-strong:#454545;  /* ホバー時の境界線 */
+  --focus-border: #555555;  /* 入力欄フォーカス時の枠線 */
   --text:         #e0e0e0;
   --text-dim:     #888888;
   --accent:       #4a9eff;
   --accent-hover: #6ab3ff;
+  --accent-dim:   #3a6fb0;  /* アクセントの暗色（シマー・グラデの端） */
   --success:      #4caf50;
   --warning:      #ff9800;
   --error:        #f44336;
+  /* 状態色のティント（淡い塗り＋やや濃い枠）。面表現はこの組み合わせに統一する */
+  --accent-tint-bg:      rgba(74, 158, 255, .12);
+  --accent-tint-border:  rgba(74, 158, 255, .30);
+  --success-tint-bg:     rgba(76, 175, 80, .15);
+  --success-tint-border: rgba(76, 175, 80, .35);
+  --warning-tint-bg:     rgba(255, 152, 0, .16);
+  --warning-tint-border: rgba(255, 152, 0, .32);
+  --error-tint-bg:       rgba(244, 67, 54, .14);
+  --error-tint-border:   rgba(244, 67, 54, .45);
   --radius:       8px;
 }
 
@@ -134,8 +147,16 @@ body {
   padding: 3px 10px;
   border-radius: 99px;
 }
-.badge-success { background: rgba(76, 175, 80, 0.15); color: var(--success); }
-.badge-error   { background: rgba(244, 67, 54, 0.15);  color: var(--error); }
+.badge-success { background: var(--success-tint-bg); color: var(--success); }
+.badge-error   { background: var(--error-tint-bg);   color: var(--error); }
+
+/* ---------- フォーカス表示 ----------
+   キーボード操作（:focus-visible）はアクセント 1 色のリングに統一。
+   入力系はネイティブリング（OS アクセント色）を無効化し、枠線の明色化のみ。 */
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select:focus, select:focus-visible,
+input[type="text"]:focus, input[type="text"]:focus-visible,
+textarea:focus, textarea:focus-visible { outline: none; border-color: var(--focus-border) !important; }
 
 /* ---------- セパレーター ---------- */
 .divider {
