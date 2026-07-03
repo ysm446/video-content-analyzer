@@ -113,6 +113,28 @@ def sse_canceled() -> str:
     return sse({"status": "canceled"})
 
 
+def _analysis_warnings(gen_meta: dict, pass_name: str) -> list[dict]:
+    """analyze_frames の生成メタから、ユーザーに通知すべき warning イベントを組み立てる。"""
+    warnings: list[dict] = []
+    if not isinstance(gen_meta, dict):
+        return warnings
+    if gen_meta.get("finish_reason") == "length":
+        warnings.append({
+            "status": "analyze_warning",
+            "pass": pass_name,
+            "message": "生成がトークン上限で打ち切られました。チャプターや説明が欠けている可能性があります",
+        })
+    used = gen_meta.get("frames_used")
+    requested = gen_meta.get("frames_requested")
+    if isinstance(used, int) and isinstance(requested, int) and used < requested:
+        warnings.append({
+            "status": "analyze_warning",
+            "pass": pass_name,
+            "message": f"画像処理エラーのためフレームを {requested}枚 → {used}枚 に縮小して分析しました",
+        })
+    return warnings
+
+
 def _parse_timestamp_seconds(value: str | None) -> float | None:
     # video_reviewer 側の dedup と同じ解釈になるよう実装を一本化（h:mm:ss / m:ss / 分3桁対応）
     return parse_timestamp_seconds(value)
@@ -985,6 +1007,10 @@ async def review_analyze(req: ReviewRequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
+            coarse_gen_meta = coarse_result.pop("_analysis_meta", {}) if isinstance(coarse_result, dict) else {}
+            for w in _analysis_warnings(coarse_gen_meta, "coarse"):
+                yield sse(w)
+
             duration = float(meta.get("duration") or 0.0)
             entries = _build_toc_entries(coarse_result, duration)
 
@@ -1017,6 +1043,9 @@ async def review_analyze(req: ReviewRequest):
                         r_result = await loop.run_in_executor(
                             None, video_reviewer.analyze_frames, r_frames, r_transcript, r_meta.get("timestamps", []), req.output_lang, True
                         )
+                        r_gen_meta = r_result.pop("_analysis_meta", {}) if isinstance(r_result, dict) else {}
+                        for w in _analysis_warnings(r_gen_meta, "refine"):
+                            yield sse({**w, "current": idx, "total": len(targets)})
                         rel_entries = _entries_from_refine_result(
                             r_result, start, end, duration
                         )
@@ -1147,6 +1176,8 @@ async def review_qa(req: QARequest):
                 await asyncio.sleep(0)
             elif status == "done":
                 done_payload = json.loads(payload)
+                if (done_payload.get("meta") or {}).get("finish_reason") == "length":
+                    yield sse({"status": "qa_warning", "message": "回答がトークン上限で打ち切られました"})
                 yield sse({"status": "done", "answer": done_payload.get("answer", ""), "meta": done_payload.get("meta", {})})
                 break
             elif status == "canceled":

@@ -190,7 +190,7 @@ class LlamaServerManager:
     # ------------------------------------------------------------------ #
     #  推論
     # ------------------------------------------------------------------ #
-    def _open_stream(self, messages: list[dict], max_tokens: int):
+    def _open_stream(self, messages: list[dict], max_tokens: int, response_format: dict | None = None):
         """/v1/chat/completions をストリーミングで開き、HTTPResponse を返す。"""
         payload = {
             "messages": messages,
@@ -201,6 +201,9 @@ class LlamaServerManager:
             "cache_prompt": True,
             "stream": True,
         }
+        if response_format is not None:
+            # llama-server は json_schema を GBNF 文法に変換して出力を構文的に制約する
+            payload["response_format"] = response_format
         req = request.Request(
             self._base_url() + "/v1/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -209,15 +212,25 @@ class LlamaServerManager:
         )
         return request.urlopen(req, timeout=300.0)
 
-    def chat(self, model_id: str, messages: list[dict], max_tokens: int) -> str:
-        # 中断に即応するため非ストリーミングではなくストリーミングで受信し、
-        # トークン行ごとに cancel.is_canceled() を確認する。中断時は接続を閉じて
-        # llama-server の生成を止め、CanceledError を送出する。
+    def chat(self, model_id: str, messages: list[dict], max_tokens: int, response_format: dict | None = None) -> str:
+        text, _meta = self.chat_with_meta(model_id, messages, max_tokens, response_format)
+        return text
+
+    def chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int, response_format: dict | None = None) -> tuple[str, dict]:
+        """非ストリーミング相当の推論。(テキスト, {"usage", "finish_reason"}) を返す。
+
+        中断に即応するため内部はストリーミングで受信し、
+        トークン行ごとに cancel.is_canceled() を確認する。中断時は接続を閉じて
+        llama-server の生成を止め、CanceledError を送出する。
+        finish_reason が "length" のときは max_tokens で打ち切られている。
+        """
         self.ensure_model(model_id)
         cancel.raise_if_canceled()
         parts: list[str] = []
+        usage: dict | None = None
+        finish_reason: str | None = None
         try:
-            with self._open_stream(messages, max_tokens) as resp:
+            with self._open_stream(messages, max_tokens, response_format) as resp:
                 for raw_line in resp:
                     if cancel.is_canceled():
                         resp.close()
@@ -229,7 +242,11 @@ class LlamaServerManager:
                     if not data or data == "[DONE]":
                         continue
                     event = json.loads(data)
+                    if isinstance(event.get("usage"), dict):
+                        usage = event["usage"]
                     for choice in event.get("choices") or []:
+                        if choice.get("finish_reason"):
+                            finish_reason = str(choice["finish_reason"])
                         delta = choice.get("delta") or {}
                         content = delta.get("content")
                         if isinstance(content, str) and content:
@@ -239,15 +256,15 @@ class LlamaServerManager:
             raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
         except error.URLError as exc:
             raise RuntimeError(f"{self._label} llama-cpp サーバーに接続できません: {exc}") from exc
-        return "".join(parts).strip()
+        return "".join(parts).strip(), {"usage": usage or {}, "finish_reason": finish_reason or ""}
 
-    def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int):
+    def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int, response_format: dict | None = None):
         self.ensure_model(model_id)
         cancel.raise_if_canceled()
         usage: dict | None = None
         finish_reason: str | None = None
         try:
-            with self._open_stream(messages, max_tokens) as resp:
+            with self._open_stream(messages, max_tokens, response_format) as resp:
                 for raw_line in resp:
                     if cancel.is_canceled():
                         resp.close()

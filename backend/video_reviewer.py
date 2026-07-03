@@ -69,6 +69,47 @@ _ANALYZE_INSTR_AUDIO = (
     "（要点ごとに複数文または箇条書きで）書いてください。"
 )
 
+# 構造化出力（llama-server の response_format → GBNF 制約）用スキーマ。
+# プロンプトの JSON フォーマット例と同じキー順にすること（生成順が揃い品質が安定する）。
+_SCENE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "timestamp": {"type": "string"},
+        "label": {"type": "string"},
+        "description": {"type": "string"},
+    },
+    "required": ["timestamp", "label", "description"],
+}
+
+_ANALYZE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "detail": {"type": "string"},
+        "scenes": {"type": "array", "items": _SCENE_ITEM_SCHEMA},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "genre": {"type": "string"},
+    },
+    "required": ["summary", "detail", "scenes", "tags", "genre"],
+}
+
+_ANALYZE_SCHEMA_SCENES = {
+    "type": "object",
+    "properties": {
+        "scenes": {"type": "array", "items": _SCENE_ITEM_SCHEMA},
+    },
+    "required": ["scenes"],
+}
+
+
+def _analysis_response_format(scenes_only: bool) -> dict:
+    schema = _ANALYZE_SCHEMA_SCENES if scenes_only else _ANALYZE_SCHEMA
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": "video_analysis", "schema": schema},
+    }
+
+
 # refine パス用: summary/tags/genre は不要で scenes のみ欲しい場合に使う
 _ANALYZE_JSON_FORMAT_SCENES = (
     "{\n"
@@ -309,12 +350,18 @@ class VideoReviewer:
             {"role": "user", "content": content},
         ]
 
-    def _infer(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None) -> str:
+    def _infer(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None = None, response_format: dict | None = None) -> tuple[str, dict]:
+        """推論して (テキスト, 生成メタ) を返す。
+
+        メタは {"usage", "finish_reason", "elapsed_seconds", "frames_used"}。
+        finish_reason=="length" は max_tokens 打ち切りを意味する。
+        """
         print(f"[VideoReviewer] 推論開始: フレーム={len(frames)}枚")
         t0 = time.time()
+        frames_used = len(frames)
         try:
             messages = self._build_messages(frames, system, prompt, timestamps)
-            result = _vision_server.chat(self.model_id, messages, max_new_tokens)
+            result, gen_meta = _vision_server.chat_with_meta(self.model_id, messages, max_new_tokens, response_format)
         except RuntimeError as exc:
             msg = str(exc)
             if "failed to process image" not in msg:
@@ -333,10 +380,15 @@ class VideoReviewer:
                 retry_timestamps,
                 max_pixels=retry_pixels,
             )
-            result = _vision_server.chat(self.model_id, messages, max_new_tokens)
+            result, gen_meta = _vision_server.chat_with_meta(self.model_id, messages, max_new_tokens, response_format)
+            frames_used = len(retry_frames)
         elapsed = time.time() - t0
         print(f"[VideoReviewer] 推論完了: {elapsed:.1f}秒")
-        return self._clean_generated_text(result)
+        gen_meta = dict(gen_meta or {})
+        gen_meta["elapsed_seconds"] = round(elapsed, 2)
+        gen_meta["frames_used"] = frames_used
+        gen_meta["frames_requested"] = len(frames)
+        return self._clean_generated_text(result), gen_meta
 
     def _infer_stream_with_meta(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, on_delta, timestamps: list[float] | None = None) -> dict:
         print(f"[VideoReviewer] ストリーミング推論開始: フレーム={len(frames)}枚")
@@ -710,8 +762,17 @@ class VideoReviewer:
         prompt = self._build_analyze_prompt(transcript, timestamps, output_lang, scenes_only)
         # scenes_only（refine用）は summary/tags/genre を生成しないので出力上限を抑える
         max_tokens = 1536 if scenes_only else 3072
-        raw = self._infer(frames, prompts.resolve("analyze", ANALYZE_SYSTEM), prompt, max_new_tokens=max_tokens, timestamps=timestamps or None)
+        raw, gen_meta = self._infer(
+            frames,
+            prompts.resolve("analyze", ANALYZE_SYSTEM),
+            prompt,
+            max_new_tokens=max_tokens,
+            timestamps=timestamps or None,
+            response_format=_analysis_response_format(scenes_only),
+        )
         clean = self._strip_code_fences(raw)
+        # json_schema 制約により通常はそのままパースできる。フォールバックは
+        # 打ち切り（finish_reason=="length"）や旧 llama-server 向けの保険として残す。
         try:
             result = json.loads(clean.strip())
         except Exception:
@@ -722,10 +783,11 @@ class VideoReviewer:
                 else:
                     raise ValueError("balanced JSON not found")
             except Exception:
-                return self._salvage_analysis_fields(clean)
+                result = self._salvage_analysis_fields(clean)
 
         if isinstance(result.get("scenes"), list):
             result["scenes"] = self._dedup_scenes(result["scenes"])
+        result["_analysis_meta"] = gen_meta
         return result
 
     def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None) -> dict:

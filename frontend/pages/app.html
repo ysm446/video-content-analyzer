@@ -1911,6 +1911,7 @@
           }
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
           else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
+          else if(event.status==='analyze_warning'||event.status==='refine_warning') setProgress('analyze',70,`注意: ${event.message}`)
           else if(event.status==='done'){
             setProgress('analyze',100,'完了')
             setResult('analyze',true,'分析完了')
@@ -1985,6 +1986,7 @@
         await readSSE(res,event=>{
           if(event.status==='extracting_frames'){ thinking.textContent='フレーム抽出中...'; updateGlobalStatus('qa','running','フレーム抽出中...') }
           else if(event.status==='answering'){ thinking.textContent='回答生成中...'; updateGlobalStatus('qa','running','回答生成中...') }
+          else if(event.status==='qa_warning'){ updateGlobalStatus('qa','running',`注意: ${event.message}`) }
           else if(event.status==='answer_delta'){
             if(ans.style.display==='none'){
               ans.style.display=''
