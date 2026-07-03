@@ -82,6 +82,25 @@ _GLOSSARY_SCHEMA = {
     "required": ["terms"],
 }
 
+# バッチ翻訳の構造化出力（index は 1 始まりの対象行番号）
+_BATCH_TRANSLATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "translations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "japanese": {"type": "string"},
+                },
+                "required": ["index", "japanese"],
+            },
+        },
+    },
+    "required": ["translations"],
+}
+
 
 def available_translator_models() -> list[dict]:
     return catalog_translator_models()
@@ -228,6 +247,72 @@ class Translator:
             parts.append("[Upcoming source lines (reference only, do NOT translate)]\n" + "\n".join(lookahead))
         parts.append("[Target line — translate ONLY this line]\n" + text)
         return "\n\n".join(parts)
+
+    def translate_batch_ex(
+        self,
+        lines: list[str],
+        context: list[tuple[str, str]] | None = None,
+        lookahead: list[str] | None = None,
+        extra_system: str = "",
+    ) -> tuple[list[str] | None, dict]:
+        """複数行をまとめて翻訳する。(訳文リスト, 生成メタ) を返す。
+
+        構造化出力の検証（全行の index が揃い、訳文が非空）に失敗した場合は
+        (None, meta) を返す。呼び出し側は行単位翻訳にフォールバックすること。
+        GGUF 以外（HF フォールバック）はバッチ未対応で常に (None, {})。
+        """
+        if not lines:
+            return [], {}
+        with self._lock:
+            self._ensure_loaded()
+            if not self._is_gguf_model():
+                return None, {}
+            system = prompts.resolve("translate", SYSTEM_PROMPT)
+            if extra_system:
+                system = f"{system}\n\n{extra_system}"
+            system += (
+                "\n\nBatch mode: you will receive multiple numbered target lines. "
+                "Translate each numbered line separately and keep the 1:1 line mapping. "
+                "Never merge lines or move content between lines."
+            )
+            parts: list[str] = []
+            if context:
+                ctx_lines = [f"Source: {orig}\nJapanese: {jp}" for orig, jp in context]
+                parts.append("[Previous lines and their translations (reference only)]\n" + "\n".join(ctx_lines))
+            if lookahead:
+                parts.append("[Upcoming source lines (reference only, do NOT translate)]\n" + "\n".join(lookahead))
+            numbered = "\n".join(f"{i + 1}. {line}" for i, line in enumerate(lines))
+            parts.append("[Target lines — translate each numbered line]\n" + numbered)
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": "\n\n".join(parts)},
+            ]
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {"name": "subtitle_batch", "schema": _BATCH_TRANSLATE_SCHEMA},
+            }
+            max_tokens = min(4096, 160 * len(lines) + 128)
+            raw, meta = self._chat_llama_cpp_meta(messages, max_tokens, response_format=response_format)
+
+        try:
+            data = json.loads(raw)
+            items = data.get("translations")
+            if not isinstance(items, list):
+                return None, meta
+            mapping: dict[int, str] = {}
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                idx = item.get("index")
+                jp = str(item.get("japanese") or "").strip()
+                if isinstance(idx, int) and jp and idx not in mapping:
+                    mapping[idx] = jp
+            if set(mapping.keys()) != set(range(1, len(lines) + 1)):
+                print(f"[Translator] バッチ翻訳の検証失敗: 期待 {len(lines)}行 / 取得 {sorted(mapping.keys())}")
+                return None, meta
+            return [mapping[i] for i in range(1, len(lines) + 1)], meta
+        except Exception:
+            return None, meta
 
     def build_glossary(self, transcript_sample: str, max_terms: int = 30) -> list[dict]:
         """transcript サンプルから訳語統一用の用語集を生成する。

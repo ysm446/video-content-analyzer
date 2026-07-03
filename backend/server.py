@@ -800,11 +800,15 @@ def _sample_lines_for_glossary(segments: list[dict], max_chars: int = 4000) -> s
 async def translate(req: TranslateRequest):
     """
     原文 SRT を日本語に翻訳して japanese SRT を生成する。
-    セグメントごとに進捗を SSE でストリーミング。
+    バッチ（8行）単位で翻訳し、進捗を SSE でストリーミング。
 
     Events:
       {"status": "loading_model"}          ← Translator モデルが未ロードの場合のみ
+      {"status": "building_glossary"}      ← 用語集を生成中
+      {"status": "glossary_done", "terms": int}
       {"status": "translating", "current": int, "total": int}
+      {"status": "translate_warning", "message": str}  ← 打ち切り・バッチ検証失敗等
+      {"status": "canceled"}
       {"status": "done", "srt_path": str, "total": int}
       {"status": "error", "message": str}
     """
@@ -851,38 +855,87 @@ async def translate(req: TranslateRequest):
 
         yield sse({"status": "translating", "current": 0, "total": total})
 
-        # 直前 CONTEXT_WINDOW 件の (原文, 翻訳) ペアと、次 LOOKAHEAD 行の原文を参考文脈に使う
+        # 直前 CONTEXT_WINDOW 件の (原文, 翻訳) ペアと、次 LOOKAHEAD 行の原文を参考文脈に使う。
+        # BATCH_SIZE 行ずつ json_schema バッチ翻訳し、検証失敗時はその区間だけ行単位に落とす。
         CONTEXT_WINDOW = 5
         LOOKAHEAD = 2
+        BATCH_SIZE = 8
         context_history: list[tuple[str, str]] = []
 
         try:
-            for i, seg in enumerate(segments):
+            i = 0
+            while i < total:
+                batch = segments[i:i + BATCH_SIZE]
+                lines = [s["text"] for s in batch]
                 ctx = context_history[-CONTEXT_WINDOW:] or None
-                lookahead = [s["text"] for s in segments[i + 1: i + 1 + LOOKAHEAD]] or None
-                try:
-                    jp_text, gen_meta = await loop.run_in_executor(
-                        None, translator.translate_ex, seg["text"], ctx, lookahead, extra_system
-                    )
-                except cancel.CanceledError:
-                    yield sse_canceled()
-                    return
-                except Exception as e:
-                    yield sse({"status": "error", "message": str(e)})
-                    return
+                batch_lookahead = [
+                    s["text"] for s in segments[i + len(batch): i + len(batch) + LOOKAHEAD]
+                ] or None
 
-                if gen_meta.get("finish_reason") == "length":
+                batch_results = None
+                gen_meta: dict = {}
+                if len(batch) > 1:
+                    try:
+                        batch_results, gen_meta = await loop.run_in_executor(
+                            None, translator.translate_batch_ex, lines, ctx, batch_lookahead, extra_system
+                        )
+                    except cancel.CanceledError:
+                        yield sse_canceled()
+                        return
+                    except Exception as e:
+                        print(f"[translate] バッチ翻訳エラー → 行単位にフォールバック: {e}")
+                        batch_results = None
+
+                if batch_results is not None:
+                    if gen_meta.get("finish_reason") == "length":
+                        yield sse({
+                            "status": "translate_warning",
+                            "message": f"{i + 1}〜{i + len(batch)}行目の訳がトークン上限で打ち切られた可能性があります",
+                        })
+                    for seg, jp_text in zip(batch, batch_results):
+                        if not str(jp_text).strip():
+                            jp_text = seg["text"]
+                        context_history.append((seg["text"], jp_text))
+                        translated.append({**seg, "text": jp_text})
+                    i += len(batch)
+                    yield sse({"status": "translating", "current": i, "total": total})
+                    continue
+
+                # 行単位フォールバック（バッチ検証失敗・バッチ非対応経路）
+                if len(batch) > 1:
                     yield sse({
                         "status": "translate_warning",
-                        "message": f"{i + 1}行目の訳がトークン上限で打ち切られた可能性があります",
+                        "message": f"{i + 1}〜{i + len(batch)}行目はバッチ翻訳の検証に失敗したため行単位で翻訳します",
                     })
+                for j, seg in enumerate(batch):
+                    ctx = context_history[-CONTEXT_WINDOW:] or None
+                    lookahead = [
+                        s["text"] for s in segments[i + j + 1: i + j + 1 + LOOKAHEAD]
+                    ] or None
+                    try:
+                        jp_text, gen_meta = await loop.run_in_executor(
+                            None, translator.translate_ex, seg["text"], ctx, lookahead, extra_system
+                        )
+                    except cancel.CanceledError:
+                        yield sse_canceled()
+                        return
+                    except Exception as e:
+                        yield sse({"status": "error", "message": str(e)})
+                        return
 
-                if not str(jp_text).strip():
-                    jp_text = seg["text"]
+                    if gen_meta.get("finish_reason") == "length":
+                        yield sse({
+                            "status": "translate_warning",
+                            "message": f"{i + j + 1}行目の訳がトークン上限で打ち切られた可能性があります",
+                        })
 
-                context_history.append((seg["text"], jp_text))
-                translated.append({**seg, "text": jp_text})
-                yield sse({"status": "translating", "current": i + 1, "total": total})
+                    if not str(jp_text).strip():
+                        jp_text = seg["text"]
+
+                    context_history.append((seg["text"], jp_text))
+                    translated.append({**seg, "text": jp_text})
+                    yield sse({"status": "translating", "current": i + j + 1, "total": total})
+                i += len(batch)
         finally:
             # 翻訳完了（成功・失敗・中断問わず）後に VRAM を解放
             await loop.run_in_executor(None, translator.unload)
