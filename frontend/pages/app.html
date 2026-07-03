@@ -18,7 +18,7 @@
     html,body{height:100%}
     body{display:flex;flex-direction:column;overflow:hidden}
     .sidebar{height:42px;width:100%;display:flex;flex-direction:row;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;padding:0 6px;gap:3px;align-items:center;position:relative}
-    .sidebar-left,.sidebar-right{display:flex;align-items:center;gap:3px;position:relative;z-index:1}
+    .sidebar-right{display:flex;align-items:center;gap:3px;position:relative;z-index:1}
     .sidebar-right{margin-left:auto}
     .sidebar-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;min-width:0;max-width:min(46vw,540px)}
     .tab-btn{background:none;border:none;color:var(--text-dim);width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;border-radius:8px;transition:background .15s,color .15s}
@@ -296,10 +296,6 @@
 </head>
 <body>
   <nav class="sidebar">
-    <div class="sidebar-left">
-      <button class="tab-btn active" data-tab="player" title="プレイヤー"><i data-lucide="play"></i></button>
-      <button class="tab-btn" id="settingsBtn" title="設定"><i data-lucide="settings"></i></button>
-    </div>
     <div class="sidebar-center">
       <button class="model-pill" id="modelStatusBtn" title="モデル未ロード">
         <span class="model-pill-icon"><i data-lucide="cpu"></i></span>
@@ -309,9 +305,10 @@
       <button class="model-eject-btn" id="topbarModelUnloadBtn" title="モデルをアンロード" disabled><i data-lucide="log-out"></i></button>
     </div>
     <div class="sidebar-right">
-      <div class="topbar-divider" aria-hidden="true"></div>
       <button class="tab-btn active" id="toggleAnalysisPanelBtn" title="チャプターを表示/非表示"><i data-lucide="book-open"></i></button>
       <button class="tab-btn active" id="toggleQaPanelBtn" title="チャットを表示/非表示"><i data-lucide="messages-square"></i></button>
+      <div class="topbar-divider" aria-hidden="true"></div>
+      <button class="tab-btn" id="settingsBtn" title="設定"><i data-lucide="settings"></i></button>
     </div>
   </nav>
 
@@ -613,12 +610,6 @@
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
     const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[] }
-
-    function switchTab(name){
-      document.querySelectorAll('.tab-panel').forEach(p=>p.style.display = p.id===`tab-${name}` ? '' : 'none')
-      document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.classList.toggle('active', b.dataset.tab===name))
-    }
-    document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)))
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -2561,7 +2552,6 @@
       catch(e){ alert('削除に失敗しました: '+e.message) }
     }
 
-    switchTab('player')
     updateFrameHint()
     fetchReviewModelStatus()
     loadUiSettings()

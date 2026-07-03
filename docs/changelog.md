@@ -1,6 +1,10 @@
 # 変更履歴
 
 ## 2026-07-03
+- **UI: 設定アイコンをトップバー右端へ移動、プレイヤータブボタンを削除**
+  - 設定のポップアップ化でタブがプレイヤーのみになり、切り替えボタンが無意味だったため削除
+  - 設定アイコンは右端（パネル切り替えボタンの右、仕切り線の後ろ）に配置
+  - 不要になった switchTab / sidebar-left を削除
 - **UI デザインの統一（ガイドライン §9 の 1〜5・8・9 を実施）**
   - common.css にトークンを追加: `--surface3` / `--border-strong` / `--focus-border` /
     `--accent-dim` / 状態色ティント（`--accent/success/warning/error-tint-bg/border`）
