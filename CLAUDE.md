@@ -99,7 +99,9 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /models` — 翻訳モデル切り替え（`{translator: model_id}`）
 - `POST /transcribe` — 動画→原文SRT（SSE）
 - `POST /refine` — 原文SRT→補正SRT（翻訳モデルで保守的補正・時刻保持・SSE、任意）
-- `POST /translate` — 原文/補正SRT→日本語SRT（SSE）
+- `POST /translate` — 原文/補正SRT→日本語SRT（SSE）。`mode: "quality" | "fast"`
+  （quality=用語集＋動画文脈＋文脈5ペア＋先読み2行、fast=用語集・動画文脈を省略し
+  文脈2ペア＋先読み1行・バッチ12行の軽量動作。設定 → 字幕 の翻訳モードで切り替え）
 - `POST /lookup` — 単語辞書検索（翻訳モデルを共用）
 
 ### 動画レビュー
@@ -241,10 +243,12 @@ error            → {message}
   （`video_reviewer.py` の `_fit_frame_budget`。超過時は解像度→枚数の順に削減し SSE で通知）
 - analyze の transcript は先頭切り捨てではなく全編から時間等間隔サンプリング（長編対策）
 - scenes[].timestamp はモデルに送ったフレーム時刻の最近傍にサーバー側でスナップ
-- 字幕翻訳は 8 行ずつの json_schema バッチ（検証失敗時は行単位フォールバック）。
-  参考文脈として直前 5 ペア＋次 2 行の原文を構造化した 1 メッセージで渡す
-  （擬似会話履歴方式は廃止）。分析キャッシュの meta（genre/summary/tags）と
-  翻訳前に生成した用語集を system prompt に付加して訳語を統一する
+- 字幕翻訳は json_schema バッチ（検証失敗時は行単位フォールバック）。
+  参考文脈は「直前ペア＋次行の原文」を構造化した 1 メッセージで渡す（擬似会話履歴方式は廃止）
+- 翻訳モードは quality / fast の2段階（ui-settings の `translation_mode`）。
+  quality は分析キャッシュの meta と翻訳前に生成した用語集を system prompt に付加して
+  訳語を統一（バッチ8行・文脈5ペア・先読み2行）。fast はそれらを省略した軽量動作
+  （バッチ12行・文脈2ペア・先読み1行）
 
 ## 出力ファイル命名規則
 

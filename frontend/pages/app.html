@@ -569,6 +569,14 @@
                   <option value="meiryo">Meiryo</option>
                 </select>
               </div>
+              <div class="frame-setting" style="margin-top:8px">
+                <label>翻訳モード：</label>
+                <select id="translationMode" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+                  <option value="quality" selected>高品質（用語集・文脈重視）</option>
+                  <option value="fast">高速（軽量）</option>
+                </select>
+              </div>
+              <div class="frame-hint">高品質は用語集の生成と広い文脈で訳語を安定させます。高速は用語集・動画文脈を省略し、バッチを大きくして時間を短縮します。</div>
             </div>
           </section>
           <section class="settings-section" id="settings-section-prompts">
@@ -1935,6 +1943,9 @@
       applySubtitleFont(mode)
       saveUiSettings({subtitle_font:mode})
     })
+    const translationModeSel=document.getElementById('translationMode')
+    function getTranslationMode(){ return translationModeSel.value==='fast' ? 'fast' : 'quality' }
+    translationModeSel.addEventListener('change',()=>saveUiSettings({translation_mode:getTranslationMode()}))
 
 
     async function saveUiSettings(data){
@@ -1971,6 +1982,7 @@
         outputLangSel.value=(s.output_lang==='en')?'en':'ja'
         subtitleDisplaySel.value = s.subtitle_display === 'overlay' ? 'overlay' : 'below'
         subtitleFontSel.value = ['noto','biz','yugothic','meiryo'].includes(s.subtitle_font) ? s.subtitle_font : 'noto'
+        translationModeSel.value = s.translation_mode === 'fast' ? 'fast' : 'quality'
         applySubtitleDisplay(subtitleDisplaySel.value)
         applySubtitleFont(subtitleFontSel.value)
         setAnalysisSectionExpanded('actions', state.analysisExpanded.actions !== false)
@@ -2123,7 +2135,7 @@
       resetSection('translate'); setProgress('translate',0,'準備中...')
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt})})
+        const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt,mode:getTranslationMode()})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
           else if(event.status==='building_glossary') setProgress('translate',8,'用語集を作成中...')

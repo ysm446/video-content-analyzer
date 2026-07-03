@@ -414,6 +414,7 @@ class TranscribeRequest(BaseModel):
 
 class TranslateRequest(BaseModel):
     srt_path: str  # 翻訳対象の SRT ファイルパス（通常は .original.srt）
+    mode: str = "quality"  # "quality"（用語集・文脈重視） | "fast"（軽量・高速）
 
 
 class LookupRequest(BaseModel):
@@ -470,6 +471,7 @@ class UISettingsRequest(BaseModel):
     output_lang: Optional[str] = None  # "ja" | "en"
     subtitle_display: Optional[str] = None  # "below" | "overlay"
     subtitle_font: Optional[str] = None  # "noto" | "biz" | "yugothic" | "meiryo"
+    translation_mode: Optional[str] = None  # "quality" | "fast"
     analysis_actions_expanded: Optional[bool] = None
     analysis_summary_expanded: Optional[bool] = None
     analysis_detail_expanded: Optional[bool] = None
@@ -635,6 +637,7 @@ def get_ui_settings():
         "output_lang": s.get("output_lang", "ja"),
         "subtitle_display": s.get("subtitle_display", "below"),
         "subtitle_font": s.get("subtitle_font", "noto"),
+        "translation_mode": s.get("translation_mode", "quality"),
         "analysis_actions_expanded": s.get("analysis_actions_expanded", True),
         "analysis_summary_expanded": s.get("analysis_summary_expanded", True),
         "analysis_detail_expanded": s.get("analysis_detail_expanded", False),
@@ -662,6 +665,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["subtitle_display"] = req.subtitle_display if req.subtitle_display in {"below", "overlay"} else "below"
     if req.subtitle_font is not None:
         to_save["subtitle_font"] = req.subtitle_font if req.subtitle_font in {"noto", "biz", "yugothic", "meiryo"} else "noto"
+    if req.translation_mode is not None:
+        to_save["translation_mode"] = req.translation_mode if req.translation_mode in {"quality", "fast"} else "quality"
     if req.analysis_actions_expanded is not None:
         to_save["analysis_actions_expanded"] = bool(req.analysis_actions_expanded)
     if req.analysis_summary_expanded is not None:
@@ -912,11 +917,15 @@ def _sample_lines_for_glossary(segments: list[dict], max_chars: int = 4000) -> s
 async def translate(req: TranslateRequest):
     """
     原文 SRT を日本語に翻訳して japanese SRT を生成する。
-    バッチ（8行）単位で翻訳し、進捗を SSE でストリーミング。
+    バッチ単位で翻訳し、進捗を SSE でストリーミング。
+
+    mode:
+      quality … 用語集生成＋動画文脈＋文脈5ペア＋先読み2行（既定）
+      fast    … 用語集・動画文脈を省略し、文脈2ペア＋先読み1行・バッチ12行の軽量動作
 
     Events:
       {"status": "loading_model"}          ← Translator モデルが未ロードの場合のみ
-      {"status": "building_glossary"}      ← 用語集を生成中
+      {"status": "building_glossary"}      ← 用語集を生成中（quality のみ）
       {"status": "glossary_done", "terms": int}
       {"status": "translating", "current": int, "total": int}
       {"status": "translate_warning", "message": str}  ← 打ち切り・バッチ検証失敗等
@@ -927,6 +936,9 @@ async def translate(req: TranslateRequest):
     srt_path = Path(req.srt_path)
     if not srt_path.exists():
         raise HTTPException(404, f"SRT ファイルが見つかりません: {srt_path}")
+
+    if req.mode not in {"quality", "fast"}:
+        raise HTTPException(400, f"無効な mode: {req.mode}")
 
     segments = srt_file_to_segments(str(srt_path))
     total = len(segments)
@@ -947,31 +959,35 @@ async def translate(req: TranslateRequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
-        # 動画の文脈（分析キャッシュの meta）と用語集を system prompt 追記として組み立てる
-        video_context = _video_context_for_srt(srt_path)
-        glossary: list[dict] = []
-        yield sse({"status": "building_glossary"})
-        try:
-            glossary = await loop.run_in_executor(
-                None, translator.build_glossary, _sample_lines_for_glossary(segments)
-            )
-        except cancel.CanceledError:
-            await loop.run_in_executor(None, translator.unload)
-            yield sse_canceled()
-            return
-        except Exception as e:
-            yield sse({"status": "translate_warning", "message": f"用語集の生成に失敗したためスキップします: {e}"})
-        if glossary:
-            yield sse({"status": "glossary_done", "terms": len(glossary)})
-        extra_system = Translator.compose_translation_system_extra(video_context, glossary)
+        # 動画の文脈（分析キャッシュの meta）と用語集を system prompt 追記として組み立てる。
+        # fast モードでは両方を省略して呼び出しを1回減らし、プロンプトも小さくする。
+        extra_system = ""
+        if req.mode == "quality":
+            video_context = _video_context_for_srt(srt_path)
+            glossary: list[dict] = []
+            yield sse({"status": "building_glossary"})
+            try:
+                glossary = await loop.run_in_executor(
+                    None, translator.build_glossary, _sample_lines_for_glossary(segments)
+                )
+            except cancel.CanceledError:
+                await loop.run_in_executor(None, translator.unload)
+                yield sse_canceled()
+                return
+            except Exception as e:
+                yield sse({"status": "translate_warning", "message": f"用語集の生成に失敗したためスキップします: {e}"})
+            if glossary:
+                yield sse({"status": "glossary_done", "terms": len(glossary)})
+            extra_system = Translator.compose_translation_system_extra(video_context, glossary)
 
         yield sse({"status": "translating", "current": 0, "total": total})
 
         # 直前 CONTEXT_WINDOW 件の (原文, 翻訳) ペアと、次 LOOKAHEAD 行の原文を参考文脈に使う。
         # BATCH_SIZE 行ずつ json_schema バッチ翻訳し、検証失敗時はその区間だけ行単位に落とす。
-        CONTEXT_WINDOW = 5
-        LOOKAHEAD = 2
-        BATCH_SIZE = 8
+        if req.mode == "fast":
+            CONTEXT_WINDOW, LOOKAHEAD, BATCH_SIZE = 2, 1, 12
+        else:
+            CONTEXT_WINDOW, LOOKAHEAD, BATCH_SIZE = 5, 2, 8
         context_history: list[tuple[str, str]] = []
 
         try:
