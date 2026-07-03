@@ -673,6 +673,52 @@ class VideoReviewer:
         return transcript[:_TRANSCRIPT_MAX_CHARS] + "…（以下省略）"
 
     @staticmethod
+    def _pick_lines(lines: list[str], indices: list[int], max_chars: int) -> str:
+        """行 index を時系列（=元の順序）で並べ、予算内で連結する。"""
+        ordered = sorted(set(indices))
+        picked: list[str] = []
+        total = 0
+        for i in ordered:
+            add = len(lines[i]) + 1
+            if total + add > max_chars:
+                break
+            picked.append(lines[i])
+            total += add
+        return "\n".join(picked)
+
+    @staticmethod
+    def _timestamped_rows(lines: list[str]) -> list[tuple[int, str]]:
+        """`[m:ss] テキスト` 形式の行を (行index, 行テキスト) で返す。"""
+        return [
+            (idx, line)
+            for idx, line in enumerate(lines)
+            if re.match(r"^\[(\d+):(\d{2})\]\s*", line.strip())
+        ]
+
+    @staticmethod
+    def _sample_transcript_uniform(transcript: str, max_chars: int = _TRANSCRIPT_MAX_CHARS) -> str:
+        """transcript を全編から時間等間隔に予算内でサンプリングする（分析用）。
+
+        先頭切り捨てだと長編動画で冒頭数分の音声しか分析に反映されないため、
+        `[m:ss]` 行を等間隔に拾って動画全体をカバーする。
+        タイムスタンプ行が無い形式は従来どおり先頭切り出しにフォールバック。
+        """
+        if not transcript or len(transcript) <= max_chars:
+            return transcript
+        lines = transcript.splitlines()
+        rows = VideoReviewer._timestamped_rows(lines)
+        if not rows:
+            return VideoReviewer._truncate_transcript(transcript)
+        n = len(rows)
+        approx_line = sum(len(line) for _i, line in rows) / max(1, n)
+        budget_lines = max(1, int(max_chars / max(1.0, approx_line + 1)))
+        if budget_lines >= n:
+            return VideoReviewer._pick_lines(lines, [i for i, _l in rows], max_chars)
+        step = n / budget_lines
+        sampled = [rows[int(k * step)][0] for k in range(budget_lines)]
+        return VideoReviewer._pick_lines(lines, sampled, max_chars)
+
+    @staticmethod
     def _tokenize_query(question: str) -> list[str]:
         """質問を検索語に分解する（形態素解析なし）。
 
@@ -708,10 +754,7 @@ class VideoReviewer:
             return transcript
 
         lines = transcript.splitlines()
-        rows: list[tuple[int, str]] = []  # (行index, 行テキスト)
-        for idx, line in enumerate(lines):
-            if re.match(r"^\[(\d+):(\d{2})\]\s*", line.strip()):
-                rows.append((idx, line))
+        rows = VideoReviewer._timestamped_rows(lines)
         # タイムスタンプ行が無い形式は従来の先頭切り出しにフォールバック
         if not rows:
             return VideoReviewer._truncate_transcript(transcript)
@@ -719,18 +762,7 @@ class VideoReviewer:
         terms = VideoReviewer._tokenize_query(question)
 
         def _pick(indices: list[int]) -> str:
-            # 行 index を時系列（=元の順序）で並べ、予算内で連結
-            ordered = sorted(set(indices))
-            picked: list[str] = []
-            total = 0
-            for i in ordered:
-                line = lines[i]
-                add = len(line) + 1
-                if total + add > max_chars:
-                    break
-                picked.append(line)
-                total += add
-            return "\n".join(picked)
+            return VideoReviewer._pick_lines(lines, indices, max_chars)
 
         if terms:
             scored: list[tuple[int, int]] = []  # (score, 行index)
@@ -756,14 +788,7 @@ class VideoReviewer:
                 return _pick(list(chosen))
 
         # 一致なし: 全編から等間隔サンプリング
-        n = len(rows)
-        approx_line = sum(len(line) for _i, line in rows) / max(1, n)
-        budget_lines = max(1, int(max_chars / max(1.0, approx_line + 1)))
-        if budget_lines >= n:
-            return _pick([i for i, _l in rows])
-        step = n / budget_lines
-        sampled = [rows[int(k * step)][0] for k in range(budget_lines)]
-        return _pick(sampled)
+        return VideoReviewer._sample_transcript_uniform(transcript, max_chars)
 
     @staticmethod
     def _fmt_ts(secs: float) -> str:
@@ -815,7 +840,8 @@ class VideoReviewer:
         instr_audio = _ANALYZE_INSTR_SCENES if scenes_only else _ANALYZE_INSTR_AUDIO
         if not transcript:
             return instr_visual + ts_hint + "\n" + lang_instr + "\n\n" + json_format
-        truncated = VideoReviewer._truncate_transcript(transcript)
+        # 先頭切り捨てではなく全編から時間等間隔にサンプリングする（長編対策）
+        truncated = VideoReviewer._sample_transcript_uniform(transcript)
         return f"[音声書き起こし]\n{truncated}\n\n{instr_audio}{ts_hint}\n{lang_instr}\n\n{json_format}"
 
     @staticmethod
