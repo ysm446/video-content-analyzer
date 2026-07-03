@@ -15,7 +15,7 @@ import psutil
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # モデルロード前に HF_HOME を設定
 os.environ["HF_HOME"] = str(Path(__file__).parent.parent / "models")
@@ -111,6 +111,29 @@ def sse_canceled() -> str:
     """
     cancel.clear_cancel()
     return sse({"status": "canceled"})
+
+
+def _snap_scene_timestamps(result: dict, frame_timestamps: list[float], interval: float | None) -> None:
+    """scenes[].timestamp を、実際にモデルへ送ったフレーム時刻の最近傍に吸着させる。
+
+    VL モデルは提示フレーム間の時刻を捏造することがあるが、モデルが実際に
+    見た時刻はフレームのタイムスタンプだけなので、許容誤差内なら最近傍に丸める。
+    許容誤差は uniform のサンプリング間隔（scene 検出時は 10 秒）。
+    """
+    scenes = result.get("scenes") if isinstance(result, dict) else None
+    if not isinstance(scenes, list) or not frame_timestamps:
+        return
+    tolerance = float(interval) if interval else 10.0
+    for s in scenes:
+        if not isinstance(s, dict):
+            continue
+        sec = parse_timestamp_seconds(s.get("timestamp"))
+        if sec is None:
+            continue
+        nearest = min(frame_timestamps, key=lambda t: abs(t - sec))
+        if abs(nearest - sec) <= tolerance:
+            m, r = divmod(int(nearest), 60)
+            s["timestamp"] = f"{m}:{r:02d}"
 
 
 def _analysis_warnings(gen_meta: dict, pass_name: str) -> list[dict]:
@@ -397,8 +420,8 @@ class SetModelRequest(BaseModel):
 
 class ReviewRequest(BaseModel):
     video_path:   str
-    max_frames:   int   = 30
-    min_interval: float = 5.0
+    max_frames:   int   = Field(30, ge=1, le=120)
+    min_interval: float = Field(5.0, ge=0.1, le=600.0)
     transcript:   str   = ""        # SRT由来のトランスクリプト（フロントから送信）
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
     analysis_mode: str  = "speed"    # "speed" | "balanced" | "quality"
@@ -408,8 +431,8 @@ class ReviewRequest(BaseModel):
 class QARequest(BaseModel):
     video_path:   str
     question:     str
-    max_frames:   int   = 20
-    min_interval: float = 5.0
+    max_frames:   int   = Field(20, ge=1, le=120)
+    min_interval: float = Field(5.0, ge=0.1, le=600.0)
     transcript:   str   = ""
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
 
@@ -1020,6 +1043,7 @@ async def review_analyze(req: ReviewRequest):
                 yield sse(w)
 
             duration = float(meta.get("duration") or 0.0)
+            _snap_scene_timestamps(coarse_result, meta.get("timestamps") or [], meta.get("interval"))
             entries = _build_toc_entries(coarse_result, duration)
 
             if int(plan["refine_limit"]) > 0 and entries:
@@ -1054,6 +1078,7 @@ async def review_analyze(req: ReviewRequest):
                         r_gen_meta = r_result.pop("_analysis_meta", {}) if isinstance(r_result, dict) else {}
                         for w in _analysis_warnings(r_gen_meta, "refine"):
                             yield sse({**w, "current": idx, "total": len(targets)})
+                        _snap_scene_timestamps(r_result, r_meta.get("timestamps") or [], r_meta.get("interval"))
                         rel_entries = _entries_from_refine_result(
                             r_result, start, end, duration
                         )
@@ -1086,7 +1111,9 @@ async def review_analyze(req: ReviewRequest):
                 ],
             }
 
-            video_reviewer.cache_frames(str(video_path), req.frame_mode, req.max_frames, req.min_interval, frames, meta)
+            # キャッシュキーは実際の抽出パラメータで作る（req.max_frames ではなく
+            # coarse_frames。以前は「30枚」と称して間引き済みフレームを保存していた）
+            video_reviewer.cache_frames(str(video_path), req.frame_mode, int(plan["coarse_frames"]), req.min_interval, frames, meta)
             yield sse({"status": "done", "result": result, "meta": meta})
         except cancel.CanceledError:
             yield sse_canceled()
