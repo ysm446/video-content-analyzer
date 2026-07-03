@@ -126,11 +126,19 @@ def _analysis_warnings(gen_meta: dict, pass_name: str) -> list[dict]:
         })
     used = gen_meta.get("frames_used")
     requested = gen_meta.get("frames_requested")
+    reason = gen_meta.get("reduced_reason")
     if isinstance(used, int) and isinstance(requested, int) and used < requested:
+        if reason == "budget":
+            message = f"コンテキスト上限に収めるためフレームを {requested}枚 → {used}枚 に間引きました"
+        else:
+            message = f"画像処理エラーのためフレームを {requested}枚 → {used}枚 に縮小して分析しました"
+        warnings.append({"status": "analyze_warning", "pass": pass_name, "message": message})
+    elif reason == "budget":
+        tpf = gen_meta.get("tokens_per_frame")
         warnings.append({
             "status": "analyze_warning",
             "pass": pass_name,
-            "message": f"画像処理エラーのためフレームを {requested}枚 → {used}枚 に縮小して分析しました",
+            "message": f"コンテキスト上限に収めるためフレーム解像度を下げました（{tpf}トークン/枚）",
         })
     return warnings
 
@@ -1176,9 +1184,13 @@ async def review_qa(req: QARequest):
                 await asyncio.sleep(0)
             elif status == "done":
                 done_payload = json.loads(payload)
-                if (done_payload.get("meta") or {}).get("finish_reason") == "length":
+                done_meta = done_payload.get("meta") or {}
+                if done_meta.get("finish_reason") == "length":
                     yield sse({"status": "qa_warning", "message": "回答がトークン上限で打ち切られました"})
-                yield sse({"status": "done", "answer": done_payload.get("answer", ""), "meta": done_payload.get("meta", {})})
+                used, requested = done_meta.get("frames_used"), done_meta.get("frames_requested")
+                if isinstance(used, int) and isinstance(requested, int) and used < requested:
+                    yield sse({"status": "qa_warning", "message": f"フレームを {requested}枚 → {used}枚 に縮小して回答しました"})
+                yield sse({"status": "done", "answer": done_payload.get("answer", ""), "meta": done_meta})
                 break
             elif status == "canceled":
                 yield sse_canceled()

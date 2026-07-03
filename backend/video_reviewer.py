@@ -16,7 +16,7 @@ from .model_catalog import (
     default_review_model_id,
     get_review_model_meta,
 )
-from .llama_server import LlamaServerManager
+from .llama_server import LlamaServerManager, LLAMA_CPP_CTX
 from .vram import MAX_PIXELS_PER_FRAME
 from . import prompts
 
@@ -137,6 +137,10 @@ QA_SYSTEM = (
 
 _TRANSCRIPT_MAX_CHARS = 3000
 QA_MAX_NEW_TOKENS = 2048
+
+# コンテキスト予算の見積もり用定数
+_CTX_MARGIN_TOKENS = 512     # チャットテンプレート・画像マーカー等の余裕分
+_MIN_TOKENS_PER_FRAME = 64   # これ未満に解像度を落とすくらいなら枚数を間引く
 
 
 def parse_timestamp_seconds(value: str | None) -> float | None:
@@ -335,6 +339,61 @@ class VideoReviewer:
         encoded = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:image/jpeg;base64,{encoded}"
 
+    @staticmethod
+    def _even_indices(total: int, n: int) -> list[int]:
+        """0..total-1 から n 個をなるべく等間隔に選ぶ（先頭・末尾を含む）。"""
+        if n >= total:
+            return list(range(total))
+        if n <= 1:
+            return [0]
+        step = (total - 1) / (n - 1)
+        return sorted({min(round(i * step), total - 1) for i in range(n)})
+
+    @staticmethod
+    def _fit_frame_budget(n_frames: int, text_chars: int, max_new_tokens: int) -> tuple[int, int]:
+        """コンテキスト(-c)に収まるよう (使用フレーム数, 1枚あたり視覚トークン数) を決める。
+
+        テキストは日本語を想定して 1文字≒1トークンの保守的見積もり。
+        解像度は VRAM 制限（MAX_PIXELS_PER_FRAME）を上限とし、超過時は
+        まず解像度を _MIN_TOKENS_PER_FRAME まで下げ、それでも足りなければ枚数を間引く。
+        """
+        default_tpf = max(1, int(MAX_PIXELS_PER_FRAME or 200704) // (28 * 28))
+        if n_frames <= 0:
+            return 0, default_tpf
+        avail = LLAMA_CPP_CTX - max_new_tokens - text_chars - _CTX_MARGIN_TOKENS
+        if avail < _MIN_TOKENS_PER_FRAME:
+            return 1, _MIN_TOKENS_PER_FRAME
+        if n_frames * default_tpf <= avail:
+            return n_frames, default_tpf
+        tpf = max(_MIN_TOKENS_PER_FRAME, avail // n_frames)
+        n_use = min(n_frames, max(1, avail // tpf))
+        return n_use, tpf
+
+    def _prepare_budgeted_messages(self, frames: list[Image.Image], system: str, prompt: str, max_new_tokens: int, timestamps: list[float] | None) -> tuple[list[dict], list[Image.Image], list[float] | None, dict]:
+        """ctx 予算に収まるようフレームを間引き・縮小して messages を構築する。
+
+        戻り値: (messages, 使用フレーム, 使用タイムスタンプ, 予算情報)
+        """
+        default_tpf = max(1, int(MAX_PIXELS_PER_FRAME or 200704) // (28 * 28))
+        n_use, tpf = self._fit_frame_budget(len(frames), len(system) + len(prompt), max_new_tokens)
+        use_frames = frames
+        use_ts = timestamps
+        if n_use < len(frames):
+            idx = self._even_indices(len(frames), n_use)
+            use_frames = [frames[i] for i in idx]
+            if timestamps and len(timestamps) == len(frames):
+                use_ts = [timestamps[i] for i in idx]
+            print(f"[VideoReviewer] コンテキスト予算によりフレームを間引き: {len(frames)}→{len(use_frames)}枚 ({tpf}トークン/枚)")
+        elif tpf < default_tpf:
+            print(f"[VideoReviewer] コンテキスト予算により解像度を削減: {tpf}トークン/枚")
+        messages = self._build_messages(use_frames, system, prompt, use_ts, max_pixels=tpf * 28 * 28)
+        info = {
+            "frames_used": len(use_frames),
+            "tokens_per_frame": tpf,
+            "reduced_reason": "budget" if (len(use_frames) < len(frames) or tpf < default_tpf) else None,
+        }
+        return messages, use_frames, use_ts, info
+
     def _build_messages(self, frames: list[Image.Image], system: str, prompt: str, timestamps: list[float] | None = None, max_pixels: int | None = None) -> list[dict]:
         content: list[dict] = []
         if timestamps and len(timestamps) == len(frames):
@@ -358,20 +417,21 @@ class VideoReviewer:
         """
         print(f"[VideoReviewer] 推論開始: フレーム={len(frames)}枚")
         t0 = time.time()
-        frames_used = len(frames)
+        messages, use_frames, use_ts, budget_info = self._prepare_budgeted_messages(
+            frames, system, prompt, max_new_tokens, timestamps
+        )
         try:
-            messages = self._build_messages(frames, system, prompt, timestamps)
             result, gen_meta = _vision_server.chat_with_meta(self.model_id, messages, max_new_tokens, response_format)
         except RuntimeError as exc:
             msg = str(exc)
             if "failed to process image" not in msg:
                 raise
             retry_pixels = min(int(MAX_PIXELS_PER_FRAME or 200704), 128 * 28 * 28)
-            retry_frames = frames[: min(len(frames), 12)]
-            retry_timestamps = timestamps[:len(retry_frames)] if timestamps else None
+            retry_frames = use_frames[: min(len(use_frames), 12)]
+            retry_timestamps = use_ts[:len(retry_frames)] if use_ts else None
             print(
                 f"[VideoReviewer] 画像処理エラーのため縮小再試行: "
-                f"frames={len(retry_frames)}/{len(frames)}, max_pixels={retry_pixels}"
+                f"frames={len(retry_frames)}/{len(use_frames)}, max_pixels={retry_pixels}"
             )
             messages = self._build_messages(
                 retry_frames,
@@ -381,12 +441,16 @@ class VideoReviewer:
                 max_pixels=retry_pixels,
             )
             result, gen_meta = _vision_server.chat_with_meta(self.model_id, messages, max_new_tokens, response_format)
-            frames_used = len(retry_frames)
+            budget_info = {
+                "frames_used": len(retry_frames),
+                "tokens_per_frame": retry_pixels // (28 * 28),
+                "reduced_reason": "image_error",
+            }
         elapsed = time.time() - t0
         print(f"[VideoReviewer] 推論完了: {elapsed:.1f}秒")
         gen_meta = dict(gen_meta or {})
+        gen_meta.update(budget_info)
         gen_meta["elapsed_seconds"] = round(elapsed, 2)
-        gen_meta["frames_used"] = frames_used
         gen_meta["frames_requested"] = len(frames)
         return self._clean_generated_text(result), gen_meta
 
@@ -418,9 +482,11 @@ class VideoReviewer:
                 else:
                     on_delta(delta.replace("<think>", "").replace("</think>", ""))
 
+        messages, use_frames, use_ts, budget_info = self._prepare_budgeted_messages(
+            frames, system, prompt, max_new_tokens, timestamps
+        )
         try:
             try:
-                messages = self._build_messages(frames, system, prompt, timestamps)
                 stream_iter = _vision_server.stream_chat_with_meta(self.model_id, messages, max_new_tokens)
                 forward_stream(stream_iter)
             except RuntimeError as exc:
@@ -428,11 +494,11 @@ class VideoReviewer:
                 if "failed to process image" not in msg:
                     raise
                 retry_pixels = min(int(MAX_PIXELS_PER_FRAME or 200704), 128 * 28 * 28)
-                retry_frames = frames[: min(len(frames), 12)]
-                retry_timestamps = timestamps[:len(retry_frames)] if timestamps else None
+                retry_frames = use_frames[: min(len(use_frames), 12)]
+                retry_timestamps = use_ts[:len(retry_frames)] if use_ts else None
                 print(
                     f"[VideoReviewer] ストリーミング画像処理エラーのため縮小再試行: "
-                    f"frames={len(retry_frames)}/{len(frames)}, max_pixels={retry_pixels}"
+                    f"frames={len(retry_frames)}/{len(use_frames)}, max_pixels={retry_pixels}"
                 )
                 prefix_buffer = ""
                 content_started = False
@@ -445,9 +511,16 @@ class VideoReviewer:
                 )
                 stream_iter = _vision_server.stream_chat_with_meta(self.model_id, messages, max_new_tokens)
                 forward_stream(stream_iter)
+                budget_info = {
+                    "frames_used": len(retry_frames),
+                    "tokens_per_frame": retry_pixels // (28 * 28),
+                    "reduced_reason": "image_error",
+                }
         finally:
             elapsed = time.time() - t0
             print(f"[VideoReviewer] ストリーミング推論完了: {elapsed:.1f}秒")
+        meta.update(budget_info)
+        meta["frames_requested"] = len(frames)
         meta["elapsed_seconds"] = elapsed
         usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else {}
         completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
