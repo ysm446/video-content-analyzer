@@ -3,6 +3,22 @@
 作成日: 2026-07-03
 対象コード: `backend/video_reviewer.py` / `backend/server.py`（/review/analyze・/review/qa）/ `backend/llama_server.py` / `backend/vram.py`
 
+## 対応状況（2026-07-03 更新）
+
+| 項目 | 状態 |
+|---|---|
+| 2-1 コンテキスト予算管理 | ✅ 対応済み（`_fit_frame_budget` で解像度→枚数の順に自動削減、SSE 通知） |
+| 2-2 transcript 先頭切り捨て | ✅ 対応済み（時間等間隔サンプリングに変更。map-reduce 要約は将来枠） |
+| 2-3 json_schema 構造化出力 | ✅ 対応済み（response_format で GBNF 制約。サルベージは保険で存続） |
+| 2-4 `_parse_ts` h:mm:ss バグ | ✅ 対応済み（`parse_timestamp_seconds` に一本化） |
+| 3-1 フレームキャッシュキー | ✅ 対応済み（実抽出パラメータでキャッシュ） |
+| 3-2 finish_reason 廃棄 | ✅ 対応済み（`chat_with_meta` 追加、length 打ち切りを SSE 通知） |
+| 3-3 timestamp スナップ | ✅ 対応済み（`_snap_scene_timestamps`、許容誤差=サンプリング間隔） |
+| 3-4 縮小リトライの可視化 | ✅ 対応済み（analyze_warning / qa_warning） |
+| 3-5 QA フレーム選択 | ⏸ 未対応（任意。効果を見て判断） |
+| 3-6 入力バリデーション | ✅ 対応済み（Pydantic Field で境界宣言） |
+| 4節（低優先） | ⏸ 未対応（ドキュメント乖離のみ CLAUDE.md を更新済み） |
+
 ## 1. 現状の仕組み（要約）
 
 ```

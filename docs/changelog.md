@@ -1,6 +1,23 @@
 # 変更履歴
 
 ## 2026-07-03
+- **動画分析レビューの改善提案を実装（docs/design/video-analysis-review.md の 2-1〜3-6）**
+  - **2-4 バグ修正**: タイムスタンプ解析を `parse_timestamp_seconds` に一本化し
+    h:mm:ss / 分3桁（105:30）対応。1時間超動画で `_dedup_scenes` が scenes を
+    全損させるリスクを解消
+  - **2-3 / 3-2**: 分析出力を llama-server の `response_format`（json_schema → GBNF）で
+    構文制約。非ストリーム推論にも `chat_with_meta` を追加して finish_reason / usage を取得し、
+    トークン上限打ち切りを SSE `analyze_warning` / `qa_warning` で通知
+  - **2-1 / 3-4**: 送信前にコンテキスト予算（枚数×トークン/枚＋テキスト＋出力）を見積もり、
+    超過時は解像度→枚数の順に自動削減（`_fit_frame_budget`）。縮小・間引き・
+    画像処理エラーリトライをすべて SSE でユーザーに通知
+  - **2-2**: analyze の transcript を先頭3000字切り捨てから全編の時間等間隔サンプリングに
+    変更（長編動画で後半の音声が分析に反映されない問題を解消）
+  - **3-1**: フレームキャッシュのキーを実抽出パラメータ（coarse_frames）に修正
+  - **3-3**: scenes[].timestamp をモデルに送ったフレーム時刻の最近傍にスナップ
+  - **3-6**: ReviewRequest / QARequest の max_frames / min_interval に Pydantic Field で境界宣言
+  - CLAUDE.md の SSE 仕様を現状に合わせて更新（旧 include_audio 記述を削除、
+    warning / answer_delta イベントを追記）。3-5 と 4節（低優先）は未対応のまま
 - **AI 動画分析パイプラインのレビューを実施、改善提案を docs/design に追加**
   - `docs/design/video-analysis-review.md` を新規作成
   - 優先度高: ctx 16384 超過リスク（60枚×256トークン）、transcript 先頭3000字切り捨て、

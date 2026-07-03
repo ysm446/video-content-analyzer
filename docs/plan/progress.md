@@ -2,10 +2,16 @@
 
 最終更新: 2026-07-03
 
-## AI 動画分析パイプラインのレビュー（2026-07-03 完了）
+## AI 動画分析パイプラインのレビューと改善実装（2026-07-03 完了）
 - [x] 現状把握（video_reviewer.py / server.py / llama_server.py / vram.py / app.html）
 - [x] 改善提案を `docs/design/video-analysis-review.md` にまとめた（優先度・着手順付き）
-- [ ] 提案の実装は未着手（着手順は同ドキュメント §5 を参照）
+- [x] 2-4: タイムスタンプ解析一本化（h:mm:ss 対応、scenes 全損バグ修正）
+- [x] 2-3 / 3-2: json_schema 構造化出力 + finish_reason 検知と SSE 通知
+- [x] 2-1 / 3-4: コンテキスト予算による自動削減 + 縮小の SSE 可視化
+- [x] 2-2: transcript の時間等間隔サンプリング（長編対策）
+- [x] 3-1 / 3-3 / 3-6: キャッシュキー修正・timestamp スナップ・入力バリデーション
+- [x] CLAUDE.md の SSE 仕様を現状に同期
+- [ ] 3-5（QA の質問依存フレーム選択）と 4節（低優先）は任意対応として保留
 
 ## `bin/` → `runtime/` リネーム（2026-07-03 完了）
 - [x] フォルダ名変更（llama.cpp 一式は `runtime/llama-server/` 配下のまま）

@@ -155,24 +155,27 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### `/review/analyze`
 ```
-loading_asr      → include_audio=true かつ ASR 未ロード時
-transcribing     → 音声書き起こし中
-asr_done         → 書き起こし完了 {chars: int}
-loading_model    → VL モデルが未ロードの場合のみ
-extracting_frames
-analyzing        → {count, interval, duration}
-canceled         → ユーザーが POST /cancel で中断したとき
-done             → {result: {summary, detail, scenes, tags, genre}, meta, transcript}
-error            → {message}
+loading_model     → VL モデルが未ロードの場合のみ
+extracting_frames → {pass: "coarse"} / refine 時は {pass: "refine", current, total, range}
+analyzing         → {count, interval, duration, mode, pass, analysis_mode}
+analyze_warning   → {pass, message}（トークン上限打ち切り・コンテキスト予算による
+                     フレーム間引き/解像度削減・画像処理エラーの縮小リトライを通知）
+refine_warning    → {message, current, total, range}（refine 失敗時、coarse 結果で継続）
+canceled          → ユーザーが POST /cancel で中断したとき
+done              → {result: {summary, detail, scenes, tags, genre}, meta}
+error             → {message}
 ```
+※ transcript はフロントエンドがリクエストで送る（analyze 内で ASR は行わない）
 
 ### `/review/qa`
 ```
 loading_model
 extracting_frames
 answering        → {count}
+answer_delta     → {delta}（ストリーミング回答）
+qa_warning       → {message}（トークン上限打ち切り・フレーム縮小の通知）
 canceled         → ユーザーが POST /cancel で中断したとき
-done             → {answer}
+done             → {answer, meta}（meta: usage / finish_reason / tokens_per_sec 等）
 error            → {message}
 ```
 
@@ -203,6 +206,12 @@ error            → {message}
 - VL モデルは Q&A のために分析後も VRAM に保持（モデル管理ポップアップでアンロード）
 - ASR は使用後即アンロード（VL と VRAM を共有するため）
 - 翻訳と辞書検索は `translator` インスタンスを共用（`translator_lookup` は廃止済み）
+- 動画分析の JSON 出力は llama-server の `response_format`（json_schema → GBNF）で構文制約。
+  JSON サルベージ機構は打ち切り・旧サーバー向けの保険として存続
+- フレーム枚数×1枚あたり解像度は送信前に `LLAMA_CPP_CTX` に収まるよう自動配分
+  （`video_reviewer.py` の `_fit_frame_budget`。超過時は解像度→枚数の順に削減し SSE で通知）
+- analyze の transcript は先頭切り捨てではなく全編から時間等間隔サンプリング（長編対策）
+- scenes[].timestamp はモデルに送ったフレーム時刻の最近傍にサーバー側でスナップ
 
 ## 出力ファイル命名規則
 
