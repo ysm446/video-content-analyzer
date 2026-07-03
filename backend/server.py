@@ -746,6 +746,56 @@ async def transcribe(req: TranscribeRequest):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+def _video_context_for_srt(srt_path: Path) -> str:
+    """SRT に対応する分析キャッシュ（data.json）の meta から翻訳用の文脈文字列を作る。
+
+    SRT は通常 `{動画名}.cache/` 内にあるので同フォルダの data.json を探す。
+    旧配置（動画の横）の SRT は `{動画名}.cache/data.json` にフォールバック。
+    キャッシュが無い・壊れている場合は空文字列（翻訳は文脈なしで続行）。
+    """
+    candidates = [srt_path.parent / "data.json"]
+    for suffix in (".original.srt", ".corrected.srt", ".japanese.srt"):
+        if srt_path.name.endswith(suffix):
+            base = srt_path.name[: -len(suffix)]
+            candidates.append(srt_path.parent / f"{base}.cache" / "data.json")
+            break
+    for c in candidates:
+        try:
+            if not c.exists():
+                continue
+            data = json.loads(c.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        meta = data.get("meta") if isinstance(data, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        parts = []
+        if meta.get("genre"):
+            parts.append(f"Genre: {meta['genre']}")
+        if meta.get("summary"):
+            parts.append(f"Summary: {meta['summary']}")
+        tags = meta.get("tags")
+        if isinstance(tags, list) and tags:
+            parts.append("Topics: " + ", ".join(str(t) for t in tags[:10]))
+        return "\n".join(parts)
+    return ""
+
+
+def _sample_lines_for_glossary(segments: list[dict], max_chars: int = 4000) -> str:
+    """用語集抽出用に、字幕全編から等間隔サンプリングしたテキストを作る。"""
+    texts = [str(s.get("text") or "") for s in segments if str(s.get("text") or "").strip()]
+    if not texts:
+        return ""
+    total = sum(len(t) + 1 for t in texts)
+    if total <= max_chars:
+        return "\n".join(texts)
+    approx = total / len(texts)
+    budget = max(1, int(max_chars / approx))
+    step = len(texts) / budget
+    picked = [texts[int(k * step)] for k in range(budget)]
+    return "\n".join(picked)[:max_chars]
+
+
 @app.post("/translate")
 async def translate(req: TranslateRequest):
     """
@@ -781,6 +831,24 @@ async def translate(req: TranslateRequest):
                 yield sse({"status": "error", "message": str(e)})
                 return
 
+        # 動画の文脈（分析キャッシュの meta）と用語集を system prompt 追記として組み立てる
+        video_context = _video_context_for_srt(srt_path)
+        glossary: list[dict] = []
+        yield sse({"status": "building_glossary"})
+        try:
+            glossary = await loop.run_in_executor(
+                None, translator.build_glossary, _sample_lines_for_glossary(segments)
+            )
+        except cancel.CanceledError:
+            await loop.run_in_executor(None, translator.unload)
+            yield sse_canceled()
+            return
+        except Exception as e:
+            yield sse({"status": "translate_warning", "message": f"用語集の生成に失敗したためスキップします: {e}"})
+        if glossary:
+            yield sse({"status": "glossary_done", "terms": len(glossary)})
+        extra_system = Translator.compose_translation_system_extra(video_context, glossary)
+
         yield sse({"status": "translating", "current": 0, "total": total})
 
         # 直前 CONTEXT_WINDOW 件の (原文, 翻訳) ペアと、次 LOOKAHEAD 行の原文を参考文脈に使う
@@ -794,7 +862,7 @@ async def translate(req: TranslateRequest):
                 lookahead = [s["text"] for s in segments[i + 1: i + 1 + LOOKAHEAD]] or None
                 try:
                     jp_text, gen_meta = await loop.run_in_executor(
-                        None, translator.translate_ex, seg["text"], ctx, lookahead
+                        None, translator.translate_ex, seg["text"], ctx, lookahead, extra_system
                     )
                 except cancel.CanceledError:
                     yield sse_canceled()

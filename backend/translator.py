@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 
@@ -52,6 +53,36 @@ REFINE_SYSTEM_PROMPT = (
 )
 
 
+# 翻訳前に transcript から固有名詞・頻出語の訳語を1回だけ決める用語集抽出
+GLOSSARY_SYSTEM_PROMPT = (
+    "/no_think\n"
+    "You extract a translation glossary from a video transcript sample. Pick only terms that "
+    "must be rendered consistently across all subtitles: proper nouns (people, places, "
+    "products, organizations, titles), technical terms, and recurring key phrases. "
+    "For each term, give the Japanese rendering to use in subtitles. Keep names as-is "
+    "(katakana or original spelling) when that is more natural than translating. "
+    "Skip generic everyday words. Return at most 30 terms; fewer is fine."
+)
+
+_GLOSSARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "terms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "japanese": {"type": "string"},
+                },
+                "required": ["source", "japanese"],
+            },
+        },
+    },
+    "required": ["terms"],
+}
+
+
 def available_translator_models() -> list[dict]:
     return catalog_translator_models()
 
@@ -62,6 +93,7 @@ def get_prompts() -> list[dict]:
         {"key": "translate", "label": "翻訳（字幕）", "category": "翻訳", "default": SYSTEM_PROMPT},
         {"key": "lookup", "label": "辞書検索", "category": "翻訳", "default": LOOKUP_SYSTEM_PROMPT},
         {"key": "refine", "label": "文字起こし補正", "category": "翻訳", "default": REFINE_SYSTEM_PROMPT},
+        {"key": "glossary", "label": "用語集抽出", "category": "翻訳", "default": GLOSSARY_SYSTEM_PROMPT},
     ]
 
 
@@ -195,6 +227,59 @@ class Translator:
         if lookahead:
             parts.append("[Upcoming source lines (reference only, do NOT translate)]\n" + "\n".join(lookahead))
         parts.append("[Target line — translate ONLY this line]\n" + text)
+        return "\n\n".join(parts)
+
+    def build_glossary(self, transcript_sample: str, max_terms: int = 30) -> list[dict]:
+        """transcript サンプルから訳語統一用の用語集を生成する。
+
+        戻り値: [{"source": str, "japanese": str}, ...]（最大 max_terms 件）。
+        GGUF 以外（HF フォールバック）や生成失敗時は呼び出し側で握りつぶせるよう
+        例外をそのまま送出する。
+        """
+        if not transcript_sample.strip():
+            return []
+        with self._lock:
+            self._ensure_loaded()
+            if not self._is_gguf_model():
+                return []  # HF フォールバック経路では未対応（通常は GGUF）
+            messages = [
+                {"role": "system", "content": GLOSSARY_SYSTEM_PROMPT},
+                {"role": "user", "content": f"[Transcript sample]\n{transcript_sample}\n\nBuild the glossary."},
+            ]
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {"name": "glossary", "schema": _GLOSSARY_SCHEMA},
+            }
+            raw, _meta = self._chat_llama_cpp_meta(messages, max_tokens=1024, response_format=response_format)
+        data = json.loads(raw)
+        terms: list[dict] = []
+        seen: set[str] = set()
+        for t in data.get("terms", []):
+            if not isinstance(t, dict):
+                continue
+            source = str(t.get("source") or "").strip()
+            japanese = str(t.get("japanese") or "").strip()
+            key = source.lower()
+            if not source or not japanese or key in seen:
+                continue
+            seen.add(key)
+            terms.append({"source": source, "japanese": japanese})
+            if len(terms) >= max_terms:
+                break
+        print(f"[Translator] 用語集を生成: {len(terms)}語")
+        return terms
+
+    @staticmethod
+    def compose_translation_system_extra(video_context: str, glossary: list[dict]) -> str:
+        """動画の文脈と用語集から、翻訳 system prompt への追記ブロックを組み立てる。"""
+        parts: list[str] = []
+        if video_context:
+            parts.append("[Video context]\n" + video_context)
+        if glossary:
+            lines = [f"- {t['source']} -> {t['japanese']}" for t in glossary]
+            parts.append(
+                "[Glossary — always use these Japanese renderings]\n" + "\n".join(lines)
+            )
         return "\n\n".join(parts)
 
     def translate(
