@@ -9,6 +9,11 @@
   <script src="../vendor/lucide.min.js"></script>
   <script src="../vendor/marked.min.js"></script>
   <style>
+    /* select 等のネイティブフォーカスリングは OS のアクセント色（明るいオレンジ等）で
+       描かれて目立ちすぎるため、控えめな枠線の明色化に置き換える */
+    select:focus,select:focus-visible,
+    input[type="text"]:focus,input[type="text"]:focus-visible,
+    textarea:focus,textarea:focus-visible{outline:none;border-color:#555!important}
     svg.lucide{width:14px;height:14px;stroke-width:1.75;vertical-align:-2px;flex-shrink:0}
     .time-label svg.lucide{vertical-align:0}
     .sidebar svg.lucide{width:20px;height:20px;stroke-width:1.5}
