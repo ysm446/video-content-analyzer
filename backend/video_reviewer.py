@@ -98,6 +98,25 @@ _TRANSCRIPT_MAX_CHARS = 3000
 QA_MAX_NEW_TOKENS = 2048
 
 
+def parse_timestamp_seconds(value: str | None) -> float | None:
+    """"h:mm:ss(.f)" / "m:ss(.f)" 形式のタイムスタンプを秒に変換する。解釈できなければ None。
+
+    モデル出力は "75:30"（分が2桁超）と "1:15:30"（時刻正規化）の両方がありうるため、
+    どちらも受け付ける。server.py 側の TOC 構築とここでの dedup が同じ解釈をするよう、
+    この関数に一本化している。
+    """
+    if not value:
+        return None
+    m = re.match(r"^\s*(?:(\d+):)?(\d{1,3}):(\d{2})(?:\.(\d+))?\s*$", str(value))
+    if not m:
+        return None
+    h = int(m.group(1) or 0)
+    mm = int(m.group(2))
+    ss = int(m.group(3))
+    frac = float(f"0.{m.group(4)}") if m.group(4) else 0.0
+    return h * 3600 + mm * 60 + ss + frac
+
+
 def available_review_models() -> list[dict]:
     return catalog_review_models()
 
@@ -628,13 +647,8 @@ class VideoReviewer:
 
     @staticmethod
     def _parse_ts(ts: str) -> float:
-        try:
-            parts = ts.split(":")
-            if len(parts) == 2:
-                return int(parts[0]) * 60 + float(parts[1])
-        except Exception:
-            pass
-        return 0.0
+        sec = parse_timestamp_seconds(ts)
+        return sec if sec is not None else 0.0
 
     @staticmethod
     def _dedup_scenes(scenes: list) -> list:

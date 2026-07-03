@@ -25,7 +25,7 @@ from .model_catalog import available_review_models as scan_review_models
 from .model_catalog import available_translator_models as scan_translator_models
 from .translator import Translator, available_translator_models, get_prompts as _translator_prompts
 from .subtitle import segments_to_srt, srt_file_to_segments, save_srt, make_output_path, split_long_segments
-from .video_reviewer import VideoReviewer, available_review_models, get_prompts as _review_prompts
+from .video_reviewer import VideoReviewer, available_review_models, get_prompts as _review_prompts, parse_timestamp_seconds
 from . import prompts as _prompts
 from . import cancel
 
@@ -114,16 +114,8 @@ def sse_canceled() -> str:
 
 
 def _parse_timestamp_seconds(value: str | None) -> float | None:
-    if not value:
-        return None
-    m = re.match(r"^\s*(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d+))?\s*$", str(value))
-    if not m:
-        return None
-    h = int(m.group(1) or 0)
-    mm = int(m.group(2))
-    ss = int(m.group(3))
-    frac = float(f"0.{m.group(4)}") if m.group(4) else 0.0
-    return h * 3600 + mm * 60 + ss + frac
+    # video_reviewer 側の dedup と同じ解釈になるよう実装を一本化（h:mm:ss / m:ss / 分3桁対応）
+    return parse_timestamp_seconds(value)
 
 
 def _build_toc_entries(result: dict, duration: float) -> list[dict]:
