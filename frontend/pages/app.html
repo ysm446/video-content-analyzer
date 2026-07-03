@@ -1886,6 +1886,9 @@
         const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt})})
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
+          else if(event.status==='building_glossary') setProgress('translate',8,'用語集を作成中...')
+          else if(event.status==='glossary_done') setProgress('translate',10,`用語集 ${event.terms} 語を適用`)
+          else if(event.status==='translate_warning') updateGlobalStatus('translate','running',`注意: ${event.message}`)
           else if(event.status==='translating'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('translate',pct,`翻訳中 ${event.current}/${event.total}`) }
           else if(event.status==='canceled'){ markCanceled('translate'); updateProcessButtons() }
           else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); updateProcessButtons(); loadSrt(state.jpSrtPath,'jp') }

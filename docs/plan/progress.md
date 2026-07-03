@@ -2,6 +2,15 @@
 
 最終更新: 2026-07-03
 
+## 字幕翻訳の精度改善（2026-07-03 完了）
+- [x] 設計を `docs/design/translation-accuracy.md` にまとめた
+- [x] 1/2: 先読み文脈（次2行）＋構造化1メッセージ化（擬似会話履歴を廃止）
+- [x] 7: 翻訳 system prompt に字幕制約を明文化、finish_reason 打ち切り検知
+- [x] 3: 分析キャッシュ meta と用語集（json_schema 生成）を system prompt に注入
+- [x] 5: 8行バッチ翻訳（json_schema、検証失敗時は行単位フォールバック）
+- [ ] 4（文単位の再グルーピング）と 6（ASR 側改善）は効果を見て判断
+- [ ] 実動画での品質確認（改善前後の japanese.srt 比較）は未実施
+
 ## AI 動画分析パイプラインのレビューと改善実装（2026-07-03 完了）
 - [x] 現状把握（video_reviewer.py / server.py / llama_server.py / vram.py / app.html）
 - [x] 改善提案を `docs/design/video-analysis-review.md` にまとめた（優先度・着手順付き）

@@ -153,6 +153,18 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ## SSE イベント仕様
 
+### `/translate`
+```
+loading_model     → Translator モデルが未ロードの場合のみ
+building_glossary → 用語集を生成中（字幕全編の等間隔サンプルから固有名詞・専門用語を抽出）
+glossary_done     → {terms: int}（生成失敗時はこのイベントなしで続行）
+translating       → {current, total}（8行バッチ単位で進捗更新）
+translate_warning → {message}（トークン上限打ち切り・バッチ検証失敗→行単位フォールバック等）
+canceled          → ユーザーが POST /cancel で中断したとき
+done              → {srt_path, total}
+error             → {message}
+```
+
 ### `/review/analyze`
 ```
 loading_model     → VL モデルが未ロードの場合のみ
@@ -212,6 +224,10 @@ error            → {message}
   （`video_reviewer.py` の `_fit_frame_budget`。超過時は解像度→枚数の順に削減し SSE で通知）
 - analyze の transcript は先頭切り捨てではなく全編から時間等間隔サンプリング（長編対策）
 - scenes[].timestamp はモデルに送ったフレーム時刻の最近傍にサーバー側でスナップ
+- 字幕翻訳は 8 行ずつの json_schema バッチ（検証失敗時は行単位フォールバック）。
+  参考文脈として直前 5 ペア＋次 2 行の原文を構造化した 1 メッセージで渡す
+  （擬似会話履歴方式は廃止）。分析キャッシュの meta（genre/summary/tags）と
+  翻訳前に生成した用語集を system prompt に付加して訳語を統一する
 
 ## 出力ファイル命名規則
 

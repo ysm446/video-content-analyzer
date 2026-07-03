@@ -1,6 +1,21 @@
 # 変更履歴
 
 ## 2026-07-03
+- **字幕翻訳の精度改善を実装（docs/design/translation-accuracy.md の 1/2/3/5/7）**
+  - **先読み文脈**: 翻訳対象の次 2 行の原文を参考情報として同梱（文の途中で切れた
+    セグメントの誤訳対策）
+  - **構造化メッセージ**: 過去の訳を擬似会話履歴として渡す方式を廃止し、
+    「直前の行と訳／続きの行／翻訳対象」をラベル付き 1 メッセージに変更
+    （初期の誤訳を模倣し続けるドリフトを防止）
+  - **動画メタ＋用語集**: 分析キャッシュの meta（genre/summary/tags）と、翻訳前に
+    字幕全編サンプルから生成した用語集（原語→日本語、最大30語）を system prompt に
+    付加。固有名詞・専門用語の訳ゆれを防ぐ。生成失敗時は warning を出して続行
+  - **バッチ翻訳**: 8 行ずつ json_schema で構造化受信（呼び出し回数 約1/8）。
+    検証失敗バッチは行単位翻訳にフォールバック
+  - **プロンプト改善＋打ち切り検知**: system prompt に字幕制約を明文化、
+    finish_reason=="length" を SSE translate_warning で通知
+  - SSE に building_glossary / glossary_done / translate_warning を追加し、
+    フロントのステータス表示に対応。CLAUDE.md に /translate の SSE 仕様を追記
 - **動画分析レビューの改善提案を実装（docs/design/video-analysis-review.md の 2-1〜3-6）**
   - **2-4 バグ修正**: タイムスタンプ解析を `parse_timestamp_seconds` に一本化し
     h:mm:ss / 分3桁（105:30）対応。1時間超動画で `_dedup_scenes` が scenes を
