@@ -1,5 +1,18 @@
 # 変更履歴
 
+## 2026-07-03
+- **AI 動画分析パイプラインのレビューを実施、改善提案を docs/design に追加**
+  - `docs/design/video-analysis-review.md` を新規作成
+  - 優先度高: ctx 16384 超過リスク（60枚×256トークン）、transcript 先頭3000字切り捨て、
+    json_schema 未使用、`_parse_ts` の h:mm:ss 非対応バグ（1時間超動画で scenes 全損リスク）
+  - 優先度中: フレームキャッシュキー不整合、finish_reason 廃棄、timestamp スナップ、
+    縮小リトライの不可視性、QA フレーム選択、入力バリデーション
+- **`bin/` フォルダを `runtime/` にリネーム**
+  - 今後 ffmpeg 等の外部実行時コンポーネントを集約する置き場として意図が伝わる名前に変更
+  - llama.cpp 一式は `runtime/llama-server/llama-b8763-bin-win-cuda-13.1-x64/` に配置
+  - `backend/llama_server.py` の `LLAMA_CPP_DIR` デフォルトパスと `.gitignore`（`bin/` → `runtime/`）を更新
+  - `LLAMA_CPP_DIR` 環境変数による上書きは従来どおり有効
+
 ## 2026-06-12
 - **チャプター保存を `video.cache/data.json` に一本化（`.toc.json` の書き込み廃止）**
   - 保存ボタンが `.toc.json`（動画の横）と `data.json`（cache 内）へ同じ内容を二重に

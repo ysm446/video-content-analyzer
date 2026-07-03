@@ -1,6 +1,16 @@
 # 進捗状況
 
-最終更新: 2026-06-12
+最終更新: 2026-07-03
+
+## AI 動画分析パイプラインのレビュー（2026-07-03 完了）
+- [x] 現状把握（video_reviewer.py / server.py / llama_server.py / vram.py / app.html）
+- [x] 改善提案を `docs/design/video-analysis-review.md` にまとめた（優先度・着手順付き）
+- [ ] 提案の実装は未着手（着手順は同ドキュメント §5 を参照）
+
+## `bin/` → `runtime/` リネーム（2026-07-03 完了）
+- [x] フォルダ名変更（llama.cpp 一式は `runtime/llama-server/` 配下のまま）
+- [x] `backend/llama_server.py` の `LLAMA_CPP_DIR` デフォルトパス更新
+- [x] `.gitignore` を `runtime/` に更新
 
 ## チャプター保存を cache に一本化（2026-06-12 完了）
 - [x] `.toc.json` の書き込みを廃止（保存は `video.cache/data.json` のみ）
