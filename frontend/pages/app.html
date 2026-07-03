@@ -35,7 +35,10 @@
     .model-pill:focus-visible{outline:2px solid #9ba4ff;outline-offset:2px}
     .model-pill.off{background:linear-gradient(135deg,#2b2f38 0%,#232830 100%);color:#bfc7d6;box-shadow:none}
     .model-pill.off:hover{filter:none;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset}
-    .model-pill.loading{background:linear-gradient(135deg,#5e9ce0 0%,#77afe8 100%)}
+    .model-pill.loading{background:linear-gradient(110deg,#3c5578 25%,#6ba1dd 50%,#3c5578 75%);background-size:200% 100%;animation:pill-shimmer 1.4s linear infinite;color:#eaf2fc}
+    @keyframes pill-shimmer{from{background-position:200% 0}to{background-position:0% 0}}
+    .model-pill.loading .model-pill-icon{animation:pill-pulse 1.4s ease-in-out infinite}
+    @keyframes pill-pulse{0%,100%{opacity:.5}50%{opacity:1}}
     .model-pill-icon{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
     .model-pill-icon svg.lucide{width:15px;height:15px;stroke-width:1.8}
     .model-pill-text{min-width:0;flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
@@ -2009,12 +2012,20 @@
     }
 
     // ---------- モデル管理モーダル ----------
+    let _modelLoading=false
     function updateModelStatusUi(info){
       const btn=document.getElementById('modelStatusBtn')
       const labelEl=document.getElementById('modelStatusLabel')
       const unloadBtn=document.getElementById('topbarModelUnloadBtn')
       if(!btn||!labelEl||!unloadBtn) return
       const label=info.available?.find(m=>m.id===info.current)?.label ?? info.current ?? ''
+      if(_modelLoading){
+        // ロード進行中は他経路の更新（ポーリング等）で表示を上書きしない
+        labelEl.textContent=`ロード中: ${label||'モデル'}...`
+        btn.classList.remove('off'); btn.classList.add('loading')
+        unloadBtn.disabled=true
+        return
+      }
       labelEl.textContent = info.loaded ? (label || 'ロード済みモデル') : 'モデルをロードしてください'
       btn.title = info.loaded ? `ロード済み: ${label}` : (label ? `モデルをロードしてください: ${label}` : 'モデルをロードしてください')
       btn.classList.toggle('off', !info.loaded && !info.loading)
@@ -2076,17 +2087,30 @@
     document.getElementById('modelModalBg').addEventListener('click',()=>modelModal.style.display='none')
 
     document.getElementById('modalLoadBtn').addEventListener('click',async()=>{
-      if(!_modalSelectedId) return
-      // まずモデルIDを設定
-      await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:_modalSelectedId})})
-      // 明示的にロード
-      document.getElementById('modalLoadBtn').disabled=true
-      document.getElementById('modalStatusText').textContent='ロード中...'
-      document.getElementById('modelStatusBtn').classList.add('loading')
-      await fetch(`${API}/review/load`,{method:'POST'})
-      await refreshModalModelList()
-      await fetchReviewModelStatus()
+      if(!_modalSelectedId || _modelLoading) return
+      const selectedId=_modalSelectedId
+      // ポップアップは即閉じ、モデルピルのシマーアニメーションで進行を示す
       modelModal.style.display='none'
+      _modelLoading=true
+      const btn=document.getElementById('modelStatusBtn')
+      const labelEl=document.getElementById('modelStatusLabel')
+      btn.classList.remove('off'); btn.classList.add('loading')
+      labelEl.textContent='ロード中...'
+      updateGlobalStatus('app','running','モデルをロード中...')
+      try{
+        // まずモデルIDを設定してから明示的にロード
+        await fetch(`${API}/review/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:selectedId})})
+        await fetchReviewModelStatus()  // ロード中ラベルにモデル名を反映
+        const res=await fetch(`${API}/review/load`,{method:'POST'})
+        if(!res.ok) throw new Error(await res.text())
+        updateGlobalStatus('app','done','モデルをロードしました')
+      }catch(e){
+        updateGlobalStatus('app','error',`モデルのロードに失敗しました: ${e.message}`)
+      }finally{
+        _modelLoading=false
+        btn.classList.remove('loading')
+        await fetchReviewModelStatus()
+      }
     })
 
     document.getElementById('modalUnloadBtn').addEventListener('click',unloadCurrentModel)
