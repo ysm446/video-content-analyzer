@@ -129,8 +129,14 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `GET  /cache/image?video_path=...&name=...` — サムネール画像ファイルを返す（Cache-Control: no-store）
 
 ### 設定
-- `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode 等）
+- `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode / screenshot_format 等）
 - `POST /ui-settings` — UI 設定保存
+
+### スクリーンショット
+- `POST /screenshot` — 再生位置のフレームを ffmpeg 入力シークでフル解像度保存（F12）。
+  保存先は動画と同じ場所の `{動画名}_screenshot/`、ファイル名は
+  `{動画名}_{HH-MM-SS.mmm}.{png|jpg}`（形式は ui-settings の `screenshot_format`）。
+  末尾・範囲外の時刻は `duration - 0.1` にクランプ
 
 ### ランタイム
 - `GET  /runtime/status` — llama-cpp / Whisper モデル / ffmpeg のインストール状態
@@ -280,11 +286,12 @@ video.mp4
 |---|---|
 | `frontend/pages/app.html` | 統合UI（字幕生成・2言語プレイヤー・動画レビュー・Q&A・チャプター編集） |
 | トップバー | 中央にモデル管理ボタン、右端にパネル切り替え（チャプター/チャット）と設定ボタン（設定ポップアップを開く）。タブ切り替えは廃止（プレイヤーのみ） |
-| 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
+| 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プレイヤー / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
 | ランタイム設定 | llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |
+| F12 | 再生位置のスクリーンショットを動画と同じ場所の `{動画名}_screenshot/` に保存（`POST /screenshot`。形式は設定 → プレイヤーで png/jpg を選択。結果はステータスバーに表示） |
 | Ctrl+R / F5 | 開発用リロードショートカット（main.js で登録） |
 
 ## アイコン

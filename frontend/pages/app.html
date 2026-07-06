@@ -507,6 +507,7 @@
         <nav class="settings-nav">
           <button class="settings-nav-btn active" data-settings-section="analysis"><i data-lucide="scan-search"></i> 動画分析</button>
           <button class="settings-nav-btn" data-settings-section="subtitle"><i data-lucide="captions"></i> 字幕</button>
+          <button class="settings-nav-btn" data-settings-section="player"><i data-lucide="monitor-play"></i> プレイヤー</button>
           <button class="settings-nav-btn" data-settings-section="prompts"><i data-lucide="file-pen-line"></i> プロンプト</button>
           <button class="settings-nav-btn" data-settings-section="runtime"><i data-lucide="hard-drive-download"></i> ランタイム</button>
           <button class="settings-nav-btn" data-settings-section="info"><i data-lucide="info"></i> 情報</button>
@@ -581,6 +582,19 @@
                 </select>
               </div>
               <div class="frame-hint">高品質は用語集の生成と広い文脈で訳語を安定させます。高速は用語集・動画文脈を省略し、バッチを大きくして時間を短縮します。</div>
+            </div>
+          </section>
+          <section class="settings-section" id="settings-section-player">
+            <div>
+              <div class="section-label">スクリーンショット</div>
+              <div class="frame-setting">
+                <label>保存形式：</label>
+                <select id="screenshotFormat" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+                  <option value="png" selected>PNG（無劣化）</option>
+                  <option value="jpg">JPG（軽量）</option>
+                </select>
+              </div>
+              <div class="frame-hint">F12 キーで再生中のフレームをフル解像度で保存します。保存先は動画と同じ場所の「動画名_screenshot」フォルダ、ファイル名は「動画名_時-分-秒.png」です。</div>
             </div>
           </section>
           <section class="settings-section" id="settings-section-prompts">
@@ -1986,6 +2000,34 @@
     function getTranslationMode(){ return translationModeSel.value==='fast' ? 'fast' : 'quality' }
     translationModeSel.addEventListener('change',()=>saveUiSettings({translation_mode:getTranslationMode()}))
 
+    // スクリーンショット（F12）: 再生位置のフレームをサーバー側 ffmpeg で
+    // {動画名}_screenshot/ にフル解像度保存する
+    const screenshotFormatSel=document.getElementById('screenshotFormat')
+    function getScreenshotFormat(){ return screenshotFormatSel.value==='jpg' ? 'jpg' : 'png' }
+    screenshotFormatSel.addEventListener('change',()=>saveUiSettings({screenshot_format:getScreenshotFormat()}))
+    let _screenshotBusy=false
+    async function takeScreenshot(){
+      if(!state.videoPath){ updateGlobalStatus('app','error','スクリーンショット: 動画が読み込まれていません'); return }
+      if(_screenshotBusy) return
+      _screenshotBusy=true
+      const t=video.currentTime
+      try{
+        const res=await fetch(`${API}/screenshot`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,time_sec:t,format:getScreenshotFormat()})})
+        const data=await res.json().catch(()=>({}))
+        if(!res.ok) throw new Error(data.detail||`HTTP ${res.status}`)
+        updateGlobalStatus('app','done',`スクリーンショット保存: ${data.path}`)
+      }catch(e){
+        updateGlobalStatus('app','error',`スクリーンショット失敗: ${e.message||e}`)
+      }finally{
+        _screenshotBusy=false
+      }
+    }
+    document.addEventListener('keydown',e=>{
+      if(e.key!=='F12') return
+      e.preventDefault()
+      takeScreenshot()
+    })
+
 
     async function saveUiSettings(data){
       try{ await fetch(`${API}/ui-settings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}) }catch{}
@@ -2022,6 +2064,7 @@
         subtitleDisplaySel.value = s.subtitle_display === 'overlay' ? 'overlay' : 'below'
         subtitleFontSel.value = ['noto','biz','yugothic','meiryo'].includes(s.subtitle_font) ? s.subtitle_font : 'noto'
         translationModeSel.value = s.translation_mode === 'fast' ? 'fast' : 'quality'
+        screenshotFormatSel.value = s.screenshot_format === 'jpg' ? 'jpg' : 'png'
         applySubtitleDisplay(subtitleDisplaySel.value)
         applySubtitleFont(subtitleFontSel.value)
         setAnalysisSectionExpanded('actions', state.analysisExpanded.actions !== false)

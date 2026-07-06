@@ -723,6 +723,41 @@ class VideoReviewer:
         print(f"[VideoReviewer] シーンサムネール生成: {len(out)}/{len(scenes)}枚 → {thumbs_dir}")
         return out
 
+    def save_screenshot(self, video_path: str, time_sec: float, fmt: str = "png") -> str:
+        """再生位置のフレームをフル解像度で {動画名}_screenshot/ フォルダに保存する。
+
+        ffmpeg に直接出力させる（PIL 再エンコードを挟まない）ので png は無劣化。
+        ファイル名は「{動画名}_{HH-MM-SS.mmm}.{ext}」。同時刻は同フレームなので上書きする。
+        """
+        p = Path(video_path)
+        out_dir = p.parent / (p.stem + "_screenshot")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = max(0.0, float(time_sec))
+        # 動画末尾（currentTime == duration）へのシークはフレームが取れず失敗するためクランプ
+        try:
+            duration = self._get_duration(video_path)
+            if duration > 0:
+                ts = min(ts, max(duration - 0.1, 0.0))
+        except Exception:
+            pass
+        h, rest = divmod(ts, 3600)
+        m, s = divmod(rest, 60)
+        stamp = f"{int(h):02d}-{int(m):02d}-{s:06.3f}"
+        ext = "jpg" if fmt == "jpg" else "png"
+        out = out_dir / f"{p.stem}_{stamp}.{ext}"
+
+        cmd = ["ffmpeg", "-ss", f"{ts:.3f}", "-i", str(p), "-frames:v", "1"]
+        if ext == "jpg":
+            cmd += ["-q:v", "2"]
+        cmd += [str(out), "-y"]
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0 or not out.exists():
+            detail = (result.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()
+            raise RuntimeError(f"ffmpeg フレーム抽出に失敗しました: {detail[-1] if detail else '不明なエラー'}")
+        print(f"[VideoReviewer] スクリーンショット保存: {out}")
+        return str(out)
+
     def load_frames_from_analysis_cache(self, video_path: str) -> tuple[list[Image.Image], dict] | None:
         """分析キャッシュ（data.json のシーン＋サムネール）から QA 用フレームを復元する。
 

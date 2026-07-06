@@ -486,6 +486,7 @@ class UISettingsRequest(BaseModel):
     analysis_scenes_expanded: Optional[bool] = None
     show_analysis_panel: Optional[bool] = None
     show_qa_panel: Optional[bool] = None
+    screenshot_format: Optional[str] = None  # "png" | "jpg"
 
 
 class TOCLoadRequest(BaseModel):
@@ -510,6 +511,12 @@ class CacheThumbnailRequest(BaseModel):
 class ThumbnailsGenerateRequest(BaseModel):
     video_path: str
     scenes: list[dict]  # [{start_sec: float, ...}, ...]（index 順で thumbnails/scene_N.jpg に保存）
+
+
+class ScreenshotRequest(BaseModel):
+    video_path: str
+    time_sec: float
+    format: str = "png"  # "png" | "jpg"
 
 
 def _cache_dir(video_path: str) -> Path:
@@ -657,6 +664,7 @@ def get_ui_settings():
         "analysis_scenes_expanded": s.get("analysis_scenes_expanded", True),
         "show_analysis_panel": s.get("show_analysis_panel", True),
         "show_qa_panel": s.get("show_qa_panel", True),
+        "screenshot_format": s.get("screenshot_format", "png"),
     }
 
 
@@ -693,6 +701,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["show_analysis_panel"] = bool(req.show_analysis_panel)
     if req.show_qa_panel is not None:
         to_save["show_qa_panel"] = bool(req.show_qa_panel)
+    if req.screenshot_format is not None:
+        to_save["screenshot_format"] = req.screenshot_format if req.screenshot_format in {"png", "jpg"} else "png"
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -1629,6 +1639,23 @@ async def cache_thumbnails_generate(req: ThumbnailsGenerateRequest):
     except Exception as e:
         raise HTTPException(500, f"サムネール生成に失敗: {e}")
     return {"status": "ok", "thumbnails": thumbnails}
+
+
+@app.post("/screenshot")
+async def screenshot(req: ScreenshotRequest):
+    """再生位置のフレームを {動画名}_screenshot/ フォルダにフル解像度で保存する（F12）。"""
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    fmt = req.format if req.format in {"png", "jpg"} else "png"
+    loop = asyncio.get_event_loop()
+    try:
+        saved = await loop.run_in_executor(
+            None, video_reviewer.save_screenshot, str(video_path), req.time_sec, fmt
+        )
+    except Exception as e:
+        raise HTTPException(500, f"スクリーンショットの保存に失敗: {e}")
+    return {"status": "ok", "path": saved}
 
 
 @app.post("/cache/thumbnail")
