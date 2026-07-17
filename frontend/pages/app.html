@@ -145,6 +145,7 @@
     .detail-save-btn:hover:not(:disabled){filter:brightness(1.2)}
     .detail-empty{min-height:120px;flex:none;border:1px dashed var(--border);border-radius:8px;background:rgba(255,255,255,.02);color:var(--text-dim);font-size:13px;text-align:center;display:flex;align-items:center;justify-content:center;padding:18px}
     .video-wrap{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0;overflow:hidden}
+    .video-wrap:fullscreen{background:#000}
     #video{width:100%;height:100%;display:block;cursor:pointer;object-fit:contain}
     .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim)}
     .subtitle-area{background:var(--bg);border-top:1px solid var(--border);padding:12px 20px;--subtitle-font:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif}
@@ -158,6 +159,9 @@
     #subtitleJp{font-size:19px;color:#fff;min-height:26px;font-family:var(--subtitle-font);text-align:center}
     #subtitleOrig .sub-word{display:inline-block;border-radius:3px;padding:0 1px;transition:color .12s,background .12s}
     #subtitleOrig .sub-word-active{color:#fff;background:rgba(70,70,70,.62)}
+    #seekPreview{position:fixed;display:none;z-index:9998;background:#000;border:1px solid var(--border-strong);border-radius:8px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.65);pointer-events:none}
+    #seekPreview video{width:176px;display:block}
+    #seekPreview .seek-preview-time{position:absolute;left:0;right:0;bottom:4px;text-align:center;font-size:11px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9);font-variant-numeric:tabular-nums}
     #dictTooltip{position:fixed;display:none;background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;padding:10px 12px;max-width:320px;font-size:13px;line-height:1.6;color:var(--text);box-shadow:0 6px 24px rgba(0,0,0,.65);z-index:9999;pointer-events:none;white-space:pre-wrap}
     #dictTooltip .dict-word{font-size:14px;font-weight:700;color:var(--accent-hover);margin-bottom:4px}
     #dictTooltip .dict-body{color:var(--text)}
@@ -1974,6 +1978,7 @@
     function toFileUrl(filePath){ return 'file:///'+filePath.replace(/\\/g,'/') }
     function loadVideo(filePath){
       video.src=toFileUrl(filePath)
+      seekPreviewVideo.src=toFileUrl(filePath)  // シークバーのホバープレビュー用
       video.style.display='block'
       noVideo.style.display='none'
       origSubtitles=[]; jpSubtitles=[]
@@ -1988,6 +1993,10 @@
       video.pause()
       video.removeAttribute('src')
       video.load()
+      // プレビュー用 video もファイルハンドルを解放（リネーム・削除のロック回避）
+      seekPreviewVideo.removeAttribute('src')
+      seekPreviewVideo.load()
+      seekPreview.style.display='none'
       video.style.display='none'
       noVideo.style.display=''
       origSubtitles=[]; jpSubtitles=[]; renderedOrigSub=null
@@ -2281,7 +2290,22 @@
     video.addEventListener('play',()=>{ playBtn.innerHTML='<i data-lucide="pause"></i>'; lucide.createIcons({nodes:[playBtn]}) })
     video.addEventListener('pause',()=>{ playBtn.innerHTML='<i data-lucide="play"></i>'; lucide.createIcons({nodes:[playBtn]}) })
     playBtn.addEventListener('click',()=> video.paused ? video.play() : video.pause())
-    video.addEventListener('click',()=>{ if(video.src) video.paused ? video.play() : video.pause() })
+    // クリック=再生/一時停止、ダブルクリック=全画面切り替え。
+    // ダブルクリック時は click も先に発火するため、クリック動作は少し遅延させて
+    // ダブルクリックと分かったらキャンセルする（再生状態が一瞬揺れるのを防ぐ）
+    let _videoClickTimer=null
+    video.addEventListener('click',()=>{
+      if(!video.src) return
+      clearTimeout(_videoClickTimer)
+      _videoClickTimer=setTimeout(()=>{ video.paused ? video.play() : video.pause() },250)
+    })
+    video.addEventListener('dblclick',()=>{
+      if(!video.src) return
+      clearTimeout(_videoClickTimer)
+      // 字幕オーバーレイも一緒に見えるよう video 単体ではなく videoWrap を全画面化する
+      if(document.fullscreenElement) document.exitFullscreen()
+      else document.getElementById('videoWrap').requestFullscreen().catch(()=>{})
+    })
     prevSubBtn.addEventListener('click',()=>{
       const t=video.currentTime
       const prevs=[findPrevSubByTime(origSubtitles,t),findPrevSubByTime(jpSubtitles,t)].filter(Boolean)
@@ -2306,6 +2330,44 @@
     document.getElementById('back3Btn').addEventListener('click',()=>skipSeconds(-3))
     document.getElementById('fwd3Btn').addEventListener('click',()=>skipSeconds(3))
     seekBar.addEventListener('input',()=>{ if(!isNaN(video.duration)) video.currentTime=(seekBar.value/100)*video.duration })
+
+    // シークバーのホバープレビュー: 非表示のプレビュー用 video をホバー位置へ
+    // シークして小窓表示する（本編の再生位置は動かさない。サーバー抽出なしで高速）。
+    // 連続 mousemove は seeked 待ちで直列化し、最新位置だけを追いかける
+    const seekPreview=document.createElement('div')
+    seekPreview.id='seekPreview'
+    const seekPreviewVideo=document.createElement('video')
+    seekPreviewVideo.muted=true
+    seekPreviewVideo.preload='metadata'
+    const seekPreviewTime=document.createElement('div')
+    seekPreviewTime.className='seek-preview-time'
+    seekPreview.appendChild(seekPreviewVideo)
+    seekPreview.appendChild(seekPreviewTime)
+    document.body.appendChild(seekPreview)
+    let _previewSeeking=false, _previewPending=null
+    function _previewSeekTo(t){
+      if(_previewSeeking){ _previewPending=t; return }
+      _previewSeeking=true
+      try{ seekPreviewVideo.currentTime=t }catch{ _previewSeeking=false }
+    }
+    seekPreviewVideo.addEventListener('seeked',()=>{
+      _previewSeeking=false
+      if(_previewPending!=null){ const t=_previewPending; _previewPending=null; _previewSeekTo(t) }
+    })
+    seekBar.addEventListener('mousemove',e=>{
+      if(!video.src || isNaN(video.duration) || !seekPreviewVideo.getAttribute('src')){ seekPreview.style.display='none'; return }
+      const rect=seekBar.getBoundingClientRect()
+      const frac=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))
+      const t=Math.min(frac*video.duration, Math.max(video.duration-0.1,0))
+      seekPreview.style.display='block'
+      seekPreviewTime.textContent=fmtDurationHMS(t)
+      const w=seekPreview.offsetWidth||176, h=seekPreview.offsetHeight||99
+      seekPreview.style.left=Math.max(8,Math.min(window.innerWidth-w-8,e.clientX-w/2))+'px'
+      seekPreview.style.top=(rect.top-h-10)+'px'
+      _previewSeekTo(t)
+    })
+    seekBar.addEventListener('mouseleave',()=>{ seekPreview.style.display='none' })
+
     volumeBar.addEventListener('input',()=>{ video.volume=volumeBar.value })
     volumeBar.addEventListener('change',()=>saveUiSettings({volume:parseFloat(volumeBar.value)}))
     speedSelect.addEventListener('change',()=>{
