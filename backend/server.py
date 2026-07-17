@@ -497,6 +497,9 @@ class UISettingsRequest(BaseModel):
     show_analysis_panel: Optional[bool] = None
     show_qa_panel: Optional[bool] = None
     screenshot_format: Optional[str] = None  # "png" | "jpg"
+    root_folder: Optional[str] = None  # ファイル一覧のルートフォルダ（"" でクリア）
+    show_file_panel: Optional[bool] = None
+    file_panel_width: Optional[int] = None  # px（180〜600 にクランプ）
 
 
 class TOCLoadRequest(BaseModel):
@@ -527,6 +530,20 @@ class ScreenshotRequest(BaseModel):
     video_path: str
     time_sec: float
     format: str = "png"  # "png" | "jpg"
+
+
+class FolderListRequest(BaseModel):
+    path: str
+
+
+class FolderSearchRequest(BaseModel):
+    root: str
+    query: str
+
+
+class FileRenameRequest(BaseModel):
+    path: str
+    new_name: str  # 動画は拡張子込み/なしどちらでも可（なしなら元の拡張子を維持）
 
 
 def _cache_dir(video_path: str) -> Path:
@@ -675,6 +692,9 @@ def get_ui_settings():
         "show_analysis_panel": s.get("show_analysis_panel", True),
         "show_qa_panel": s.get("show_qa_panel", True),
         "screenshot_format": s.get("screenshot_format", "png"),
+        "root_folder": s.get("root_folder", ""),
+        "show_file_panel": s.get("show_file_panel", True),
+        "file_panel_width": s.get("file_panel_width", 272),
     }
 
 
@@ -713,6 +733,12 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["show_qa_panel"] = bool(req.show_qa_panel)
     if req.screenshot_format is not None:
         to_save["screenshot_format"] = req.screenshot_format if req.screenshot_format in {"png", "jpg"} else "png"
+    if req.root_folder is not None:
+        to_save["root_folder"] = str(req.root_folder)
+    if req.show_file_panel is not None:
+        to_save["show_file_panel"] = bool(req.show_file_panel)
+    if req.file_panel_width is not None:
+        to_save["file_panel_width"] = max(180, min(600, int(req.file_panel_width)))
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -1781,3 +1807,169 @@ def cache_image(video_path: str, name: str):
         raise HTTPException(404, "画像が見つかりません")
     # 再分析でファイル名そのまま上書きされるため、ブラウザキャッシュに残さない
     return FileResponse(img_path, headers={"Cache-Control": "no-store"})
+
+
+# ---------- ファイルマネージャー ----------
+
+VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv"}
+
+# ファイル一覧に出さない管理用フォルダ（分析キャッシュ・スクリーンショット・隠しフォルダ）
+def _is_managed_dir(name: str) -> bool:
+    return name.startswith(".") or name.endswith(".cache") or name.endswith("_screenshot")
+
+
+def _video_entry(p: Path) -> dict:
+    """動画1件の一覧表示用エントリ（分析・字幕の有無は存在チェックのみで軽量に判定）。"""
+    cache = p.parent / (p.stem + ".cache")
+
+    def _has_srt(suffix: str) -> bool:
+        # cache 内を優先し、旧・動画の横（後方互換）もチェック
+        return (cache / f"{p.stem}.{suffix}.srt").exists() or (p.parent / f"{p.stem}.{suffix}.srt").exists()
+
+    try:
+        st = p.stat()
+        size, mtime = st.st_size, st.st_mtime
+    except OSError:
+        size, mtime = 0, 0.0
+    thumb = cache / "thumbnails" / "scene_0.jpg"
+    return {
+        "name": p.name,
+        "path": str(p),
+        "size": size,
+        "mtime": mtime,
+        "analyzed": (cache / "data.json").exists(),
+        "has_original_srt": _has_srt("original") or _has_srt("corrected"),
+        "has_japanese_srt": _has_srt("japanese"),
+        "thumbnail": "thumbnails/scene_0.jpg" if thumb.exists() else None,
+    }
+
+
+@app.post("/folder/list")
+def folder_list(req: FolderListRequest):
+    """フォルダ直下のサブフォルダと動画ファイルを返す（再帰しない・ツリーの遅延読み込み用）。"""
+    p = Path(req.path)
+    if not p.is_absolute() or not p.is_dir():
+        raise HTTPException(404, "フォルダが見つかりません")
+    folders: list[dict] = []
+    videos: list[dict] = []
+    try:
+        entries = sorted(p.iterdir(), key=lambda e: e.name.lower())
+    except OSError as e:
+        raise HTTPException(500, f"フォルダを読み取れません: {e}")
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                if not _is_managed_dir(entry.name):
+                    folders.append({"name": entry.name, "path": str(entry)})
+            elif entry.suffix.lower() in VIDEO_EXTS:
+                videos.append(_video_entry(entry))
+        except OSError:
+            continue
+    return {"path": str(p), "folders": folders, "videos": videos}
+
+
+@app.post("/folder/search")
+def folder_search(req: FolderSearchRequest):
+    """ルート配下を再帰走査してファイル名の部分一致で動画を検索する（フラット表示用）。"""
+    root = Path(req.root)
+    if not root.is_absolute() or not root.is_dir():
+        raise HTTPException(404, "フォルダが見つかりません")
+    q = req.query.strip().lower()
+    if not q:
+        return {"videos": [], "truncated": False}
+    limit = 300
+    results: list[dict] = []
+    truncated = False
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not _is_managed_dir(d)]
+        dirnames.sort(key=str.lower)
+        for fn in sorted(filenames, key=str.lower):
+            fp = Path(dirpath) / fn
+            if fp.suffix.lower() not in VIDEO_EXTS or q not in fn.lower():
+                continue
+            entry = _video_entry(fp)
+            rel = os.path.relpath(dirpath, root)
+            entry["rel_dir"] = "" if rel == "." else rel
+            results.append(entry)
+            if len(results) >= limit:
+                truncated = True
+                break
+        if truncated:
+            break
+    return {"videos": results, "truncated": truncated}
+
+
+_INVALID_NAME_CHARS = set('\\/:*?"<>|')
+
+
+@app.post("/file/rename")
+def file_rename(req: FileRenameRequest):
+    """動画/フォルダのリネーム。動画はサイドカー（.cache/・SRT・_screenshot/）も一緒にリネームする。"""
+    p = Path(req.path)
+    if not p.is_absolute() or not p.exists():
+        raise HTTPException(404, "ファイルが見つかりません")
+    new_name = req.new_name.strip()
+    if not new_name or new_name in {".", ".."} or any(c in _INVALID_NAME_CHARS for c in new_name):
+        raise HTTPException(400, "使用できない名前です")
+
+    if p.is_dir():
+        target = p.parent / new_name
+        if target.exists():
+            raise HTTPException(409, "同名のフォルダが既に存在します")
+        try:
+            p.rename(target)
+        except OSError as e:
+            raise HTTPException(500, f"リネームに失敗しました: {e}")
+        return {"path": str(target)}
+
+    # 動画ファイル: new_name は stem として扱う（元の拡張子付きで来た場合は剥がす）
+    new_stem = new_name
+    if p.suffix and new_stem.lower().endswith(p.suffix.lower()):
+        new_stem = new_stem[: -len(p.suffix)]
+    if not new_stem:
+        raise HTTPException(400, "使用できない名前です")
+    old_stem = p.stem
+    target = p.parent / (new_stem + p.suffix)
+    if target.exists():
+        raise HTTPException(409, "同名のファイルが既に存在します")
+
+    # 動画本体を最初にリネーム（再生中ロック等で失敗するならここで止まり、サイドカーは無傷）
+    try:
+        p.rename(target)
+    except OSError as e:
+        raise HTTPException(500, f"リネームに失敗しました: {e}")
+
+    warnings: list[str] = []
+
+    def _try_rename(src: Path, dst: Path) -> None:
+        if not src.exists():
+            return
+        try:
+            src.rename(dst)
+        except OSError as e:
+            warnings.append(f"{src.name}: {e}")
+
+    # 分析キャッシュフォルダと中の SRT
+    cache = p.parent / (old_stem + ".cache")
+    new_cache = p.parent / (new_stem + ".cache")
+    _try_rename(cache, new_cache)
+    srt_dirs = [new_cache if new_cache.is_dir() else None, p.parent]  # cache 内＋旧・横置き（後方互換）
+    for d in srt_dirs:
+        if d is None:
+            continue
+        for suffix in ("original", "corrected", "japanese"):
+            _try_rename(d / f"{old_stem}.{suffix}.srt", d / f"{new_stem}.{suffix}.srt")
+    # スクリーンショットフォルダ
+    _try_rename(p.parent / (old_stem + "_screenshot"), p.parent / (new_stem + "_screenshot"))
+
+    # data.json 内の動画ファイル名も更新
+    data_file = new_cache / "data.json"
+    if data_file.exists():
+        try:
+            d = json.loads(data_file.read_text(encoding="utf-8"))
+            d["video"] = target.name
+            data_file.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            warnings.append(f"data.json: {e}")
+
+    return {"path": str(target), "warnings": warnings}

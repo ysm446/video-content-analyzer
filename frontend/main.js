@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, Menu, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
@@ -216,6 +216,15 @@ ipcMain.handle('dialog:openVideo', async () => {
   return filePaths[0] ?? null
 })
 
+// ルートフォルダを選択するダイアログ（ファイル一覧用）
+ipcMain.handle('dialog:openFolder', async () => {
+  const { filePaths } = await dialog.showOpenDialog({
+    title: 'ルートフォルダを選択',
+    properties: ['openDirectory'],
+  })
+  return filePaths[0] ?? null
+})
+
 // SRT ファイルを開くダイアログ
 ipcMain.handle('dialog:openSrt', async () => {
   const { filePaths } = await dialog.showOpenDialog({
@@ -224,6 +233,16 @@ ipcMain.handle('dialog:openSrt', async () => {
     properties: ['openFile'],
   })
   return filePaths[0] ?? null
+})
+
+// ファイル/フォルダを OS のごみ箱に移動（完全削除はしない）
+ipcMain.handle('fs:trashItem', async (_, filePath) => {
+  try {
+    await shell.trashItem(path.normalize(filePath))
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
 })
 
 // テキストファイルを読み込む（SRT 読み込み用）

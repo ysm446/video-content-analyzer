@@ -67,7 +67,54 @@
     .sysinfo-bar-fill.hi{background:var(--warning)}
     .sysinfo-bar-fill.crit{background:var(--error)}
 
-    .player-shell{flex:1;display:grid;grid-template-columns:minmax(0,2fr) 1px minmax(0,1fr) minmax(0,1fr);grid-template-areas:"player divider analysis qa";min-height:0;overflow:hidden}
+    .sidebar-left{display:flex;align-items:center;gap:3px;position:relative;z-index:1}
+    .main-row{flex:1;display:flex;min-height:0;min-width:0;overflow:hidden}
+    .player-shell{flex:1;min-width:0;display:grid;grid-template-columns:minmax(0,2fr) 1px minmax(0,1fr) minmax(0,1fr);grid-template-areas:"player divider analysis qa";min-height:0;overflow:hidden}
+
+    /* ファイル一覧パネル */
+    .file-panel{width:272px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);min-height:0}
+    .file-panel-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
+    .file-panel-title{font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+    .file-panel-actions{display:flex;gap:4px;flex-shrink:0}
+    .file-panel-btn{width:28px;height:28px;border-radius:8px}
+    .file-panel-btn svg.lucide{width:14px;height:14px}
+    .file-search-row{padding:8px 10px;border-bottom:1px solid var(--border)}
+    .file-search-input{width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:12px}
+    .file-search-input:disabled{opacity:.5}
+    .file-tree{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px}
+    .file-tree-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--text-dim);font-size:12px;text-align:center;line-height:1.6}
+    .file-tree-empty svg.lucide{width:34px;height:34px;stroke-width:1.6}
+    .file-tree-msg{padding:12px 10px;color:var(--text-dim);font-size:12px;text-align:center}
+    .file-panel-resizer{position:relative;width:1px;flex-shrink:0;background:var(--border);cursor:col-resize;user-select:none}
+    .file-panel-resizer::before{content:'';position:absolute;top:0;bottom:0;left:-5px;right:-5px}
+    .file-panel-resizer:hover{background:var(--accent)}
+    .file-row{position:relative;display:flex;align-items:center;gap:7px;width:100%;padding:5px 8px;border:none;background:none;border-radius:6px;color:var(--text);font-size:12.5px;cursor:pointer;text-align:left;min-width:0;box-sizing:border-box;user-select:none}
+    .file-row:hover{background:var(--surface2)}
+    .file-row-more{width:22px;height:22px;border:none;background:none;color:var(--text-dim);border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;opacity:0;transition:opacity .12s,background .12s}
+    .file-row:hover .file-row-more,.file-row-more.open{opacity:1}
+    .file-row-more:hover{background:rgba(255,255,255,.08);color:var(--text)}
+    .file-row-more svg.lucide{width:13px;height:13px;stroke-width:2.2}
+    .file-menu{position:absolute;top:28px;right:6px;min-width:136px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.34);display:flex;flex-direction:column;gap:2px;z-index:20;cursor:default}
+    .file-menu-item{width:100%;padding:7px 10px;border:none;background:none;border-radius:6px;color:var(--text);text-align:left;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px}
+    .file-menu-item:hover{background:var(--surface2)}
+    .file-menu-item.danger{color:var(--error)}
+    .file-menu-item svg.lucide{width:13px;height:13px}
+    .file-row.editing{cursor:default}
+    .file-rename-input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--accent);color:var(--text);border-radius:6px;padding:3px 8px;font-size:12.5px;font-family:inherit}
+    .file-row.active{background:var(--accent-tint-bg);color:var(--accent)}
+    .file-row-caret{display:inline-flex;align-items:center;justify-content:center;color:var(--text-dim);flex-shrink:0;transition:transform .12s ease}
+    .file-row-caret svg.lucide{width:13px;height:13px;stroke-width:2.4}
+    .file-row.expanded .file-row-caret{transform:rotate(90deg)}
+    .file-row-icon{display:inline-flex;align-items:center;justify-content:center;color:var(--text-dim);flex-shrink:0}
+    .file-row.active .file-row-icon{color:var(--accent)}
+    .file-row-thumb{width:42px;height:26px;border-radius:4px;object-fit:cover;background:#000;flex-shrink:0}
+    .file-row-name{min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}
+    .file-row-sub{display:block;font-size:10.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .file-row-badges{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;color:var(--text-dim)}
+    .file-row-badges svg.lucide{width:12px;height:12px;stroke-width:2.2}
+    .file-badge-analyzed{color:var(--success)}
+    .file-badge-sub{color:var(--accent)}
+    .file-children{margin-left:14px;border-left:1px solid var(--border);padding-left:4px}
     .player-left{min-width:0;display:flex;flex-direction:column;grid-area:player}
     .panel-resizer{position:relative;background:var(--border);border-bottom:1px solid var(--border);cursor:col-resize;user-select:none;grid-area:divider}
     .panel-resizer::before{content:'';position:absolute;top:0;bottom:0;left:-5px;right:-5px}
@@ -300,6 +347,9 @@
 </head>
 <body>
   <nav class="sidebar">
+    <div class="sidebar-left">
+      <button class="tab-btn active" id="toggleFilePanelBtn" title="ファイル一覧を表示/非表示"><i data-lucide="folder-tree"></i></button>
+    </div>
     <div class="sidebar-center">
       <button class="model-pill" id="modelStatusBtn" title="モデル未ロード">
         <span class="model-pill-icon"><i data-lucide="cpu"></i></span>
@@ -319,6 +369,21 @@
 
   <div class="tab-panels">
     <section id="tab-player" class="tab-panel">
+      <div class="main-row">
+      <aside class="file-panel" id="filePanel">
+        <div class="file-panel-header">
+          <span class="file-panel-title" id="filePanelRootName">フォルダ未選択</span>
+          <div class="file-panel-actions">
+            <button class="ctrl-btn file-panel-btn" id="fileRefreshBtn" title="一覧を再読み込み" disabled><i data-lucide="refresh-cw"></i></button>
+            <button class="ctrl-btn file-panel-btn" id="selectRootBtn" title="ルートフォルダを選択"><i data-lucide="folder-open"></i></button>
+          </div>
+        </div>
+        <div class="file-search-row">
+          <input type="text" class="file-search-input" id="fileSearchInput" placeholder="ファイル名で検索" disabled>
+        </div>
+        <div class="file-tree" id="fileTree"></div>
+      </aside>
+      <div class="file-panel-resizer" id="filePanelResizer" role="separator" aria-label="ファイル一覧の幅を調整"></div>
       <div class="player-shell">
         <div class="player-left">
           <div class="player-top">
@@ -460,6 +525,7 @@
               <button class="btn btn-primary" id="qaBtn" disabled style="padding:8px 14px">送信</button>
             </div>
         </aside>
+      </div>
       </div>
     </section>
 
@@ -629,7 +695,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[], qaSuggestions:null }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[], qaSuggestions:null }
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -1518,6 +1584,7 @@
         renderAnalysisDetail(analysisFromTocData(next))
         setResult('toc',true,successText || 'キャッシュに保存しました')
         updateTocSaveButton()
+        refreshFileEntryForCurrent()
         return true
       }catch(e){
         setResult('toc',false,`保存失敗: ${e.message}`)
@@ -1679,6 +1746,26 @@
       subOrigEl.textContent=''; subJpEl.textContent=''
       syncSubtitleToggleButtons()
     }
+    // 再生中の動画を閉じてファイルハンドルを解放する（リネーム・削除の前に呼ぶ。
+    // Windows では開いているファイルの rename/削除が失敗するため）
+    function closeCurrentVideo(){
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+      video.style.display='none'
+      noVideo.style.display=''
+      origSubtitles=[]; jpSubtitles=[]; renderedOrigSub=null
+      hideTooltip()
+      subOrigEl.textContent=''; subJpEl.textContent=''
+      state.origSrtPath=null; state.correctedSrtPath=null; state.jpSrtPath=null
+      state.origTranscript=''; state.tocPath=null; state.tocData=null; state.tocDirty=false
+      resetSection('transcribe'); resetSection('translate')
+      clearAnalysisDetail()
+      setCurrentVideo(null)
+      syncSubtitleToggleButtons()
+      highlightActiveFileRow()
+    }
+
     function subsToTranscript(subs){
       return subs.map(s=>{
         const m=Math.floor(s.start/60), sec=Math.floor(s.start%60)
@@ -1771,13 +1858,18 @@
       }catch{}
     }
 
-    async function selectVideo(){
-      const p=await window.electronAPI.openVideo()
-      if(!p) return
+    async function openVideoFromPath(p){
       setCurrentVideo(p)
       loadVideo(p)
       await tryAutoLoadSrt(p)
       await tryAutoLoadCache(p)
+      highlightActiveFileRow()
+    }
+
+    async function selectVideo(){
+      const p=await window.electronAPI.openVideo()
+      if(!p) return
+      await openVideoFromPath(p)
     }
 
     document.getElementById('loadVideoBtn').addEventListener('click',selectVideo)
@@ -1955,8 +2047,402 @@
       if(!file) return
       const p=window.electronAPI.getPathForFile(file)
       if(!p) return
-      setCurrentVideo(p); loadVideo(p); await tryAutoLoadSrt(p); await tryAutoLoadCache(p)
+      await openVideoFromPath(p)
     })
+
+    // ---------- ファイル一覧パネル ----------
+    const filePanel=document.getElementById('filePanel')
+    const fileTreeEl=document.getElementById('fileTree')
+    const fileSearchInput=document.getElementById('fileSearchInput')
+    const fileRefreshBtn=document.getElementById('fileRefreshBtn')
+    const toggleFilePanelBtn=document.getElementById('toggleFilePanelBtn')
+    const filePanelRootName=document.getElementById('filePanelRootName')
+    const filePanelResizer=document.getElementById('filePanelResizer')
+    // children: フォルダパス → {folders, videos, error?}（取得済みキャッシュ。再読み込みでクリア）
+    // menuPath: 「…」メニューを開いている行 / editingPath: 名前を編集中の行
+    const fileState={ root:null, expanded:new Set(), children:new Map(), searchQuery:'', searchResults:null, searchToken:0, menuPath:null, editingPath:null }
+
+    function updateFilePanelVisibility(){
+      filePanel.style.display = state.showFilePanel ? '' : 'none'
+      filePanelResizer.style.display = state.showFilePanel ? '' : 'none'
+      toggleFilePanelBtn.classList.toggle('active', state.showFilePanel)
+      toggleFilePanelBtn.setAttribute('aria-pressed', state.showFilePanel ? 'true' : 'false')
+      toggleFilePanelBtn.title = state.showFilePanel ? 'ファイル一覧を非表示' : 'ファイル一覧を表示'
+    }
+    toggleFilePanelBtn.addEventListener('click',()=>{
+      state.showFilePanel=!state.showFilePanel
+      updateFilePanelVisibility()
+      saveUiSettings({show_file_panel:state.showFilePanel})
+    })
+
+    async function fetchFolder(path){
+      const res=await fetch(`${API}/folder/list`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})})
+      if(!res.ok){
+        const body=await res.json().catch(()=>null)
+        throw new Error(body?.detail||`HTTP ${res.status}`)
+      }
+      return res.json()
+    }
+
+    function fileThumbUrl(v){
+      return `${API}/cache/image?video_path=${encodeURIComponent(v.path)}&name=${encodeURIComponent(v.thumbnail)}`
+    }
+
+    function videoBadgesHtml(v){
+      const badges=[]
+      if(v.analyzed) badges.push('<span class="file-badge-analyzed" title="分析済み"><i data-lucide="scan-search"></i></span>')
+      if(v.has_japanese_srt) badges.push('<span class="file-badge-sub" title="日本語字幕あり"><i data-lucide="captions"></i></span>')
+      else if(v.has_original_srt) badges.push('<span title="原文字幕あり"><i data-lucide="captions"></i></span>')
+      return badges.length?`<span class="file-row-badges">${badges.join('')}</span>`:''
+    }
+
+    function rowMenuHtml(p,isDir){
+      return `<div class="file-menu">`
+        +`<button class="file-menu-item" data-menu-rename="${escHtml(p)}" data-menu-isdir="${isDir?1:0}"><i data-lucide="pencil"></i> 名前を変更</button>`
+        +`<button class="file-menu-item danger" data-menu-delete="${escHtml(p)}" data-menu-isdir="${isDir?1:0}"><i data-lucide="trash-2"></i> ごみ箱に移動</button>`
+        +`</div>`
+    }
+
+    function rowMoreBtnHtml(p){
+      const open=fileState.menuPath===p
+      return `<button class="file-row-more${open?' open':''}" data-more-path="${escHtml(p)}" title="メニュー"><i data-lucide="ellipsis-vertical"></i></button>${open?rowMenuHtml(p,false):''}`
+    }
+
+    // 名前編集中の行（動画・フォルダ共通。動画は拡張子を除いた stem を編集させる）
+    function renameRowHtml(p,isDir){
+      const name=p.split(/[\\/]/).pop()
+      const ext=isDir?'':(name.match(/\.[^.]+$/)?.[0]||'')
+      const stem=ext?name.slice(0,-ext.length):name
+      return `<div class="file-row editing"><span class="file-row-icon"><i data-lucide="${isDir?'folder':'film'}"></i></span>`
+        +`<input class="file-rename-input" data-rename-path="${escHtml(p)}" data-rename-isdir="${isDir?1:0}" data-rename-ext="${escHtml(ext)}" value="${escHtml(stem)}" spellcheck="false"></div>`
+    }
+
+    function videoRowHtml(v, subText){
+      if(fileState.editingPath===v.path) return renameRowHtml(v.path,false)
+      const thumb=v.thumbnail
+        ?`<img class="file-row-thumb" loading="lazy" src="${escHtml(fileThumbUrl(v))}" alt="">`
+        :'<span class="file-row-icon"><i data-lucide="film"></i></span>'
+      const subLine=subText?`<span class="file-row-sub">${escHtml(subText)}</span>`:''
+      return `<div class="file-row file-row-video" data-video-path="${escHtml(v.path)}" title="${escHtml(v.name)}" tabindex="0">${thumb}<span class="file-row-name">${escHtml(v.name)}${subLine}</span>${videoBadgesHtml(v)}${rowMoreBtnHtml(v.path)}</div>`
+    }
+
+    function folderRowHtml(f){
+      if(fileState.editingPath===f.path) return renameRowHtml(f.path,true)
+      const expanded=fileState.expanded.has(f.path)
+      const open=fileState.menuPath===f.path
+      return `<div class="file-row file-row-folder${expanded?' expanded':''}" data-folder-path="${escHtml(f.path)}" title="${escHtml(f.name)}" tabindex="0">`
+        +'<span class="file-row-caret"><i data-lucide="chevron-right"></i></span>'
+        +'<span class="file-row-icon"><i data-lucide="folder"></i></span>'
+        +`<span class="file-row-name">${escHtml(f.name)}</span>`
+        +`<button class="file-row-more${open?' open':''}" data-more-path="${escHtml(f.path)}" data-more-isdir="1" title="メニュー"><i data-lucide="ellipsis-vertical"></i></button>${open?rowMenuHtml(f.path,true):''}</div>`
+    }
+
+    function folderChildrenHtml(path){
+      const data=fileState.children.get(path)
+      if(!data) return '<div class="file-tree-msg">読み込み中…</div>'
+      if(data.error) return `<div class="file-tree-msg">${escHtml(data.error)}</div>`
+      const parts=[]
+      for(const f of data.folders){
+        parts.push(folderRowHtml(f))
+        if(fileState.expanded.has(f.path)) parts.push(`<div class="file-children">${folderChildrenHtml(f.path)}</div>`)
+      }
+      for(const v of data.videos) parts.push(videoRowHtml(v))
+      if(!parts.length) return '<div class="file-tree-msg">動画がありません</div>'
+      return parts.join('')
+    }
+
+    function renderSearchResults(){
+      const r=fileState.searchResults
+      if(!r){
+        fileTreeEl.innerHTML='<div class="file-tree-msg">検索中…</div>'
+      }else if(!r.videos.length){
+        fileTreeEl.innerHTML='<div class="file-tree-msg">見つかりませんでした</div>'
+      }else{
+        let html=r.videos.map(v=>videoRowHtml(v, v.rel_dir||'')).join('')
+        if(r.truncated) html+='<div class="file-tree-msg">結果が多いため一部のみ表示しています</div>'
+        fileTreeEl.innerHTML=html
+      }
+      lucide.createIcons({nodes:[fileTreeEl]})
+      highlightActiveFileRow()
+      focusRenameInput()
+    }
+
+    function renderFileTree(){
+      if(fileState.root && fileState.searchQuery){
+        renderSearchResults()
+        return
+      }
+      if(!fileState.root){
+        fileTreeEl.innerHTML='<div class="file-tree-empty"><i data-lucide="folder-tree"></i><div>ルートフォルダを選択すると<br>動画一覧が表示されます</div><button class="btn btn-primary" id="selectRootBtn2" style="padding:6px 14px;font-size:12px">フォルダを選択</button></div>'
+      }else{
+        fileTreeEl.innerHTML=folderChildrenHtml(fileState.root)
+      }
+      lucide.createIcons({nodes:[fileTreeEl]})
+      highlightActiveFileRow()
+      focusRenameInput()
+    }
+
+    function focusRenameInput(){
+      const input=fileTreeEl.querySelector('.file-rename-input')
+      if(input && document.activeElement!==input){ input.focus(); input.select() }
+    }
+
+    async function loadFolderChildren(path){
+      try{
+        const data=await fetchFolder(path)
+        fileState.children.set(path,{folders:data.folders,videos:data.videos})
+      }catch(e){
+        fileState.children.set(path,{folders:[],videos:[],error:`読み込み失敗: ${e.message||e}`})
+      }
+      renderFileTree()
+    }
+
+    function highlightActiveFileRow(){
+      fileTreeEl.querySelectorAll('.file-row-video').forEach(el=>{
+        el.classList.toggle('active', !!state.videoPath && el.dataset.videoPath===state.videoPath)
+      })
+    }
+
+    async function setRootFolder(path,{save=true}={}){
+      fileState.root=path||null
+      fileState.expanded=new Set()
+      fileState.children=new Map()
+      fileState.searchQuery=''
+      fileState.searchResults=null
+      fileSearchInput.value=''
+      fileSearchInput.disabled=!fileState.root
+      fileRefreshBtn.disabled=!fileState.root
+      filePanelRootName.textContent=fileState.root?(fileState.root.split(/[\\/]/).filter(Boolean).pop()||fileState.root):'フォルダ未選択'
+      filePanelRootName.title=fileState.root||''
+      renderFileTree()
+      if(save) saveUiSettings({root_folder:fileState.root||''})
+      if(fileState.root) await loadFolderChildren(fileState.root)
+    }
+
+    // 文字起こし・翻訳・分析の完了後にバッジ（分析済み/字幕）を最新化する。
+    // 表示中の親フォルダだけ再取得するので軽量。
+    async function refreshFileEntryForCurrent(){
+      if(!fileState.root||!state.videoPath) return
+      const parent=state.videoPath.replace(/[\\/][^\\/]+$/,'')
+      if(fileState.children.has(parent)) await loadFolderChildren(parent)
+      else if(fileState.searchQuery) runFileSearch(fileState.searchQuery)
+    }
+
+    async function refreshFileTree(){
+      if(!fileState.root) return
+      const expanded=[...fileState.expanded]
+      fileState.children=new Map()
+      renderFileTree()
+      await loadFolderChildren(fileState.root)
+      for(const p of expanded) await loadFolderChildren(p)
+    }
+
+    async function selectRootFolder(){
+      const p=await window.electronAPI.openFolder()
+      if(!p) return
+      await setRootFolder(p)
+    }
+    document.getElementById('selectRootBtn').addEventListener('click',selectRootFolder)
+    fileRefreshBtn.addEventListener('click',refreshFileTree)
+
+    fileTreeEl.addEventListener('click',async e=>{
+      // 行より先に「…」ボタン・メニュー項目を処理する（行の open/展開を誘発しないため）
+      const moreBtn=e.target.closest('[data-more-path]')
+      if(moreBtn){
+        const p=moreBtn.dataset.morePath
+        fileState.menuPath = fileState.menuPath===p ? null : p
+        renderFileTree()
+        return
+      }
+      const renameBtn=e.target.closest('[data-menu-rename]')
+      if(renameBtn){
+        fileState.menuPath=null
+        fileState.editingPath=renameBtn.dataset.menuRename
+        renderFileTree()
+        return
+      }
+      const deleteBtn=e.target.closest('[data-menu-delete]')
+      if(deleteBtn){
+        await deleteFileEntry(deleteBtn.dataset.menuDelete, deleteBtn.dataset.menuIsdir==='1')
+        return
+      }
+      if(e.target.closest('.file-menu')||e.target.closest('.file-rename-input')) return
+      const folderBtn=e.target.closest('[data-folder-path]')
+      if(folderBtn){
+        const p=folderBtn.dataset.folderPath
+        if(fileState.expanded.has(p)){
+          fileState.expanded.delete(p)
+        }else{
+          fileState.expanded.add(p)
+          if(!fileState.children.has(p)){
+            renderFileTree()          // まず「読み込み中…」を表示
+            await loadFolderChildren(p)
+            return
+          }
+        }
+        renderFileTree()
+        return
+      }
+      const videoBtn=e.target.closest('[data-video-path]')
+      if(videoBtn){
+        await openVideoFromPath(videoBtn.dataset.videoPath)
+        return
+      }
+      if(e.target.closest('#selectRootBtn2')) await selectRootFolder()
+    })
+
+    // メニュー外クリックで閉じる（fileTree 内のクリックは上のハンドラが先に処理）
+    document.addEventListener('click',e=>{
+      if(!fileState.menuPath) return
+      if(e.target.closest('.file-menu')||e.target.closest('[data-more-path]')) return
+      fileState.menuPath=null
+      renderFileTree()
+    })
+
+    // リネーム入力: Enter で確定、Esc・フォーカス喪失でキャンセル
+    fileTreeEl.addEventListener('keydown',e=>{
+      const input=e.target.closest?.('.file-rename-input')
+      if(!input) return
+      if(e.key==='Enter'){ e.preventDefault(); commitRename(input) }
+      else if(e.key==='Escape'){ e.preventDefault(); cancelRename() }
+    })
+    fileTreeEl.addEventListener('focusout',e=>{
+      const input=e.target.closest?.('.file-rename-input')
+      if(input && !input.dataset.committing) cancelRename()
+    })
+
+    function cancelRename(){
+      if(fileState.editingPath===null) return
+      fileState.editingPath=null
+      renderFileTree()
+    }
+
+    async function commitRename(input){
+      input.dataset.committing='1'   // focusout のキャンセルを抑止
+      const p=input.dataset.renamePath
+      const isDir=input.dataset.renameIsdir==='1'
+      const ext=input.dataset.renameExt||''
+      const newStem=input.value.trim()
+      const oldName=p.split(/[\\/]/).pop()
+      const oldStem=ext?oldName.slice(0,-ext.length):oldName
+      fileState.editingPath=null
+      if(!newStem||newStem===oldStem){ renderFileTree(); return }
+      if(/[\\/:*?"<>|]/.test(newStem)){ alert('名前に使用できない文字（\\ / : * ? " < > |）が含まれています'); renderFileTree(); return }
+      // 開いている動画（またはそれを含むフォルダ）はロック解除のため先に閉じる
+      const wasCurrent=isCurrentOrContainsCurrent(p,isDir)
+      if(wasCurrent) closeCurrentVideo()
+      try{
+        const res=await fetch(`${API}/file/rename`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p,new_name:newStem+ext})})
+        const body=await res.json().catch(()=>null)
+        if(!res.ok) throw new Error(body?.detail||`HTTP ${res.status}`)
+        if(body.warnings?.length) updateGlobalStatus('app','error',`一部のリネームに失敗: ${body.warnings.join(' / ')}`)
+        await afterFsChange(p,isDir)
+        if(wasCurrent && !isDir) await openVideoFromPath(body.path)
+      }catch(err){
+        alert(`名前の変更に失敗しました: ${err.message||err}`)
+        await afterFsChange(p,isDir)
+      }
+    }
+
+    function isCurrentOrContainsCurrent(p,isDir){
+      if(!state.videoPath) return false
+      if(!isDir) return state.videoPath===p
+      return state.videoPath.startsWith(p+'\\')||state.videoPath.startsWith(p+'/')
+    }
+
+    async function deleteFileEntry(p,isDir){
+      const name=p.split(/[\\/]/).pop()
+      const msg=isDir
+        ?`フォルダ「${name}」をごみ箱に移動しますか？\n（中身もすべて移動されます）`
+        :`「${name}」をごみ箱に移動しますか？\n（分析キャッシュ・字幕・スクリーンショットも一緒に移動します）`
+      if(!confirm(msg)) return
+      fileState.menuPath=null
+      if(isCurrentOrContainsCurrent(p,isDir)) closeCurrentVideo()
+      const targets=[p]
+      if(!isDir){
+        const stem=p.replace(/\.[^.]+$/,'')
+        targets.push(stem+'.cache', stem+'_screenshot', stem+'.original.srt', stem+'.corrected.srt', stem+'.japanese.srt')
+      }
+      const first=await window.electronAPI.trashItem(targets[0])
+      if(!first.ok){
+        alert(`ごみ箱への移動に失敗しました: ${first.error||''}`)
+        renderFileTree()
+        return
+      }
+      for(const t of targets.slice(1)) await window.electronAPI.trashItem(t)  // 存在しないものは失敗するが無視
+      await afterFsChange(p,isDir)
+    }
+
+    // リネーム・削除後の一覧更新。フォルダの場合は旧パス配下のキャッシュ・展開状態も破棄する
+    async function afterFsChange(p,isDir){
+      const parent=p.replace(/[\\/][^\\/]+$/,'')
+      if(isDir){
+        for(const key of [...fileState.children.keys()])
+          if(key===p||key.startsWith(p+'\\')||key.startsWith(p+'/')) fileState.children.delete(key)
+        for(const key of [...fileState.expanded])
+          if(key===p||key.startsWith(p+'\\')||key.startsWith(p+'/')) fileState.expanded.delete(key)
+      }
+      if(fileState.searchQuery){ await runFileSearch(fileState.searchQuery); return }
+      if(fileState.children.has(parent)) await loadFolderChildren(parent)
+      else renderFileTree()
+    }
+
+    // サイドバー幅のドラッグリサイズ
+    let _fileResizing=false
+    filePanelResizer.addEventListener('pointerdown',e=>{
+      if(!state.showFilePanel) return
+      _fileResizing=true
+      filePanelResizer.setPointerCapture(e.pointerId)
+      document.body.style.cursor='col-resize'
+      document.body.style.userSelect='none'
+    })
+    filePanelResizer.addEventListener('pointermove',e=>{
+      if(!_fileResizing) return
+      const rect=document.querySelector('.main-row').getBoundingClientRect()
+      const w=Math.max(180,Math.min(Math.round(e.clientX-rect.left),480))
+      filePanel.style.width=w+'px'
+    })
+    filePanelResizer.addEventListener('pointerup',()=>{
+      if(!_fileResizing) return
+      _fileResizing=false
+      document.body.style.cursor=''
+      document.body.style.userSelect=''
+      const w=parseInt(filePanel.style.width)
+      if(w) saveUiSettings({file_panel_width:w})
+    })
+    filePanelResizer.addEventListener('dblclick',()=>{
+      filePanel.style.width=''
+      saveUiSettings({file_panel_width:272})
+    })
+
+    let _fileSearchTimer=null
+    fileSearchInput.addEventListener('input',()=>{
+      clearTimeout(_fileSearchTimer)
+      const q=fileSearchInput.value.trim()
+      _fileSearchTimer=setTimeout(()=>runFileSearch(q),250)
+    })
+    async function runFileSearch(q){
+      fileState.searchQuery=q
+      if(!q||!fileState.root){
+        fileState.searchResults=null
+        renderFileTree()
+        return
+      }
+      fileState.searchResults=null
+      renderSearchResults()
+      const token=++fileState.searchToken
+      let result={videos:[],truncated:false}
+      try{
+        const res=await fetch(`${API}/folder/search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({root:fileState.root,query:q})})
+        if(res.ok) result=await res.json()
+      }catch{}
+      if(token!==fileState.searchToken || !fileState.searchQuery) return  // 古い結果・クリア後は破棄
+      fileState.searchResults=result
+      renderSearchResults()
+    }
+
+    updateFilePanelVisibility()
+    renderFileTree()
 
     const slider=document.getElementById('maxFrames')
     const outputLangSel=document.getElementById('outputLang')
@@ -2075,6 +2561,10 @@
         }
         state.showAnalysisPanel = s.show_analysis_panel !== false
         state.showQaPanel = s.show_qa_panel !== false
+        state.showFilePanel = s.show_file_panel !== false
+        updateFilePanelVisibility()
+        if(typeof s.file_panel_width==='number' && s.file_panel_width>=180 && s.file_panel_width<=600) filePanel.style.width=s.file_panel_width+'px'
+        if(s.root_folder) setRootFolder(s.root_folder,{save:false})  // 起動時は保存し直さない
         state.analysisExpanded.actions = s.analysis_actions_expanded !== false
         state.analysisExpanded.summary = s.analysis_summary_expanded !== false
         state.analysisExpanded.detail = s.analysis_detail_expanded === true
@@ -2225,7 +2715,7 @@
           else if(event.status==='align_warning') updateGlobalStatus('transcribe','running',`注意: ${event.message}`)
           else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
           else if(event.status==='canceled'){ markCanceled('transcribe'); updateProcessButtons() }
-          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; state.correctedSrtPath=null; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
+          else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; state.correctedSrtPath=null; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})); refreshFileEntryForCurrent() }
           else if(event.status==='error'){ setResult('transcribe',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('transcribe',false,`接続エラー: ${e.message}`); updateProcessButtons() }
@@ -2246,7 +2736,7 @@
           if(event.status==='loading_model') setProgress('refine',5,'補正モデルをロード中...')
           else if(event.status==='refining'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('refine',pct,`補正中 ${event.current}/${event.total}`) }
           else if(event.status==='canceled'){ markCanceled('refine'); updateProcessButtons() }
-          else if(event.status==='done'){ setProgress('refine',100,'完了'); state.correctedSrtPath=event.srt_path; setResult('refine',true,state.correctedSrtPath); updateProcessButtons(); loadSrt(state.correctedSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }
+          else if(event.status==='done'){ setProgress('refine',100,'完了'); state.correctedSrtPath=event.srt_path; setResult('refine',true,state.correctedSrtPath); updateProcessButtons(); loadSrt(state.correctedSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})); refreshFileEntryForCurrent() }
           else if(event.status==='error'){ setResult('refine',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('refine',false,`接続エラー: ${e.message}`); updateProcessButtons() }
@@ -2270,7 +2760,7 @@
           else if(event.status==='translate_warning') updateGlobalStatus('translate','running',`注意: ${event.message}`)
           else if(event.status==='translating'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('translate',pct,`翻訳中 ${event.current}/${event.total}`) }
           else if(event.status==='canceled'){ markCanceled('translate'); updateProcessButtons() }
-          else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); updateProcessButtons(); loadSrt(state.jpSrtPath,'jp') }
+          else if(event.status==='done'){ setProgress('translate',100,'完了'); state.jpSrtPath=event.srt_path; setResult('translate',true,state.jpSrtPath); updateProcessButtons(); loadSrt(state.jpSrtPath,'jp'); refreshFileEntryForCurrent() }
           else if(event.status==='error'){ setResult('translate',false,event.message); updateProcessButtons() }
         })
       }catch(e){ setResult('translate',false,`接続エラー: ${e.message}`); updateProcessButtons() }
