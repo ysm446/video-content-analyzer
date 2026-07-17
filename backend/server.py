@@ -445,6 +445,7 @@ class QuestionsRequest(BaseModel):
     video_path: str
     transcript: str = ""
     history: Optional[list[dict]] = None  # 直近の [{question, answer}, ...]
+    bookmarks: Optional[list[dict]] = None  # ユーザーのしおり [{time_sec, title, comment}, ...]
 
 
 class QARequest(BaseModel):
@@ -455,6 +456,7 @@ class QARequest(BaseModel):
     transcript:   str   = ""
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
     history:      Optional[list[dict]] = None  # 直近の [{question, answer}, ...]（マルチターン用）
+    bookmarks:    Optional[list[dict]] = None  # ユーザーのしおり [{time_sec, title, comment}, ...]
 
 
 class SetVLModelRequest(BaseModel):
@@ -1550,10 +1552,12 @@ async def review_questions(req: QuestionsRequest):
     try:
         questions = await loop.run_in_executor(
             None,
-            video_reviewer.suggest_questions,
-            _video_meta_text(str(video_path)),
-            req.transcript,
-            req.history,
+            lambda: video_reviewer.suggest_questions(
+                _video_meta_text(str(video_path)),
+                req.transcript,
+                req.history,
+                bookmarks=req.bookmarks,
+            ),
         )
     except Exception as e:
         print(f"[QA] おすすめ質問の生成に失敗: {e}")
@@ -1646,6 +1650,7 @@ async def review_qa(req: QARequest):
                     meta.get("timestamps", []),
                     on_delta=lambda delta: (parts.append(delta), q.put(("answer_delta", delta))),
                     history=req.history,
+                    bookmarks=req.bookmarks,
                 )
                 answer = video_reviewer._clean_generated_text("".join(parts))
                 q.put(("done", json.dumps({"answer": answer, "meta": answer_meta}, ensure_ascii=False)))

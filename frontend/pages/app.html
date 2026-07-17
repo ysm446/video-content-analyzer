@@ -1145,7 +1145,7 @@
       if(_runningJobs>0) return  // 推論中は割り込まない（回答完了後に呼ばれる）
       _qaSuggestBusy=true
       try{
-        const res=await fetch(`${API}/review/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,transcript:state.origTranscript,history:state.qaChat.slice(-2)})})
+        const res=await fetch(`${API}/review/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,transcript:state.origTranscript,history:state.qaChat.slice(-2),bookmarks:bookmarksForLlm()})})
         if(res.ok){
           const {questions}=await res.json()
           if(Array.isArray(questions)&&questions.length){
@@ -1538,6 +1538,11 @@
 
     function getBookmarks(){
       return (state.tocData && Array.isArray(state.tocData.bookmarks)) ? state.tocData.bookmarks : []
+    }
+
+    // LLM（Q&A・おすすめ質問）に渡す用のしおり一覧。必要なフィールドだけに絞る
+    function bookmarksForLlm(){
+      return getBookmarks().map(b=>({time_sec:b.time_sec,title:b.title||'',comment:b.comment||''}))
     }
 
     function renderBookmarks(){
@@ -3078,7 +3083,7 @@
 
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),history:state.qaChat.slice(-3)})})
+        const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),history:state.qaChat.slice(-3),bookmarks:bookmarksForLlm()})})
         await readSSE(res,event=>{
           if(event.status==='extracting_frames'){ thinking.textContent='フレーム抽出中...'; updateGlobalStatus('qa','running','フレーム抽出中...') }
           else if(event.status==='answering'){ thinking.textContent='回答生成中...'; updateGlobalStatus('qa','running','回答生成中...') }

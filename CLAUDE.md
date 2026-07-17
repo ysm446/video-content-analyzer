@@ -115,9 +115,12 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /review/unload` — VL モデルを VRAM から解放
 - `POST /review/analyze` — 動画分析（SSE）
 - `POST /review/qa` — 動画への質問（SSE）。`history` で直近ターンを渡すマルチターン対応。
+  `bookmarks`（ユーザーのしおり `[{time_sec, title, comment}]`）を渡すと
+  「ユーザーが付けたしおり」ラベル付きセクションとしてプロンプトに挿入される。
   フレームは「メモリキャッシュ → 分析キャッシュのサムネール → ffmpeg 並列シーク抽出」の
   順で取得（詳細: docs/design/qa-chat.md）
 - `POST /review/questions` — チャットのテンプレート質問チップ用のおすすめ質問を生成
+  （`bookmarks` を渡すとしおりの場面に関連する質問も候補になる）
   （非SSE・テキストのみの軽量推論）。**モデル未ロード時はロードを誘発せず空を返す**
   （フロントは固定チップのみ表示）。回答完了後は会話履歴を踏まえたフォローアップに差し替え。
   質問はキャッシュ（data.json）には保存しない

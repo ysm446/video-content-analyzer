@@ -1045,10 +1045,15 @@ class VideoReviewer:
         return f"[音声書き起こし]\n{truncated}\n\n{instr_audio}{ts_hint}\n{lang_instr}\n\n{json_format}"
 
     @staticmethod
-    def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = [], history: list[dict] | None = None) -> str:
+    def _build_qa_prompt(question: str, transcript: str, timestamps: list[float] = [], history: list[dict] | None = None, bookmarks: list[dict] | None = None) -> str:
         parts = []
         if timestamps:
             parts.append("各フレーム画像の直後に [m:ss] 形式でタイムスタンプが付いています。時刻を参考にしてください。")
+        bookmarks_text = VideoReviewer._format_bookmarks(bookmarks)
+        if bookmarks_text:
+            parts.append(
+                "[ユーザーがこの動画に付けたしおり（重要とマークした場面のメモ）]\n" + bookmarks_text
+            )
         if history:
             turns: list[str] = []
             for h in history[-4:]:
@@ -1069,6 +1074,34 @@ class VideoReviewer:
         parts.append(f"質問: {question}")
         parts.append("映像フレームと字幕テキストを参照して、日本語で具体的に回答してください。")
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_bookmarks(bookmarks: list[dict] | None, limit: int = 30) -> str:
+        """ユーザーのしおりを「[m:ss] タイトル — コメント」の行形式に整形する。
+
+        しおりはユーザーが「重要」とマークした場面の主観メモなので、transcript や
+        フレーム（客観情報）とは区別できるようラベル付きセクションで渡す。
+        """
+        if not bookmarks:
+            return ""
+        rows: list[str] = []
+        for b in bookmarks:
+            if not isinstance(b, dict):
+                continue
+            try:
+                sec = max(0, int(float(b.get("time_sec") or 0)))
+            except (TypeError, ValueError):
+                continue
+            title = str(b.get("title") or "").strip()
+            comment = str(b.get("comment") or "").strip()
+            text = " — ".join(x for x in (title, comment) if x)
+            if len(text) > 200:
+                text = text[:200] + "…"
+            ts = f"[{sec // 60}:{sec % 60:02d}]"
+            rows.append(f"{ts} {text}" if text else f"{ts} （メモなし）")
+            if len(rows) >= limit:
+                break
+        return "\n".join(rows)
 
     def analyze_frames(self, frames: list[Image.Image], transcript: str = "", timestamps: list[float] = [], output_lang: str = "ja", scenes_only: bool = False) -> dict:
         self._ensure_loaded()
@@ -1103,7 +1136,7 @@ class VideoReviewer:
         result["_analysis_meta"] = gen_meta
         return result
 
-    def suggest_questions(self, video_info: str, transcript: str = "", history: list[dict] | None = None, count: int = 3) -> list[str]:
+    def suggest_questions(self, video_info: str, transcript: str = "", history: list[dict] | None = None, count: int = 3, bookmarks: list[dict] | None = None) -> list[str]:
         """チャット用のおすすめ質問をテキストのみで生成する（フレーム不要）。
 
         モデルがロード済みのときに呼ぶ想定（呼び出し側でロード状態を確認する）。
@@ -1115,6 +1148,12 @@ class VideoReviewer:
             parts.append(f"[動画の情報]\n{video_info}")
         if transcript:
             parts.append(f"[字幕サンプル]\n{self._sample_transcript_uniform(transcript, 2000)}")
+        bookmarks_text = self._format_bookmarks(bookmarks)
+        if bookmarks_text:
+            parts.append(
+                "[ユーザーが付けたしおり（注目している場面）]\n" + bookmarks_text
+                + "\nしおりの場面に関連する質問を候補に含めてもよい。"
+            )
         if history:
             turns = []
             for h in history[-2:]:
@@ -1152,9 +1191,9 @@ class VideoReviewer:
                 break
         return out
 
-    def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None, history: list[dict] | None = None) -> dict:
+    def qa_frames_stream_with_meta(self, frames: list[Image.Image], question: str, transcript: str = "", timestamps: list[float] = [], on_delta=None, history: list[dict] | None = None, bookmarks: list[dict] | None = None) -> dict:
         self._ensure_loaded()
-        prompt = self._build_qa_prompt(question, transcript, timestamps, history)
+        prompt = self._build_qa_prompt(question, transcript, timestamps, history, bookmarks)
         callback = on_delta or (lambda _delta: None)
         return self._infer_stream_with_meta(
             frames,
