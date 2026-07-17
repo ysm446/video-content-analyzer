@@ -2969,6 +2969,19 @@
       unloadBtn.title = info.loaded ? `モデルをアンロード: ${label}` : 'アンロードできるモデルはありません'
     }
 
+    // 暗黙の VL モデルロード（分析・チャット等の SSE で loading_model が来たとき）でも
+    // モデルピルを明示ロードと同じ表示（ロード中: モデル名...）に統一するためのヘルパー。
+    // 各 SSE ハンドラは loading_model で begin、処理終了（finally）で end を呼ぶ
+    function beginImplicitModelLoad(){
+      _modelLoading=true
+      fetchReviewModelStatus()
+    }
+    function endImplicitModelLoad(){
+      _modelLoading=false
+      document.getElementById('modelStatusBtn').classList.remove('loading')
+      fetchReviewModelStatus()
+    }
+
     let _modalSelectedId=null
     const modelModal=document.getElementById('modelModal')
 
@@ -3129,12 +3142,14 @@
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
       setTaskTarget('analyze',state.videoPath)
       resetSection('analyze')
+      let sawModelLoad=false
       const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang()})})
         await readSSE(res,event=>{
           if(event.status==='loading_model'){
-            document.getElementById('modelStatusBtn').classList.add('loading')
+            sawModelLoad=true
+            beginImplicitModelLoad()
             setProgress('analyze',15,'モデルをロード中...')
           }
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
@@ -3149,13 +3164,12 @@
             renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
             captureSceneThumbnails(event.result?.scenes||[], event.result)
             markTocDraftDirty()
-            fetchReviewModelStatus()
           }
           else if(event.status==='canceled'){ markCanceled('analyze') }
           else if(event.status==='error'){ setResult('analyze',false,event.message) }
         })
       }catch(e){ setResult('analyze',false,`接続エラー: ${e.message}`) }
-      finally{ endCancelable(ac) }
+      finally{ endCancelable(ac); if(sawModelLoad) endImplicitModelLoad() }
       btn.disabled=!state.videoPath
     })
 
@@ -3208,11 +3222,13 @@
         elapsed.textContent=`${label}: ${s}秒`
       }
 
+      let sawModelLoad=false
       const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),history:state.qaChat.slice(-3),bookmarks:bookmarksForLlm()})})
         await readSSE(res,event=>{
-          if(event.status==='extracting_frames'){ thinking.textContent='フレーム抽出中...'; updateGlobalStatus('qa','running','フレーム抽出中...') }
+          if(event.status==='loading_model'){ sawModelLoad=true; beginImplicitModelLoad(); thinking.textContent='モデルをロード中...'; updateGlobalStatus('qa','running','モデルをロード中...') }
+          else if(event.status==='extracting_frames'){ thinking.textContent='フレーム抽出中...'; updateGlobalStatus('qa','running','フレーム抽出中...') }
           else if(event.status==='answering'){ thinking.textContent='回答生成中...'; updateGlobalStatus('qa','running','回答生成中...') }
           else if(event.status==='qa_warning'){ updateGlobalStatus('qa','running',`注意: ${event.message}`) }
           else if(event.status==='answer_delta'){
@@ -3252,7 +3268,7 @@
           else if(event.status==='error'){ thinking.textContent='エラー: '+event.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',event.message) }
         })
       }catch(e){ thinking.textContent='接続エラー: '+e.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',`接続エラー: ${e.message}`) }
-      finally{ endCancelable(ac) }
+      finally{ endCancelable(ac); if(sawModelLoad) endImplicitModelLoad() }
       fetchQaSuggestions()  // 回答後、会話を踏まえたフォローアップ質問に差し替え（モデルはロード済み）
 
       qaBtn.disabled=false
