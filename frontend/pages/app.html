@@ -182,6 +182,8 @@
     }
     .ctrl-btn:hover{background:var(--surface3);border-color:var(--border-strong)}
     .ctrl-btn:active{transform:scale(.97)}
+    /* ±3秒＋再生を1グループに寄せ、字幕ジャンプ（外側）と視覚的に区別する */
+    .ctrl-seek-group{display:inline-flex;gap:6px;align-items:center}
     .sub-toggle{width:auto;padding:0 9px;font-size:11px;font-weight:600;letter-spacing:.02em;gap:3px;opacity:1;transition:background .15s,border-color .15s,color .15s,opacity .15s,transform .1s}
     .sub-toggle.sub-off{opacity:.35;text-decoration:line-through}
 
@@ -325,6 +327,13 @@
     .toc-row textarea{min-height:56px;resize:vertical}
     .toc-del{padding:6px 8px;font-size:12px}
     .tags-wrap{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .pane-tab{border:none;background:none;color:var(--text-dim);font-size:12px;text-transform:uppercase;letter-spacing:.06em;padding:6px 10px;border-radius:6px;cursor:pointer}
+    .pane-tab:hover{color:var(--text);background:var(--surface2)}
+    .pane-tab.active{color:var(--accent);background:var(--accent-tint-bg)}
+    .bookmark-add-row{display:flex;margin-bottom:10px}
+    .bookmark-add-row .btn{width:100%;justify-content:center}
+    .bm-comment{font-size:12px;color:var(--text-dim);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+    .bm-title-placeholder{color:var(--text-dim)}
     .tag{font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:var(--text-dim)}
 
     @media (max-width:1100px){
@@ -408,7 +417,17 @@
             </div>
             <div class="controls">
               <button class="ctrl-btn" id="prevSubBtn" title="前の字幕へ"><i data-lucide="skip-back"></i></button>
-              <button class="ctrl-btn" id="playBtn"><i data-lucide="play"></i></button>
+              <!-- 内側=±3秒（YouTube 式の円形矢印＋数字。相対移動）、外側=字幕ジャンプ（縦棒付き skip アイコン。区切りへ移動）で意味を区別する -->
+              <div class="ctrl-seek-group">
+                <!-- Lucide に数字入りスキップが無いため rotate-ccw/cw ベースのカスタム SVG（class="lucide" で共通サイズ適用） -->
+                <button class="ctrl-btn" id="back3Btn" title="3秒戻る">
+                  <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><text x="12" y="16" font-size="9.5" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="ui-sans-serif,system-ui,sans-serif">3</text></svg>
+                </button>
+                <button class="ctrl-btn" id="playBtn"><i data-lucide="play"></i></button>
+                <button class="ctrl-btn" id="fwd3Btn" title="3秒進む">
+                  <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><text x="12" y="16" font-size="9.5" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="ui-sans-serif,system-ui,sans-serif">3</text></svg>
+                </button>
+              </div>
               <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ"><i data-lucide="skip-forward"></i></button>
               <span class="time-label" id="timeLabel">0:00 / 0:00</span>
               <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
@@ -422,6 +441,7 @@
               </select>
               <span class="time-label"><i data-lucide="volume-2"></i></span>
               <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1" style="width:100px">
+              <button class="ctrl-btn" id="bookmarkBtn" title="現在位置をブックマークに追加"><i data-lucide="bookmark-plus"></i></button>
               <button class="ctrl-btn sub-toggle" id="toggleOrigBtn" title="原文字幕の表示/非表示">原文</button>
               <button class="ctrl-btn sub-toggle" id="toggleJpBtn" title="日本語字幕の表示/非表示">日本語</button>
             </div>
@@ -490,7 +510,10 @@
         <div class="panel-resizer" id="panelResizer" aria-label="レイアウト幅を調整" role="separator"></div>
         <aside class="analysis-column">
           <section class="analysis-pane">
-            <div class="analysis-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>チャプター</span></div>
+            <div class="analysis-header" style="display:flex;align-items:center;gap:4px">
+              <button class="pane-tab active" id="paneTabChapters" type="button">チャプター</button>
+              <button class="pane-tab" id="paneTabBookmarks" type="button">ブックマーク</button>
+            </div>
             <div class="analysis-scroll">
               <div id="analysisView">
                 <div class="card analysis-detail" id="analysisDetail" style="display:none">
@@ -506,6 +529,14 @@
                   </section>
                 </div>
                 <div id="analysisEmpty" class="qa-placeholder" style="padding:16px">動画を分析するとシーン一覧が表示されます</div>
+              </div>
+              <div id="bookmarksView" style="display:none">
+                <div class="bookmark-add-row">
+                  <button class="btn btn-primary" id="addBookmarkBtn" type="button" disabled><i data-lucide="bookmark-plus"></i> 現在位置をブックマーク</button>
+                </div>
+                <div class="result-row" id="bookmarkResult" style="margin-bottom:8px"></div>
+                <div class="scenes-list" id="bookmarksList"></div>
+                <div id="bookmarksEmpty" class="qa-placeholder" style="padding:16px">再生位置でブックマークを追加すると、しおりとしてここに記録されます</div>
               </div>
             </div>
           </section>
@@ -695,7 +726,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[], qaSuggestions:null }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[], qaSuggestions:null }
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -974,6 +1005,7 @@
         document.getElementById('translateBtn').disabled = true
         clearAnalysisDetail()
       }
+      renderBookmarks()
       updateProcessButtons()
       setQAEnabled(!!path)
     }
@@ -990,7 +1022,7 @@
       stopTaskTimer(kind)
     }
     function updateGlobalStatus(kind,stateName,text){
-      const labelMap={transcribe:'文字起こし',refine:'補正',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',qa:'チャット',app:'ステータス'}
+      const labelMap={transcribe:'文字起こし',refine:'補正',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',bookmark:'ブックマーク',qa:'チャット',app:'ステータス'}
       const dot=document.getElementById('globalStatusDot')
       const label=document.getElementById('globalStatusLabel')
       const body=document.getElementById('globalStatusText')
@@ -1236,6 +1268,9 @@
       document.getElementById('detailEmpty').style.display = 'none'
       state.openSceneMenuId = null
       state.editingSceneId = null
+      state.openBookmarkMenuId = null
+      state.editingBookmarkId = null
+      renderBookmarks()
       document.getElementById('summaryToggleBtn').closest('.analysis-section').style.display = 'none'
       document.getElementById('detailSection').style.display = 'none'
       document.getElementById('tagsToggleBtn').closest('.analysis-section').style.display = 'none'
@@ -1288,7 +1323,7 @@
     }
 
     function switchAnalysisPane(name){
-      document.getElementById('analysisView').style.display=''
+      document.getElementById('analysisView').style.display = state.paneTab==='bookmarks' ? 'none' : ''
     }
 
     function parseTsToSec(ts){
@@ -1471,8 +1506,169 @@
       if(!Array.isArray(state.tocData.scenes)) state.tocData.scenes=[]
       updateTocSaveButton()
       renderAnalysisDetail(analysisFromTocData(data))
+      renderBookmarks()
       renderQaSuggestions()
     }
+
+    // ---------- ブックマーク（しおり）----------
+    // チャプター（LLM 生成・下書き→保存方式）とは別レイヤー。ユーザーが再生位置に
+    // 点を打つ即時保存方式で、data.json の bookmarks[] に持つ（再分析でも消えない）。
+
+    function switchPaneTab(name){
+      state.paneTab=name
+      document.getElementById('paneTabChapters').classList.toggle('active',name==='chapters')
+      document.getElementById('paneTabBookmarks').classList.toggle('active',name==='bookmarks')
+      document.getElementById('analysisView').style.display = name==='chapters'?'':'none'
+      document.getElementById('bookmarksView').style.display = name==='bookmarks'?'':'none'
+      if(name==='bookmarks') renderBookmarks()
+    }
+
+    function getBookmarks(){
+      return (state.tocData && Array.isArray(state.tocData.bookmarks)) ? state.tocData.bookmarks : []
+    }
+
+    function renderBookmarks(){
+      const listEl=document.getElementById('bookmarksList')
+      document.getElementById('addBookmarkBtn').disabled = !state.videoPath || state.addingBookmark
+      const items=getBookmarks()
+      document.getElementById('bookmarksEmpty').style.display = items.length ? 'none' : ''
+      listEl.innerHTML=items.map(b=>{
+        const id=escHtml(b.id||'')
+        const editing=state.editingBookmarkId===b.id
+        const menuOpen=state.openBookmarkMenuId===b.id
+        const thumb=b.thumbnail
+          ? `<div class="scene-thumb-wrap"><img class="scene-thumb" src="${escHtml(`${API}/cache/image?video_path=${encodeURIComponent(state.videoPath||'')}&name=${encodeURIComponent(b.thumbnail)}`)}"></div>`
+          : ''
+        const body=editing ? `
+          <div class="scene-edit">
+            <input class="bm-edit-title" type="text" value="${escHtml(b.title||'')}" placeholder="タイトル">
+            <textarea class="bm-edit-comment" placeholder="コメント">${escHtml(b.comment||'')}</textarea>
+            <div class="scene-edit-actions">
+              <button class="btn btn-ghost bm-edit-cancel" type="button" style="padding:5px 10px;font-size:12px">キャンセル</button>
+              <button class="btn btn-primary bm-edit-save" type="button" style="padding:5px 12px;font-size:12px">保存</button>
+            </div>
+          </div>`
+          : `<span class="scene-time">${fmtTs(b.time_sec)}</span>
+             <span class="scene-text">${b.title?escHtml(b.title):'<span class="bm-title-placeholder">（無題）</span>'}</span>
+             ${b.comment?`<span class="bm-comment">${escHtml(b.comment)}</span>`:''}`
+        const menu=`<div class="scene-actions">
+            <button class="scene-menu-btn" type="button" data-bm-menu="${id}" title="操作"><i data-lucide="ellipsis"></i></button>
+            ${menuOpen?`<div class="scene-menu"><button class="scene-menu-item" type="button" data-bm-edit="${id}">編集</button><button class="scene-menu-item" type="button" data-bm-delete="${id}">削除</button></div>`:''}
+          </div>`
+        return `<div class="scene-item" data-start="${Number(b.time_sec)||0}" data-bookmark-id="${id}">${thumb}<div class="scene-info">${body}</div>${menu}</div>`
+      }).join('')
+      lucide.createIcons({nodes:[listEl]})
+    }
+
+    async function persistBookmarks(message){
+      if(!state.videoPath) return false
+      const data=normalizeTocData()
+      try{
+        const res=await fetch(`${API}/cache/patch`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:{bookmarks:data.bookmarks}})})
+        if(!res.ok) throw new Error(await res.text())
+        if(message) setResult('bookmark',true,message)
+        refreshFileEntryForCurrent()
+        return true
+      }catch(e){
+        setResult('bookmark',false,`保存失敗: ${e.message}`)
+        return false
+      }
+    }
+
+    async function addBookmarkAtCurrentTime(){
+      if(!state.videoPath){ setResult('bookmark',false,'先に動画を読み込んでください'); return }
+      if(state.addingBookmark) return
+      state.addingBookmark=true
+      renderBookmarks()
+      const t=video.currentTime||0
+      const id=`bm_${Date.now().toString(36)}`
+      try{
+        // サムネールはサーバー側 ffmpeg 入力シークで生成（シーンサムネールと同方式）。
+        // 失敗しても画像なしでブックマーク自体は作成する
+        let thumbnail=''
+        try{
+          const res=await fetch(`${API}/cache/bookmarks/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,time_sec:t,name:`bookmark_${id}.jpg`})})
+          if(res.ok) thumbnail=(await res.json()).thumbnail||''
+        }catch{}
+        const data=normalizeTocData()
+        data.bookmarks.push({id,time_sec:Math.round(t*10)/10,title:'',comment:'',thumbnail,created_at:new Date().toISOString()})
+        data.bookmarks.sort((a,b)=>(a.time_sec||0)-(b.time_sec||0))
+        state.editingBookmarkId=id
+        state.openBookmarkMenuId=null
+        await persistBookmarks(`ブックマークを追加しました（${fmtTs(t)}）`)
+      }finally{
+        state.addingBookmark=false
+        switchPaneTab('bookmarks')
+      }
+    }
+
+    document.getElementById('paneTabChapters').addEventListener('click',()=>switchPaneTab('chapters'))
+    document.getElementById('paneTabBookmarks').addEventListener('click',()=>switchPaneTab('bookmarks'))
+    document.getElementById('addBookmarkBtn').addEventListener('click',addBookmarkAtCurrentTime)
+    document.getElementById('bookmarkBtn').addEventListener('click',addBookmarkAtCurrentTime)
+
+    document.getElementById('bookmarksList').addEventListener('click',e=>{
+      const menuBtn=e.target.closest('[data-bm-menu]')
+      if(menuBtn){
+        e.stopPropagation()
+        const id=menuBtn.dataset.bmMenu
+        state.openBookmarkMenuId = state.openBookmarkMenuId===id ? null : id
+        renderBookmarks()
+        return
+      }
+      const editBtn=e.target.closest('[data-bm-edit]')
+      if(editBtn){
+        e.stopPropagation()
+        state.openBookmarkMenuId=null
+        state.editingBookmarkId=editBtn.dataset.bmEdit
+        renderBookmarks()
+        return
+      }
+      const deleteBtn=e.target.closest('[data-bm-delete]')
+      if(deleteBtn){
+        e.stopPropagation()
+        const id=deleteBtn.dataset.bmDelete
+        const data=normalizeTocData()
+        const target=data.bookmarks.find(b=>b.id===id)
+        data.bookmarks=data.bookmarks.filter(b=>b.id!==id)
+        state.openBookmarkMenuId=null
+        if(state.editingBookmarkId===id) state.editingBookmarkId=null
+        renderBookmarks()
+        persistBookmarks('ブックマークを削除しました')
+        if(target?.thumbnail){
+          const filename=String(target.thumbnail).split('/').pop()
+          fetch(`${API}/cache/thumbnail/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,filename})}).catch(()=>{})
+        }
+        return
+      }
+      const cancelBtn=e.target.closest('.bm-edit-cancel')
+      if(cancelBtn){
+        e.stopPropagation()
+        state.editingBookmarkId=null
+        renderBookmarks()
+        return
+      }
+      const saveBtn=e.target.closest('.bm-edit-save')
+      if(saveBtn){
+        e.stopPropagation()
+        const card=e.target.closest('.scene-item')
+        const id=card?.dataset.bookmarkId
+        if(!card||!id) return
+        const bm=getBookmarks().find(b=>b.id===id)
+        if(!bm) return
+        bm.title=(card.querySelector('.bm-edit-title')?.value||'').trim()
+        bm.comment=(card.querySelector('.bm-edit-comment')?.value||'').trim()
+        state.editingBookmarkId=null
+        renderBookmarks()
+        persistBookmarks('ブックマークを保存しました')
+        return
+      }
+      if(e.target.closest('.scene-actions') || e.target.closest('.scene-edit')) return
+      const row=e.target.closest('.scene-item[data-start]')
+      if(!row || !video || isNaN(video.duration)) return
+      const t=parseFloat(row.dataset.start)
+      if(Number.isFinite(t)){ video.currentTime=Math.max(0,Math.min(video.duration,t)); updateSubtitles() }
+    })
 
     function analysisFromTocData(data){
       const meta=data?.meta||{}
@@ -1959,6 +2155,10 @@
           state.openSceneMenuId = null
           renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
         }
+        if(state.openBookmarkMenuId){
+          state.openBookmarkMenuId = null
+          renderBookmarks()
+        }
       }
     })
 
@@ -2016,6 +2216,13 @@
       video.currentTime=next.start
       updateSubtitles()
     })
+    function skipSeconds(delta){
+      if(!video.src || isNaN(video.duration)) return
+      video.currentTime=Math.max(0,Math.min(video.duration,(video.currentTime||0)+delta))
+      updateSubtitles()
+    }
+    document.getElementById('back3Btn').addEventListener('click',()=>skipSeconds(-3))
+    document.getElementById('fwd3Btn').addEventListener('click',()=>skipSeconds(3))
     seekBar.addEventListener('input',()=>{ if(!isNaN(video.duration)) video.currentTime=(seekBar.value/100)*video.duration })
     volumeBar.addEventListener('input',()=>{ video.volume=volumeBar.value })
     volumeBar.addEventListener('change',()=>saveUiSettings({volume:parseFloat(volumeBar.value)}))

@@ -526,6 +526,17 @@ class ThumbnailsGenerateRequest(BaseModel):
     scenes: list[dict]  # [{start_sec: float, ...}, ...]（index 順で thumbnails/scene_N.jpg に保存）
 
 
+class BookmarkThumbnailRequest(BaseModel):
+    video_path: str
+    time_sec: float
+    name: str  # thumbnails/ 直下のファイル名（bookmark_*.jpg のみ許可）
+
+
+class ThumbnailDeleteRequest(BaseModel):
+    video_path: str
+    filename: str  # thumbnails/ 直下のファイル名（bookmark_*.jpg のみ許可）
+
+
 class ScreenshotRequest(BaseModel):
     video_path: str
     time_sec: float
@@ -1774,6 +1785,47 @@ def cache_thumbnail(req: CacheThumbnailRequest):
     return {"status": "ok"}
 
 
+def _validate_bookmark_thumb_name(name: str) -> None:
+    """ブックマークサムネールのファイル名を検証する（パストラバーサル・シーン画像の破壊を防ぐ）。"""
+    if name != Path(name).name or not name.startswith("bookmark_") or not name.endswith(".jpg"):
+        raise HTTPException(400, f"不正なファイル名: {name}")
+
+
+@app.post("/cache/bookmarks/thumbnail")
+async def cache_bookmark_thumbnail(req: BookmarkThumbnailRequest):
+    """ブックマーク時刻のサムネールをサーバー側で生成して thumbnails/ に保存する。
+
+    シーンサムネールと同じ ffmpeg 入力シーク方式（video_reviewer.generate_bookmark_thumbnail）。
+    """
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    _validate_bookmark_thumb_name(req.name)
+    loop = asyncio.get_event_loop()
+    try:
+        thumbnail = await loop.run_in_executor(
+            None, video_reviewer.generate_bookmark_thumbnail, str(video_path), req.time_sec, req.name
+        )
+    except Exception as e:
+        raise HTTPException(500, f"サムネール生成に失敗: {e}")
+    return {"status": "ok", "thumbnail": thumbnail}
+
+
+@app.post("/cache/thumbnail/delete")
+def cache_thumbnail_delete(req: ThumbnailDeleteRequest):
+    """thumbnails/ 内のブックマーク画像を削除する（ブックマーク削除時の後始末）。
+
+    シーンサムネール（scene_N.jpg）は対象外。存在しないファイルの削除は成功扱い。
+    """
+    _validate_bookmark_thumb_name(req.filename)
+    target = _cache_dir(req.video_path) / "thumbnails" / req.filename
+    try:
+        target.unlink(missing_ok=True)
+    except Exception as e:
+        raise HTTPException(500, f"サムネールの削除に失敗: {e}")
+    return {"status": "ok"}
+
+
 @app.post("/cache/patch")
 def cache_patch(req: CacheSaveRequest):
     """既存の data.json に部分的なデータをマージして保存する。"""
@@ -1818,8 +1870,26 @@ def _is_managed_dir(name: str) -> bool:
     return name.startswith(".") or name.endswith(".cache") or name.endswith("_screenshot")
 
 
+def _is_analyzed(cache: Path) -> bool:
+    """分析済みかを data.json の内容で判定する。
+
+    ブックマークだけを付けた動画も /cache/patch で data.json ができるため、
+    存在チェックだけだと未分析なのに「分析済み」バッジが付いてしまう。
+    meta / scenes / toc のいずれかが入っていれば分析済みとみなす。
+    """
+    data_file = cache / "data.json"
+    if not data_file.exists():
+        return False
+    try:
+        data = json.loads(data_file.read_text(encoding="utf-8"))
+        return bool(data.get("meta") or data.get("scenes") or data.get("toc"))
+    except Exception:
+        # 壊れた JSON 等は従来どおり存在ベースで分析済み扱い
+        return True
+
+
 def _video_entry(p: Path) -> dict:
-    """動画1件の一覧表示用エントリ（分析・字幕の有無は存在チェックのみで軽量に判定）。"""
+    """動画1件の一覧表示用エントリ（字幕の有無は存在チェックのみで軽量に判定）。"""
     cache = p.parent / (p.stem + ".cache")
 
     def _has_srt(suffix: str) -> bool:
@@ -1837,7 +1907,7 @@ def _video_entry(p: Path) -> dict:
         "path": str(p),
         "size": size,
         "mtime": mtime,
-        "analyzed": (cache / "data.json").exists(),
+        "analyzed": _is_analyzed(cache),
         "has_original_srt": _has_srt("original") or _has_srt("corrected"),
         "has_japanese_srt": _has_srt("japanese"),
         "thumbnail": "thumbnails/scene_0.jpg" if thumb.exists() else None,

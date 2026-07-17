@@ -723,6 +723,31 @@ class VideoReviewer:
         print(f"[VideoReviewer] シーンサムネール生成: {len(out)}/{len(scenes)}枚 → {thumbs_dir}")
         return out
 
+    def generate_bookmark_thumbnail(self, video_path: str, time_sec: float, name: str, max_side: int = 480) -> str:
+        """ブックマーク時刻のフレームを {動画名}.cache/thumbnails/{name} に保存する。
+
+        シーンサムネールと同じ ffmpeg 入力シーク方式。戻り値は cache 相対パス。
+        """
+        p = Path(video_path)
+        ts = max(0.0, float(time_sec))
+        # 動画末尾（currentTime == duration）へのシークはフレームが取れないためクランプ
+        try:
+            duration = self._get_duration(video_path)
+            if duration > 0:
+                ts = min(ts, max(duration - 0.1, 0.0))
+        except Exception:
+            pass
+        frame = self._grab_frame_at(str(p), ts)
+        if frame is None:
+            raise RuntimeError("フレームの抽出に失敗しました")
+        thumbs_dir = p.parent / (p.stem + ".cache") / "thumbnails"
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
+        img = frame.convert("RGB")
+        img.thumbnail((max_side, max_side))
+        img.save(thumbs_dir / name, format="JPEG", quality=85)
+        print(f"[VideoReviewer] ブックマークサムネール保存: {thumbs_dir / name}")
+        return f"thumbnails/{name}"
+
     def save_screenshot(self, video_path: str, time_sec: float, fmt: str = "png") -> str:
         """再生位置のフレームをフル解像度で {動画名}_screenshot/ フォルダに保存する。
 

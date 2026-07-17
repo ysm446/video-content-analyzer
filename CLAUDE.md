@@ -130,12 +130,19 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /cache/thumbnails/generate` — シーン開始時刻のサムネールをサーバー側で生成
   （ffmpeg 入力シーク。旧フロント canvas キャプチャの置き換え。分析完了後に呼ばれる）
 - `POST /cache/thumbnail` — base64 画像を `thumbnails/{filename}` に保存（手動シーン等の残置経路）
+- `POST /cache/bookmarks/thumbnail` — ブックマーク時刻のサムネールをサーバー側で生成
+  （`{video_path, time_sec, name}`。ffmpeg 入力シーク・最大辺480px・末尾クランプ。
+  name は `bookmark_*.jpg` のみ許可）
+- `POST /cache/thumbnail/delete` — `thumbnails/` 内のブックマーク画像を削除
+  （`bookmark_*.jpg` のみ。シーンサムネールは対象外。存在しない場合も成功扱い）
 - `GET  /cache/image?video_path=...&name=...` — サムネール画像ファイルを返す（Cache-Control: no-store）
 
 ### ファイル一覧（ファイルマネージャー）
 - `POST /folder/list` — フォルダ直下のサブフォルダ・動画一覧（再帰しない。ツリーの遅延読み込み用）。
-  動画ごとに `analyzed` / `has_original_srt` / `has_japanese_srt` / `thumbnail`（scene_0.jpg）を
-  存在チェックのみで返す。`*.cache/`・`*_screenshot/`・隠しフォルダは一覧から除外
+  動画ごとに `analyzed` / `has_original_srt` / `has_japanese_srt` / `thumbnail`（scene_0.jpg）を返す。
+  `analyzed` は data.json の内容（meta / scenes / toc の有無）で判定（ブックマークだけの
+  data.json を分析済みと誤表示しないため）。字幕・サムネールは存在チェックのみ。
+  `*.cache/`・`*_screenshot/`・隠しフォルダは一覧から除外
 - `POST /folder/search` — ルート配下を再帰走査しファイル名部分一致で動画を検索
   （`{root, query}`。上限300件・`truncated` フラグ・`rel_dir` 付き）
 - `POST /file/rename` — 動画/フォルダのリネーム（`{path, new_name}`）。動画はサイドカー
@@ -201,11 +208,22 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
     }
   ],
   "toc": [...],
-  "bookmarks": []
+  "bookmarks": [
+    {
+      "id": "bm_xxxxxxxx",
+      "time_sec": 123.4,
+      "title": "タイトル",
+      "comment": "コメント",
+      "thumbnail": "thumbnails/bookmark_bm_xxxxxxxx.jpg",
+      "created_at": "2026-07-18T12:00:00.000Z"
+    }
+  ]
 }
 ```
 
 - `source`: `"auto"`（分析生成）または `"manual"`（手動追加）
+- `bookmarks`: ユーザーが再生位置に打つしおり。チャプターと別レイヤーで、再分析でも
+  保持される。編集・削除のたびに `/cache/patch` で bookmarks キーのみ即時保存
 - キャッシュが存在しない場合は旧形式の `.toc.json` にフォールバック
 
 ## SSE イベント仕様
@@ -329,6 +347,8 @@ video.mp4
 |---|---|
 | `frontend/pages/app.html` | 統合UI（字幕生成・2言語プレイヤー・動画レビュー・Q&A・チャプター編集） |
 | トップバー | 左端にファイル一覧の表示切り替え、中央にモデル管理ボタン、右端にパネル切り替え（チャプター/チャット）と設定ボタン（設定ポップアップを開く）。タブ切り替えは廃止（プレイヤーのみ） |
+| チャプターエリア | ヘッダーのタブで「チャプター」（LLM 生成シーン一覧・下書き→保存方式）と「ブックマーク」を切り替え |
+| ブックマーク | ユーザーが再生位置に打つしおり。プレイヤーコントロール列またはブックマークタブ内のボタンで追加 → サーバー側 ffmpeg でサムネール生成 → 追加直後にタイトル・コメントのインライン編集を開く。行クリックでシーク、「…」メニューから編集・削除（サムネールも削除）。チャプターと違い即時保存（`/cache/patch`） |
 | ファイル一覧パネル | 画面左端のサイドバー。ルートフォルダ（`root_folder`）配下の動画を実階層ツリーで表示（フォルダ展開時に `/folder/list` で遅延読み込み）。各行に分析済み・字幕バッジと分析サムネール。検索ボックス入力で `/folder/search` による配下フラット表示。行クリックで動画を開き、再生中はハイライト。`*.cache/` 等の管理フォルダは表示しない。右端をドラッグで幅調整（`file_panel_width` 永続化・ダブルクリックで既定幅）。各行の「…」メニューから名前の変更（インライン編集・Enter 確定 / Esc キャンセル）とごみ箱への移動。開いている動画をリネーム・削除するときはロック解除のため先に閉じてから実行し、リネーム後は新パスで自動再オープン |
 | 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プレイヤー / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
 | ランタイム設定 | llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。文字起こしエンジン（faster-whisper 単体 / + WhisperX 整列）もここで切り替え（整列モデルは初回文字起こし時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
