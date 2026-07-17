@@ -52,6 +52,7 @@
     .status-bar-dot.done{background:var(--success)}
     .status-bar-dot.error{background:var(--error)}
     .status-bar-label{color:var(--text);white-space:nowrap}
+    .status-bar-file{color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;flex-shrink:0}
     .status-bar-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .status-stop-btn{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border:1px solid var(--error-tint-border);border-radius:4px;background:transparent;color:var(--error);font-size:11px;cursor:pointer;flex-shrink:0}
     .status-stop-btn:hover{background:var(--error-tint-bg)}
@@ -565,6 +566,7 @@
   <div class="status-bar">
     <span class="status-bar-dot" id="globalStatusDot"></span>
     <span class="status-bar-label" id="globalStatusLabel">ステータス</span>
+    <span class="status-bar-file" id="globalStatusFile" style="display:none"></span>
     <span class="status-bar-text" id="globalStatusText">待機中</span>
     <button class="status-stop-btn" id="cancelBtn" type="button" style="display:none" title="実行中の処理を中止"><i data-lucide="square"></i> 中止</button>
     <span class="status-bar-sysinfo" id="sysInfo"></span>
@@ -1021,13 +1023,24 @@
       if(result) result.innerHTML=''
       stopTaskTimer(kind)
     }
+    // タスクごとの処理対象ファイル名（ステータスバーに「どのファイルへの処理か」を表示する。
+    // 処理中に別の動画を開いてもタスク開始時の対象名を表示し続ける）
+    const _taskTargets={}
+    function setTaskTarget(kind,path){
+      _taskTargets[kind]=path ? (String(path).split(/[\\/]/).pop() || '') : ''
+    }
     function updateGlobalStatus(kind,stateName,text){
       const labelMap={transcribe:'文字起こし',refine:'補正',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',bookmark:'ブックマーク',qa:'チャット',app:'ステータス'}
       const dot=document.getElementById('globalStatusDot')
       const label=document.getElementById('globalStatusLabel')
       const body=document.getElementById('globalStatusText')
+      const fileEl=document.getElementById('globalStatusFile')
       dot.className='status-bar-dot'+(stateName?` ${stateName}`:'')
       label.textContent=labelMap[kind]||'ステータス'
+      const target=_taskTargets[kind]||''
+      fileEl.textContent=target
+      fileEl.title=target
+      fileEl.style.display=target?'':'none'
       body.textContent=text||'待機中'
     }
     const _taskTimers = {}
@@ -2909,6 +2922,7 @@
     document.getElementById('transcribeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('transcribe',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('transcribeBtn'); btn.disabled=true
+      setTaskTarget('transcribe',state.videoPath)
       updateProcessButtons('transcribe')
       resetSection('transcribe'); setProgress('transcribe',5,'準備中...')
       const ac=beginCancelable()
@@ -2934,6 +2948,7 @@
     document.getElementById('refineBtn').addEventListener('click',async()=>{
       if(!state.origSrtPath){ setResult('refine',false,'先に文字起こしを実行してください'); return }
       const btn=document.getElementById('refineBtn'); btn.disabled=true
+      setTaskTarget('refine',state.videoPath||state.origSrtPath)
       updateProcessButtons('refine')
       resetSection('refine'); setProgress('refine',0,'準備中...')
       const ac=beginCancelable()
@@ -2955,6 +2970,7 @@
       const srcSrt=state.correctedSrtPath || state.origSrtPath
       if(!srcSrt){ setResult('translate',false,'先に文字起こしを実行してください'); return }
       const btn=document.getElementById('translateBtn'); btn.disabled=true
+      setTaskTarget('translate',state.videoPath||srcSrt)
       updateProcessButtons('translate')
       resetSection('translate'); setProgress('translate',0,'準備中...')
       const ac=beginCancelable()
@@ -2979,6 +2995,7 @@
     document.getElementById('analyzeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
+      setTaskTarget('analyze',state.videoPath)
       resetSection('analyze')
       const ac=beginCancelable()
       try{
