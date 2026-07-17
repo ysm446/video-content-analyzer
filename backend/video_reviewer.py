@@ -723,6 +723,50 @@ class VideoReviewer:
         print(f"[VideoReviewer] シーンサムネール生成: {len(out)}/{len(scenes)}枚 → {thumbs_dir}")
         return out
 
+    def probe_video_info(self, video_path: str) -> dict:
+        """ffprobe で動画のスペック（解像度・コーデック・ビットレート等）を取得する。
+
+        プレイヤー下の詳細エリアの「スペック」セクション用。取得できない値は None。
+        """
+        p = Path(video_path)
+        probe = ffmpeg.probe(str(p))
+        fmt = probe.get("format") or {}
+        streams = probe.get("streams") or []
+        v = next((s for s in streams if s.get("codec_type") == "video"), {})
+        a = next((s for s in streams if s.get("codec_type") == "audio"), {})
+
+        def _fps(stream: dict) -> float | None:
+            rate = stream.get("avg_frame_rate") or stream.get("r_frame_rate") or ""
+            try:
+                num, den = str(rate).split("/")
+                return round(float(num) / float(den), 2) if float(den) else None
+            except Exception:
+                return None
+
+        def _int(value) -> int | None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = None
+        return {
+            "container": fmt.get("format_name"),
+            "duration": float(fmt["duration"]) if fmt.get("duration") else None,
+            "size_bytes": size,
+            "bit_rate": _int(fmt.get("bit_rate")),
+            "video_codec": v.get("codec_name"),
+            "width": v.get("width"),
+            "height": v.get("height"),
+            "fps": _fps(v) if v else None,
+            "audio_codec": a.get("codec_name"),
+            "audio_sample_rate": _int(a.get("sample_rate")),
+            "audio_channels": a.get("channels"),
+        }
+
     def generate_bookmark_thumbnail(self, video_path: str, time_sec: float, name: str, max_side: int = 480) -> str:
         """ブックマーク時刻のフレームを {動画名}.cache/thumbnails/{name} に保存する。
 

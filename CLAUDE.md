@@ -160,6 +160,11 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   root_folder / show_file_panel 等）
 - `POST /ui-settings` — UI 設定保存
 
+### 動画情報
+- `POST /video/info` — 動画のスペックを ffprobe で返す（`{video_path}` →
+  解像度・duration・ファイルサイズ・映像/音声コーデック・fps・ビットレート等。
+  プレイヤー下の詳細エリアの「スペック」セクションが動画オープン時に取得）
+
 ### スクリーンショット
 - `POST /screenshot` — 再生位置のフレームを ffmpeg 入力シークでフル解像度保存（F12）。
   保存先は動画と同じ場所の `{動画名}_screenshot/`、ファイル名は

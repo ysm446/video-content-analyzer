@@ -116,7 +116,9 @@
     .file-badge-analyzed{color:var(--success)}
     .file-badge-sub{color:var(--accent)}
     .file-children{margin-left:14px;border-left:1px solid var(--border);padding-left:4px}
-    .player-left{min-width:0;display:flex;flex-direction:column;grid-area:player}
+    /* min-height:0 が無いとグリッドアイテムが内容の高さまで伸びてしまい、
+       .detail-scroll の overflow-y:auto が効かず（画面外に切れて）スクロールバーが出ない */
+    .player-left{min-width:0;min-height:0;display:flex;flex-direction:column;grid-area:player}
     .panel-resizer{position:relative;background:var(--border);border-bottom:1px solid var(--border);cursor:col-resize;user-select:none;grid-area:divider}
     .panel-resizer::before{content:'';position:absolute;top:0;bottom:0;left:-5px;right:-5px}
     .panel-resizer:hover{background:var(--accent)}
@@ -245,6 +247,7 @@
     .qa-panel{min-width:0;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);grid-area:qa;overflow:hidden}
     .qa-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
     .qa-title{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+    #clearHistoryBtn svg.lucide{width:12px;height:12px}
     .qa-history{flex:1;overflow-y:auto;padding:10px 10px 16px;display:flex;flex-direction:column;gap:10px}
     .qa-pair{display:flex;flex-direction:column;gap:6px}
     .qa-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;text-align:center}
@@ -328,11 +331,18 @@
     .toc-row textarea{min-height:56px;resize:vertical}
     .toc-del{padding:6px 8px;font-size:12px}
     .tags-wrap{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+    .spec-grid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:12px}
+    .spec-label{color:var(--text-dim);white-space:nowrap}
+    .spec-value{color:var(--text);font-variant-numeric:tabular-nums;word-break:break-word}
     .pane-tab{border:none;background:none;color:var(--text-dim);font-size:12px;text-transform:uppercase;letter-spacing:.06em;padding:6px 10px;border-radius:6px;cursor:pointer}
     .pane-tab:hover{color:var(--text);background:var(--surface2)}
     .pane-tab.active{color:var(--accent);background:var(--accent-tint-bg)}
-    .bookmark-add-row{display:flex;margin-bottom:10px}
-    .bookmark-add-row .btn{width:100%;justify-content:center}
+    /* タブ列右端の小さなアイコンボタン（ブックマーク追加）。ヘッダー内なので
+       リストをスクロールしても隠れない */
+    .pane-header-btn{margin-left:auto;width:28px;height:28px;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+    .pane-header-btn:hover{background:var(--surface3);border-color:var(--border-strong)}
+    .pane-header-btn:disabled{opacity:.45;cursor:default}
+    .pane-header-btn svg.lucide{width:15px;height:15px}
     .bm-comment{font-size:12px;color:var(--text-dim);line-height:1.5;white-space:pre-wrap;word-break:break-word}
     .bm-title-placeholder{color:var(--text-dim)}
     .tag{font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:var(--text-dim)}
@@ -479,6 +489,15 @@
                     <div class="tags-wrap" id="tagsWrap"></div>
                   </div>
                 </section>
+                <section class="analysis-section" id="specSection" style="display:none">
+                  <button class="analysis-toggle" id="specToggleBtn" type="button" aria-expanded="true">
+                    <span class="analysis-toggle-label">スペック</span>
+                    <span class="analysis-toggle-icon"><i data-lucide="chevron-down"></i></span>
+                  </button>
+                  <div class="analysis-section-body" id="specSectionBody">
+                    <div class="spec-grid" id="specGrid"></div>
+                  </div>
+                </section>
                 <section class="analysis-section">
                   <button class="analysis-toggle" id="actionsToggleBtn" type="button" aria-expanded="true">
                     <span class="analysis-toggle-label">操作</span>
@@ -514,6 +533,7 @@
             <div class="analysis-header" style="display:flex;align-items:center;gap:4px">
               <button class="pane-tab active" id="paneTabChapters" type="button">チャプター</button>
               <button class="pane-tab" id="paneTabBookmarks" type="button">ブックマーク</button>
+              <button class="pane-header-btn" id="addBookmarkBtn" type="button" title="現在位置をブックマーク" style="display:none"><i data-lucide="bookmark-plus"></i></button>
             </div>
             <div class="analysis-scroll">
               <div id="analysisView">
@@ -532,9 +552,6 @@
                 <div id="analysisEmpty" class="qa-placeholder" style="padding:16px">動画を分析するとシーン一覧が表示されます</div>
               </div>
               <div id="bookmarksView" style="display:none">
-                <div class="bookmark-add-row">
-                  <button class="btn btn-primary" id="addBookmarkBtn" type="button" disabled><i data-lucide="bookmark-plus"></i> 現在位置をブックマーク</button>
-                </div>
                 <div class="result-row" id="bookmarkResult" style="margin-bottom:8px"></div>
                 <div class="scenes-list" id="bookmarksList"></div>
                 <div id="bookmarksEmpty" class="qa-placeholder" style="padding:16px">再生位置でブックマークを追加すると、しおりとしてここに記録されます</div>
@@ -546,7 +563,7 @@
         <aside class="qa-panel">
             <div class="qa-header">
               <div class="qa-title">動画に質問する</div>
-              <button class="btn btn-ghost" id="clearHistoryBtn" style="font-size:11px;padding:3px 10px">履歴をクリア</button>
+              <button class="btn btn-ghost" id="clearHistoryBtn" title="会話履歴をクリア" style="font-size:11px;padding:3px 10px;display:inline-flex;align-items:center;gap:5px"><i data-lucide="eraser"></i> 履歴をクリア</button>
             </div>
             <div class="qa-history" id="qaHistory">
               <div class="qa-placeholder" id="qaPlaceholder">動画を読み込むと質問できます</div>
@@ -728,7 +745,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true}, qaChat:[], qaSuggestions:null }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true,spec:true}, qaChat:[], qaSuggestions:null }
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -1287,6 +1304,7 @@
       document.getElementById('summaryToggleBtn').closest('.analysis-section').style.display = 'none'
       document.getElementById('detailSection').style.display = 'none'
       document.getElementById('tagsToggleBtn').closest('.analysis-section').style.display = 'none'
+      document.getElementById('specSection').style.display = 'none'
       document.getElementById('actionsToggleBtn').closest('.analysis-section').style.display = ''
       document.getElementById('genreTag').textContent = ''
       document.getElementById('summaryText').textContent = ''
@@ -1331,6 +1349,7 @@
         detail:'analysis_detail_expanded',
         tags:'analysis_tags_expanded',
         scenes:'analysis_scenes_expanded',
+        spec:'analysis_spec_expanded',
       }
       saveUiSettings({[keyMap[name]]:next})
     }
@@ -1531,6 +1550,7 @@
       state.paneTab=name
       document.getElementById('paneTabChapters').classList.toggle('active',name==='chapters')
       document.getElementById('paneTabBookmarks').classList.toggle('active',name==='bookmarks')
+      document.getElementById('addBookmarkBtn').style.display = name==='bookmarks'?'':'none'
       document.getElementById('analysisView').style.display = name==='chapters'?'':'none'
       document.getElementById('bookmarksView').style.display = name==='bookmarks'?'':'none'
       if(name==='bookmarks') renderBookmarks()
@@ -2072,9 +2092,50 @@
       }catch{}
     }
 
+    // ---------- スペック（解像度・コーデック等）----------
+
+    function fmtDurationHMS(sec){
+      const s=Math.max(0,Math.floor(Number(sec)||0))
+      const h=Math.floor(s/3600), m=Math.floor(s%3600/60), ss=String(s%60).padStart(2,'0')
+      return h ? `${h}:${String(m).padStart(2,'0')}:${ss}` : `${m}:${ss}`
+    }
+    function fmtBitrate(bps){
+      return bps>=1e6 ? `${(bps/1e6).toFixed(2)} Mbps` : `${Math.round(bps/1e3)} kbps`
+    }
+
+    async function loadVideoSpecs(path){
+      const section=document.getElementById('specSection')
+      const grid=document.getElementById('specGrid')
+      section.style.display='none'
+      grid.innerHTML=''
+      if(!path) return
+      try{
+        const res=await fetch(`${API}/video/info`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:path})})
+        if(!res.ok) return
+        const {info}=await res.json()
+        if(state.videoPath!==path) return  // 取得中に別の動画へ切り替わった
+        const rows=[]
+        if(info.width && info.height) rows.push(['解像度',`${info.width}×${info.height}`])
+        if(Number.isFinite(info.duration)) rows.push(['長さ',fmtDurationHMS(info.duration)])
+        if(typeof info.size_bytes==='number') rows.push(['ファイルサイズ',_fmtBytes(info.size_bytes)])
+        const vparts=[info.video_codec, info.fps?`${info.fps} fps`:''].filter(Boolean)
+        if(vparts.length) rows.push(['映像',vparts.join(' / ')])
+        const aparts=[info.audio_codec, info.audio_sample_rate?`${Math.round(info.audio_sample_rate/1000)} kHz`:'', info.audio_channels?`${info.audio_channels}ch`:''].filter(Boolean)
+        if(aparts.length) rows.push(['音声',aparts.join(' / ')])
+        if(info.bit_rate) rows.push(['ビットレート',fmtBitrate(info.bit_rate)])
+        const ext=(path.split('.').pop()||'').toLowerCase()
+        if(ext) rows.push(['形式',ext.toUpperCase()])
+        if(!rows.length) return
+        grid.innerHTML=rows.map(([k,v])=>`<span class="spec-label">${escHtml(k)}</span><span class="spec-value">${escHtml(v)}</span>`).join('')
+        section.style.display=''
+        setAnalysisSectionExpanded('spec', state.analysisExpanded.spec !== false)
+      }catch{}
+    }
+
     async function openVideoFromPath(p){
       setCurrentVideo(p)
       loadVideo(p)
+      loadVideoSpecs(p)
       await tryAutoLoadSrt(p)
       await tryAutoLoadCache(p)
       highlightActiveFileRow()
@@ -2110,6 +2171,7 @@
     document.getElementById('tagsToggleBtn').addEventListener('click',()=>toggleAnalysisSection('tags'))
     document.getElementById('scenesToggleBtn').addEventListener('click',()=>toggleAnalysisSection('scenes'))
     document.getElementById('actionsToggleBtn').addEventListener('click',()=>toggleAnalysisSection('actions'))
+    document.getElementById('specToggleBtn').addEventListener('click',()=>toggleAnalysisSection('spec'))
     document.getElementById('scenesList').addEventListener('click',e=>{
       const menuBtn=e.target.closest('[data-scene-menu]')
       if(menuBtn){
@@ -2795,6 +2857,7 @@
         state.analysisExpanded.detail = s.analysis_detail_expanded === true
         state.analysisExpanded.tags = s.analysis_tags_expanded !== false
         state.analysisExpanded.scenes = s.analysis_scenes_expanded !== false
+        state.analysisExpanded.spec = s.analysis_spec_expanded !== false
         outputLangSel.value=(s.output_lang==='en')?'en':'ja'
         subtitleDisplaySel.value = s.subtitle_display === 'overlay' ? 'overlay' : 'below'
         subtitleFontSel.value = ['noto','biz','yugothic','meiryo'].includes(s.subtitle_font) ? s.subtitle_font : 'noto'
@@ -3140,6 +3203,10 @@
       state.qaChat=[]
       if(ph) qaHistory.appendChild(ph)
       ph.style.display=qaInput.disabled?'flex':'none'
+      // 前の会話に基づくフォローアップ質問チップもリセットして再生成
+      state.qaSuggestions=null
+      renderQaSuggestions()
+      fetchQaSuggestions()
     })
 
     const playerShell = document.querySelector('.player-shell')

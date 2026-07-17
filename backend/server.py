@@ -508,6 +508,10 @@ class TOCLoadRequest(BaseModel):
     video_path: str
 
 
+class VideoInfoRequest(BaseModel):
+    video_path: str
+
+
 class CacheSaveRequest(BaseModel):
     video_path: str
     data: dict
@@ -1753,6 +1757,20 @@ async def cache_thumbnails_generate(req: ThumbnailsGenerateRequest):
     except Exception as e:
         raise HTTPException(500, f"サムネール生成に失敗: {e}")
     return {"status": "ok", "thumbnails": thumbnails}
+
+
+@app.post("/video/info")
+async def video_info(req: VideoInfoRequest):
+    """動画のスペック（解像度・コーデック・ビットレート等）を ffprobe で返す。"""
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    loop = asyncio.get_event_loop()
+    try:
+        info = await loop.run_in_executor(None, video_reviewer.probe_video_info, str(video_path))
+    except Exception as e:
+        raise HTTPException(500, f"動画情報の取得に失敗: {e}")
+    return {"status": "ok", "info": info}
 
 
 @app.post("/screenshot")
