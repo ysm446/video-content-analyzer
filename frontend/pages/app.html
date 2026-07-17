@@ -1597,7 +1597,7 @@
              ${b.comment?`<span class="bm-comment">${escHtml(b.comment)}</span>`:''}`
         const menu=`<div class="scene-actions">
             <button class="scene-menu-btn" type="button" data-bm-menu="${id}" title="操作"><i data-lucide="ellipsis"></i></button>
-            ${menuOpen?`<div class="scene-menu"><button class="scene-menu-item" type="button" data-bm-edit="${id}">編集</button><button class="scene-menu-item" type="button" data-bm-delete="${id}">削除</button></div>`:''}
+            ${menuOpen?`<div class="scene-menu"><button class="scene-menu-item" type="button" data-bm-edit="${id}">編集</button><button class="scene-menu-item" type="button" data-bm-retake="${id}">現在位置で更新</button><button class="scene-menu-item" type="button" data-bm-delete="${id}">削除</button></div>`:''}
           </div>`
         return `<div class="scene-item" data-start="${Number(b.time_sec)||0}" data-bookmark-id="${id}">${thumb}<div class="scene-info">${body}</div>${menu}</div>`
       }).join('')
@@ -1617,6 +1617,23 @@
         setResult('bookmark',false,`保存失敗: ${e.message}`)
         return false
       }
+    }
+
+    // 既存ブックマークの時刻・サムネールを現在の再生位置で撮り直す
+    // （タイトル・コメントは保持。サムネールは同名ファイルに上書き）
+    async function retakeBookmark(id){
+      if(!state.videoPath) return
+      const bm=getBookmarks().find(b=>b.id===id)
+      if(!bm) return
+      const t=video.currentTime||0
+      bm.time_sec=Math.round(t*10)/10
+      try{
+        const res=await fetch(`${API}/cache/bookmarks/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,time_sec:t,name:`bookmark_${id}.jpg`})})
+        if(res.ok) bm.thumbnail=(await res.json()).thumbnail||bm.thumbnail
+      }catch{}
+      normalizeTocData().bookmarks.sort((a,b)=>(a.time_sec||0)-(b.time_sec||0))
+      renderBookmarks()
+      persistBookmarks(`ブックマークを現在位置に更新しました（${fmtTs(t)}）`)
     }
 
     async function addBookmarkAtCurrentTime(){
@@ -1666,6 +1683,13 @@
         state.openBookmarkMenuId=null
         state.editingBookmarkId=editBtn.dataset.bmEdit
         renderBookmarks()
+        return
+      }
+      const retakeBtn=e.target.closest('[data-bm-retake]')
+      if(retakeBtn){
+        e.stopPropagation()
+        state.openBookmarkMenuId=null
+        retakeBookmark(retakeBtn.dataset.bmRetake)
         return
       }
       const deleteBtn=e.target.closest('[data-bm-delete]')
