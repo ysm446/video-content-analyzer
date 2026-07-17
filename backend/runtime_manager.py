@@ -22,6 +22,7 @@ from urllib import error, request
 import torch
 
 from . import cancel
+from .align import ALIGN_MODELS, ENGINE_FASTER_WHISPER
 from .asr import MODEL_ID as WHISPER_MODEL_ID
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,12 @@ WHISPER_MODELS = [
     {"id": "large-v3-turbo", "size": "約 1.6 GB"},
 ]
 WHISPER_MODEL_IDS = {m["id"] for m in WHISPER_MODELS}
+
+# 設定画面で選べる文字起こしエンジン
+ASR_ENGINE_CHOICES = [
+    {"id": "faster-whisper", "label": "faster-whisper（標準）"},
+    {"id": "whisperx", "label": "faster-whisper + WhisperX 整列（タイミング精密化）"},
+]
 
 _UA_HEADERS = {"User-Agent": "video-content-analyzer"}
 LLAMA_LATEST_RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
@@ -158,10 +165,19 @@ def installed_whisper_models() -> list[str]:
     return [m["id"] for m in WHISPER_MODELS if find_whisper_model_dir(m["id"]) is not None]
 
 
-def get_status(whisper_active: str | None = None) -> dict:
+def _align_model_installed(repo: str) -> bool:
+    """wav2vec2 アライメントモデルが HF キャッシュ（models/hub/）に存在するか。"""
+    repo_dir = MODELS_DIR / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots"
+    if not repo_dir.is_dir():
+        return False
+    return any(snap.is_dir() and any(snap.iterdir()) for snap in repo_dir.glob("*"))
+
+
+def get_status(whisper_active: str | None = None, asr_engine: str | None = None) -> dict:
     """3コンポーネントのインストール状態を返す。
 
     whisper_active: 現在使用中の Whisper モデル ID（server が asr.model_id を渡す）。
+    asr_engine: 現在の文字起こしエンジン（server が渡す。省略時は faster-whisper）。
     """
     active_llama = resolve_active_llama_dir()
     env_dir = os.environ.get("LLAMA_CPP_DIR")
@@ -187,6 +203,12 @@ def get_status(whisper_active: str | None = None) -> dict:
             "path": str(whisper_dir) if whisper_dir else "",
             "installed_models": installed_whisper_models(),
             "available_models": WHISPER_MODELS,
+            "engine": asr_engine or ENGINE_FASTER_WHISPER,
+            "engines": ASR_ENGINE_CHOICES,
+            "align_models": [
+                {"language": lang, "model": repo, "installed": _align_model_installed(repo)}
+                for lang, repo in (("ja", ALIGN_MODELS["ja"]), ("en", ALIGN_MODELS["en"]))
+            ],
         },
         "ffmpeg": {
             "installed": ffmpeg_path is not None and ffprobe_ok,

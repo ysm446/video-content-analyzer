@@ -1,6 +1,6 @@
 # 進捗状況
 
-最終更新: 2026-07-06
+最終更新: 2026-07-18
 
 ## 現在の状態（サマリ）
 
@@ -21,6 +21,14 @@
 [plan.md](plan.md) の「実機確認」を参照）。
 
 ---
+
+## WhisperX 方式アライメント（2026-07-18 完了）
+- [x] `backend/align.py` 新設（WhisperX の wav2vec2 CTC 強制アライメントを移植、BSD-2 帰属明記）
+- [x] エンジン選択（設定 → ランタイム、`asr_engine`、`POST /runtime/asr/engine`、既定は faster-whisper）
+- [x] `/transcribe` に `loading_align_model` / `aligning` / `align_warning` SSE 追加
+- [x] cuDNN 混在クラッシュの回避（wav2vec2 推論時のみ cuDNN 無効化）
+- [x] 合成テスト・TTS 音声 E2E・SSE 通し・回帰・永続化を検証済み
+- [ ] 実動画（長尺・日本語）での整列品質・処理時間の確認は未実施
 
 ## F12 スクリーンショット機能（2026-07-06 完了）
 - [x] POST /screenshot（ffmpeg 入力シーク・フル解像度・`{動画名}_screenshot/` に保存）

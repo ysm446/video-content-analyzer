@@ -1,5 +1,37 @@
 # 変更履歴
 
+## 2026-07-18
+- **アイコンの調整（フラット＋デフォルメ方向）**
+  - モデルのアンロードボタン（トップバー・モデル管理ポップアップ）を
+    イジェクト記号 ⏏（三角形＋バー）のカスタム SVG に変更
+    （Lucide に eject が無いため。stroke 流儀・`class="lucide"` で既存 CSS と共通化）
+  - 全体の stroke-width を太めに統一（基本 1.75→2.2、サイドバー 1.5→2、
+    キャレット 1.8→2.4、no-video 1→1.4 等）で、フラットなまま少しデフォルメな印象に
+  - 方針を CLAUDE.md の「アイコン」節に明文化
+- **WhisperX 方式の字幕タイミング精密化（強制アライメント）を追加**
+  - 文字起こしエンジンを 設定 → ランタイム で選択可能に:
+    `faster-whisper（標準・従来通り）` / `faster-whisper + WhisperX 整列`
+    （settings.json の `asr_engine`、`POST /runtime/asr/engine` で切り替え）
+  - whisperx パッケージは **不採用**: `torch~=2.8.0` 固定が本プロジェクトの
+    torch 2.12.0+cu130（Blackwell 必須）と衝突し、pip 導入すると CPU 版 torch に
+    ダウングレードされるため。pyannote-audio / torchcodec の連鎖依存も回避
+  - 代わりに WhisperX (github.com/m-bain/whisperX, BSD-2-Clause, © 2022 Max Bain) の
+    wav2vec2 CTC 強制アライメントを `backend/align.py` に移植（torch + transformers のみ。
+    torchaudio / pandas / nltk 不使用）。帰属はファイルヘッダに明記
+  - `/transcribe` に SSE イベント追加: `loading_align_model` / `aligning {current,total}` /
+    `align_warning`（未対応言語・整列失敗時は元の時刻で続行し、文字起こし自体は失敗させない）
+  - 整列モデル（ja 約1.2GB / en 約360MB、全34言語対応）は初回文字起こし時に
+    HF から `models/hub/` へ自動ダウンロード
+  - `asr.transcribe()` が検出言語を返すよう変更（整列モデルの言語選択に使用）
+  - 判明した問題と対処: asr.py の `_add_nvidia_dlls()`（CTranslate2 用 pip cuDNN）と
+    torch 同梱 cuDNN が混在し wav2vec2 の CUDA 実行が
+    `CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH` で落ちる → wav2vec2 推論時のみ
+    `torch.backends.cudnn.flags(enabled=False)` で cuDNN を無効化して回避
+  - requirements.txt に `transformers` を追加（align.py は遅延 import のまま）
+  - 検証済み: 合成 emission でのアルゴリズム単体テスト、TTS 音声での E2E
+    （開始時刻が発話開始にスナップされることを確認）、`/transcribe` SSE 通しテスト、
+    既定エンジンの回帰（従来と同一イベント）、エンジン切り替えの永続化
+
 ## 2026-07-06
 - **F12 キーで動画スクリーンショットを保存する機能を追加**
   - `POST /screenshot` を新設。再生位置のフレームを ffmpeg の入力シークで

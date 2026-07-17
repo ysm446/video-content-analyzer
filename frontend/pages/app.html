@@ -10,10 +10,10 @@
   <script src="../vendor/marked.min.js"></script>
   <style>
     /* フォーカス表示のルールは common.css に集約（アクセント1色のリング＋入力系は枠明色化） */
-    svg.lucide{width:14px;height:14px;stroke-width:1.75;vertical-align:-2px;flex-shrink:0}
+    svg.lucide{width:14px;height:14px;stroke-width:2.2;vertical-align:-2px;flex-shrink:0}
     .time-label svg.lucide{vertical-align:0}
-    .sidebar svg.lucide{width:20px;height:20px;stroke-width:1.5}
-    .no-video svg.lucide{width:48px;height:48px;stroke-width:1}
+    .sidebar svg.lucide{width:20px;height:20px;stroke-width:2}
+    .no-video svg.lucide{width:48px;height:48px;stroke-width:1.4}
     .ctrl-btn svg.lucide{width:15px;height:15px}
     html,body{height:100%}
     body{display:flex;flex-direction:column;overflow:hidden}
@@ -35,15 +35,15 @@
     .model-pill.loading .model-pill-icon{animation:pill-pulse 1.4s ease-in-out infinite}
     @keyframes pill-pulse{0%,100%{opacity:.5}50%{opacity:1}}
     .model-pill-icon{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
-    .model-pill-icon svg.lucide{width:15px;height:15px;stroke-width:1.8}
+    .model-pill-icon svg.lucide{width:15px;height:15px;stroke-width:2.2}
     .model-pill-text{min-width:0;flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
     .model-pill-caret{display:inline-flex;align-items:center;justify-content:center;opacity:.92}
-    .model-pill-caret svg.lucide{width:16px;height:16px;stroke-width:1.8}
+    .model-pill-caret svg.lucide{width:16px;height:16px;stroke-width:2.4}
     .model-eject-btn{width:32px;height:32px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .1s}
     .model-eject-btn:hover:not(:disabled){background:var(--surface3);border-color:var(--border-strong);color:#fff}
     .model-eject-btn:active:not(:disabled){transform:scale(.98)}
     .model-eject-btn:disabled{opacity:.45;cursor:default}
-    .model-eject-btn svg.lucide{width:17px;height:17px;stroke-width:1.9}
+    .model-eject-btn svg.lucide{width:18px;height:18px;stroke-width:2.2}
     .tab-panels{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;min-width:0}
     .tab-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
     .status-bar{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;font-size:12px;color:var(--text-dim)}
@@ -218,7 +218,7 @@
     .qa-answer hr{border:none;border-top:1px solid var(--border);margin:.8em 0}
     .qa-answer-meta{align-self:flex-start;display:flex;flex-wrap:wrap;gap:8px 12px;max-width:96%;color:var(--text-dim)}
     .qa-meta-item{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1.2;color:var(--text-dim);background:none;border:none;padding:0}
-    .qa-meta-item svg.lucide{width:13px;height:13px;stroke-width:1.9}
+    .qa-meta-item svg.lucide{width:13px;height:13px;stroke-width:2.2}
     .qa-answering{font-size:12px;color:var(--text-dim)}
     .qa-elapsed{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
     .qa-suggest-row{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:0 10px 10px;flex-shrink:0}
@@ -257,7 +257,7 @@
     .scene-actions{position:relative;display:flex;align-items:flex-start;margin-left:auto}
     .scene-menu-btn{width:28px;height:28px;border:none;background:none;color:var(--text-dim);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
     .scene-menu-btn:hover{background:rgba(255,255,255,.06);color:var(--text)}
-    .scene-menu-btn svg.lucide{width:16px;height:16px;stroke-width:1.8}
+    .scene-menu-btn svg.lucide{width:16px;height:16px;stroke-width:2.2}
     .scene-menu{position:absolute;top:32px;right:0;min-width:108px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.34);display:flex;flex-direction:column;gap:4px;z-index:8}
     .scene-menu-item{width:100%;padding:7px 10px;border:none;background:none;border-radius:6px;color:var(--text);text-align:left;cursor:pointer;font-size:12px}
     .scene-menu-item:hover{background:var(--surface2)}
@@ -306,7 +306,8 @@
         <span class="model-pill-text" id="modelStatusLabel">モデルをロードしてください</span>
         <span class="model-pill-caret"><i data-lucide="chevron-down"></i></span>
       </button>
-      <button class="model-eject-btn" id="topbarModelUnloadBtn" title="モデルをアンロード" disabled><i data-lucide="log-out"></i></button>
+      <!-- Lucide にイジェクト記号が無いためカスタム SVG（同じ stroke 流儀・class="lucide" で共通 CSS を適用） -->
+      <button class="model-eject-btn" id="topbarModelUnloadBtn" title="モデルをアンロード" disabled><svg class="lucide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5.5 5.5 13.8h13L12 5.5Z"/><path d="M6 18.5h12"/></svg></button>
     </div>
     <div class="sidebar-right">
       <button class="tab-btn active" id="toggleAnalysisPanelBtn" title="チャプターを表示/非表示"><i data-lucide="book-open"></i></button>
@@ -488,7 +489,7 @@
             <span class="modal-status-text" id="modalStatusText">未ロード</span>
             <div style="display:flex;gap:6px;margin-left:auto;flex-shrink:0">
               <button class="btn btn-primary" id="modalLoadBtn" style="padding:5px 14px;font-size:12px"><i data-lucide="download"></i> ロード</button>
-              <button class="btn btn-ghost" id="modalUnloadBtn" style="padding:5px 14px;font-size:12px" disabled><i data-lucide="trash-2"></i> アンロード</button>
+              <button class="btn btn-ghost" id="modalUnloadBtn" style="padding:5px 14px;font-size:12px" disabled><svg class="lucide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5.5 5.5 13.8h13L12 5.5Z"/><path d="M6 18.5h12"/></svg> アンロード</button>
             </div>
           </div>
         </div>
@@ -712,6 +713,10 @@
         const inst=installedModels.includes(m.id)
         return `<option value="${escHtml(m.id)}"${m.id===w.model?' selected':''}>${escHtml(m.id)}（${escHtml(m.size)}）${inst?' ✓済':''}</option>`
       }).join('')
+      const engineOptions=(w.engines||[]).map(e=>
+        `<option value="${escHtml(e.id)}"${e.id===w.engine?' selected':''}>${escHtml(e.label)}</option>`
+      ).join('')
+      const alignInstalled=(w.align_models||[]).filter(a=>a.installed).map(a=>a.language)
       const whisperHtml=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
         ${_runtimeRowHead(!!w.installed,'Whisper モデル',w.installed?`使用中: ${w.model}`:'未インストール','')}
         <div style="font-size:11px;color:var(--text-dim);margin-top:4px">音声書き起こし（faster-whisper）。切り替えは次回の文字起こしから反映されます</div>
@@ -720,6 +725,12 @@
           <select id="whisperModelSel" style="${RUNTIME_SEL_STYLE}">${whisperOptions}</select>
           <button class="btn btn-primary" id="whisperModelApply" style="padding:4px 12px;font-size:12px">適用</button>
         </div>
+        <div class="frame-setting" style="margin-top:6px">
+          <label style="font-size:12px">エンジン：</label>
+          <select id="asrEngineSel" style="${RUNTIME_SEL_STYLE}">${engineOptions}</select>
+          <button class="btn btn-ghost" id="asrEngineApply" style="padding:4px 12px;font-size:12px">適用</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">WhisperX 整列は wav2vec2 で字幕タイミングを精密化します。整列モデルは初回の文字起こし時に自動ダウンロード（日本語 約1.2GB / 英語 約360MB）${alignInstalled.length?` ｜ 取得済み: ${alignInstalled.map(escHtml).join(', ')}`:''}</div>
         <div id="runtime-progress-whisper" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
       </div>`
 
@@ -778,10 +789,19 @@
           }
         }catch(e){ alert('切り替えに失敗しました: '+e.message) }
       })
+      document.getElementById('asrEngineApply')?.addEventListener('click',async()=>{
+        const sel=document.getElementById('asrEngineSel')
+        if(!sel) return
+        try{
+          const res=await fetch(`${API}/runtime/asr/engine`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({engine:sel.value})})
+          if(!res.ok) throw new Error(await res.text())
+          await loadRuntimeStatus()
+        }catch(e){ alert('切り替えに失敗しました: '+e.message) }
+      })
       document.getElementById('ffmpegInstall')?.addEventListener('click',()=>installRuntime('ffmpeg'))
     }
     function _setRuntimeButtonsDisabled(disabled){
-      for(const id of ['llamaVersionApply','llamaBuildInstall','llamaBuildsFetch','whisperModelApply','ffmpegInstall']){
+      for(const id of ['llamaVersionApply','llamaBuildInstall','llamaBuildsFetch','whisperModelApply','asrEngineApply','ffmpegInstall']){
         const b=document.getElementById(id)
         if(b) b.disabled=disabled
       }
@@ -2200,6 +2220,9 @@
         await readSSE(res,event=>{
           if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
           else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
+          else if(event.status==='loading_align_model') setProgress('transcribe',32,`整列モデルをロード中 (${event.language})...`)
+          else if(event.status==='aligning'){ const pct=event.total>0?35+Math.round(event.current/event.total*40):35; setProgress('transcribe',pct,`タイミング整列中 ${event.current}/${event.total}`) }
+          else if(event.status==='align_warning') updateGlobalStatus('transcribe','running',`注意: ${event.message}`)
           else if(event.status==='saving_srt') setProgress('transcribe',80,`SRT 生成中 (${event.segments})`)
           else if(event.status==='canceled'){ markCanceled('transcribe'); updateProcessButtons() }
           else if(event.status==='done'){ setProgress('transcribe',100,'完了'); state.origSrtPath=event.srt_path; state.correctedSrtPath=null; setResult('transcribe',true,state.origSrtPath); document.getElementById('translateBtn').disabled=false; updateProcessButtons(); loadSrt(state.origSrtPath,'orig').then(()=>patchCache({transcript:state.origTranscript})) }

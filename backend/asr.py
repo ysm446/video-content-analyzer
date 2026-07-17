@@ -100,13 +100,13 @@ class ASRProcessor:
         self,
         video_path: str,
         language: str = None,
-    ) -> list[dict]:
-        """動画/音声ファイルを書き起こし、セグメントのリストを返す。
+    ) -> tuple[list[dict], str | None]:
+        """動画/音声ファイルを書き起こし、セグメントのリストと検出言語を返す。
 
         Whisper の単語タイムスタンプを使い、句読点・長さ基準で字幕向けに再分割する。
 
         Returns:
-            [{"text": str, "timestamp": (start_sec, end_sec)}, ...]
+            ([{"text": str, "timestamp": (start_sec, end_sec)}, ...], 言語コード)
         """
         # faster-whisper は動画ファイルから音声を直接デコードできる（ffmpeg 抽出不要）。
         segments, info = self.model.transcribe(
@@ -133,7 +133,7 @@ class ASRProcessor:
             f"[ASR] 書き起こし完了: {len(result)} セグメント "
             f"(言語={info.language}, p={info.language_probability:.2f})"
         )
-        return result
+        return result, info.language
 
     @staticmethod
     def _words_to_segments(words: list) -> list[dict]:

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 # モデルロード前に HF_HOME を設定
 os.environ["HF_HOME"] = str(Path(__file__).parent.parent / "models")
 
+from .align import Aligner, ASR_ENGINES, ENGINE_FASTER_WHISPER, ENGINE_WHISPERX, load_audio as load_align_audio
 from .asr import ASRProcessor
 from .model_catalog import available_review_models as scan_review_models
 from .model_catalog import available_translator_models as scan_translator_models
@@ -47,6 +48,8 @@ def save_settings(data: dict) -> None:
 
 
 asr = ASRProcessor()
+aligner = Aligner()
+asr_engine = ENGINE_FASTER_WHISPER  # "faster-whisper" | "whisperx"（settings.json の asr_engine）
 translator     = Translator()
 video_reviewer = VideoReviewer()
 _review_model_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
@@ -62,6 +65,8 @@ elif _m := _s.get("translator_model"):
 if _w := _s.get("whisper_model"):
     if _w in runtime_manager.WHISPER_MODEL_IDS:
         asr.set_model_id(_w)
+if (_e := _s.get("asr_engine")) in ASR_ENGINES:
+    asr_engine = _e
 
 
 @asynccontextmanager
@@ -72,6 +77,7 @@ async def lifespan(app: FastAPI):
     yield
     # シャットダウン時に VRAM を解放
     asr.unload()
+    aligner.unload()
     translator.unload()
     video_reviewer.unload()
 
@@ -469,6 +475,10 @@ class WhisperSelectRequest(BaseModel):
     model: str  # WHISPER_MODELS のいずれか
 
 
+class AsrEngineRequest(BaseModel):
+    engine: str  # "faster-whisper" | "whisperx"
+
+
 class UISettingsRequest(BaseModel):
     frame_mode: Optional[str] = None  # "uniform" | "scene"
     max_frames: Optional[int] = None
@@ -712,7 +722,7 @@ def post_ui_settings(req: UISettingsRequest):
 async def runtime_status():
     """外部ランタイム（llama-cpp / Whisper モデル / ffmpeg）のインストール状態を返す"""
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, runtime_manager.get_status, asr.model_id)
+    return await loop.run_in_executor(None, runtime_manager.get_status, asr.model_id, asr_engine)
 
 
 @app.get("/runtime/llama/builds")
@@ -743,6 +753,17 @@ async def runtime_whisper_select(req: WhisperSelectRequest):
     await loop.run_in_executor(None, asr.set_model_id, req.model)
     save_settings({"whisper_model": req.model})
     return {"status": "ok", "model": req.model}
+
+
+@app.post("/runtime/asr/engine")
+async def runtime_asr_engine(req: AsrEngineRequest):
+    """文字起こしエンジンを切り替える（次回の文字起こしから反映）"""
+    global asr_engine
+    if req.engine not in ASR_ENGINES:
+        raise HTTPException(400, f"未対応のエンジンです: {req.engine}")
+    asr_engine = req.engine
+    save_settings({"asr_engine": req.engine})
+    return {"status": "ok", "engine": req.engine}
 
 
 @app.post("/runtime/install")
@@ -837,6 +858,12 @@ async def transcribe(req: TranscribeRequest):
     Events:
       {"status": "loading_model"}          ← ASR モデルが未ロードの場合のみ
       {"status": "extracting_audio"}
+      {"status": "loading_align_model", "language": str, "model": str}
+                                           ← エンジンが whisperx のときのみ（初回は DL 込み）
+      {"status": "aligning", "current": int, "total": int}
+                                           ← エンジンが whisperx のときのみ
+      {"status": "align_warning", "message": str}
+                                           ← 未対応言語・整列失敗（元の時刻で続行）
       {"status": "saving_srt", "segments": int}
       {"status": "done", "srt_path": str, "segments": int}
       {"status": "error", "message": str}
@@ -860,7 +887,7 @@ async def transcribe(req: TranscribeRequest):
 
         yield sse({"status": "extracting_audio"})
         try:
-            segments = await loop.run_in_executor(
+            segments, detected_lang = await loop.run_in_executor(
                 None, asr.transcribe, str(video_path), req.language
             )
         except cancel.CanceledError:
@@ -872,6 +899,51 @@ async def transcribe(req: TranscribeRequest):
         finally:
             # 文字起こし完了（成功・失敗・中断問わず）後に VRAM を解放
             await loop.run_in_executor(None, asr.unload)
+
+        # WhisperX 方式: wav2vec2 強制アライメントで時刻を精密化（backend/align.py）。
+        # 失敗しても文字起こし全体は失敗させず、元の時刻のまま続行する。
+        if asr_engine == ENGINE_WHISPERX and segments:
+            lang = req.language or detected_lang
+            align_model = Aligner.model_for_language(lang)
+            if align_model is None:
+                yield sse({
+                    "status": "align_warning",
+                    "message": f"言語 '{lang}' はアライメント未対応のため元のタイムスタンプを使用します",
+                })
+            else:
+                yield sse({"status": "loading_align_model", "language": lang, "model": align_model})
+                try:
+                    # whisper は unload 済み → wav2vec2 を逐次ロード（VRAM 共有のため）
+                    await loop.run_in_executor(None, aligner.load, lang)
+                    audio = await loop.run_in_executor(None, load_align_audio, str(video_path))
+                    total = len(segments)
+                    yield sse({"status": "aligning", "current": 0, "total": total})
+                    aligned, warned = [], 0
+                    for i, seg in enumerate(segments):
+                        cancel.raise_if_canceled()
+                        new_seg, warn = await loop.run_in_executor(
+                            None, aligner.align_segment, seg, audio
+                        )
+                        aligned.append(new_seg)
+                        if warn:
+                            warned += 1
+                        yield sse({"status": "aligning", "current": i + 1, "total": total})
+                    segments = aligned
+                    if warned:
+                        yield sse({
+                            "status": "align_warning",
+                            "message": f"{warned}/{total} セグメントは整列できず元のタイムスタンプを使用しました",
+                        })
+                except cancel.CanceledError:
+                    yield sse_canceled()
+                    return
+                except Exception as e:
+                    yield sse({
+                        "status": "align_warning",
+                        "message": f"アライメントに失敗したため元のタイムスタンプを使用します: {e}",
+                    })
+                finally:
+                    await loop.run_in_executor(None, aligner.unload)
 
         segments = split_long_segments(segments)
         yield sse({"status": "saving_srt", "segments": len(segments)})
