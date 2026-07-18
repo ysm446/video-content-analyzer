@@ -500,6 +500,7 @@ class UISettingsRequest(BaseModel):
     show_qa_panel: Optional[bool] = None
     screenshot_format: Optional[str] = None  # "png" | "jpg"
     root_folder: Optional[str] = None  # ファイル一覧のルートフォルダ（"" でクリア）
+    root_folder_history: Optional[list] = None  # 最近開いたルートフォルダ（新しい順・最大10件）
     show_file_panel: Optional[bool] = None
     file_panel_width: Optional[int] = None  # px（180〜600 にクランプ）
 
@@ -710,6 +711,7 @@ def get_ui_settings():
         "show_qa_panel": s.get("show_qa_panel", True),
         "screenshot_format": s.get("screenshot_format", "png"),
         "root_folder": s.get("root_folder", ""),
+        "root_folder_history": s.get("root_folder_history", []),
         "show_file_panel": s.get("show_file_panel", True),
         "file_panel_width": s.get("file_panel_width", 272),
     }
@@ -752,6 +754,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["screenshot_format"] = req.screenshot_format if req.screenshot_format in {"png", "jpg"} else "png"
     if req.root_folder is not None:
         to_save["root_folder"] = str(req.root_folder)
+    if req.root_folder_history is not None:
+        to_save["root_folder_history"] = [str(p) for p in req.root_folder_history if str(p).strip()][:10]
     if req.show_file_panel is not None:
         to_save["show_file_panel"] = bool(req.show_file_panel)
     if req.file_panel_width is not None:

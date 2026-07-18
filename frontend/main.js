@@ -245,6 +245,11 @@ ipcMain.handle('fs:trashItem', async (_, filePath) => {
   }
 })
 
+// エクスプローラーでファイル/フォルダの場所を開く（項目を選択状態で表示）
+ipcMain.handle('fs:showItemInFolder', (_, filePath) => {
+  shell.showItemInFolder(path.normalize(filePath))
+})
+
 // テキストファイルを読み込む（SRT 読み込み用）
 ipcMain.handle('fs:readFile', (_, filePath) => {
   try {

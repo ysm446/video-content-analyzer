@@ -74,11 +74,22 @@
 
     /* ファイル一覧パネル */
     .file-panel{width:272px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);min-height:0}
-    .file-panel-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
+    .file-panel-header{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
     .file-panel-title{font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
     .file-panel-actions{display:flex;gap:4px;flex-shrink:0}
     .file-panel-btn{width:28px;height:28px;border-radius:8px}
     .file-panel-btn svg.lucide{width:14px;height:14px}
+    .root-select-group{display:flex}
+    .root-select-group #selectRootBtn{border-top-right-radius:0;border-bottom-right-radius:0}
+    .root-history-caret{width:16px;margin-left:1px;border-top-left-radius:0;border-bottom-left-radius:0}
+    .root-history-caret svg.lucide{width:12px;height:12px;stroke-width:2.4}
+    /* 位置はヘッダー（position:relative）基準。.file-menu より後勝ちにするため2クラスで上書き */
+    .file-menu.root-history-menu{display:none;top:calc(100% - 6px);left:auto;right:10px;min-width:210px;max-width:calc(100% - 20px)}
+    .file-menu.root-history-menu.open{display:flex}
+    .root-history-item svg.lucide{flex-shrink:0}
+    .root-history-text{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+    .root-history-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .root-history-path{font-size:10px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .file-search-row{padding:8px 10px;border-bottom:1px solid var(--border)}
     .file-search-input{width:100%;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:12px}
     .file-search-input:disabled{opacity:.5}
@@ -147,7 +158,7 @@
     .video-wrap{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0;overflow:hidden}
     .video-wrap:fullscreen{background:#000}
     #video{width:100%;height:100%;display:block;cursor:pointer;object-fit:contain}
-    .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim)}
+    .no-video{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--text-dim);text-align:center;line-height:1.6}
     .subtitle-area{background:var(--bg);border-top:1px solid var(--border);padding:12px 20px;--subtitle-font:'Noto Sans JP','Noto Sans','Yu Gothic UI','Hiragino Sans','Segoe UI',sans-serif}
     .subtitle-overlay-host{position:absolute;left:0;right:0;bottom:42px;pointer-events:none;z-index:3}
     .subtitle-area.overlay{padding:0 22px;background:transparent;border-top:none;pointer-events:none}
@@ -192,7 +203,14 @@
     /* ±3秒＋再生を1グループに寄せ、字幕ジャンプ（外側）と視覚的に区別する */
     .ctrl-seek-group{display:inline-flex;gap:6px;align-items:center}
     .sub-toggle{width:auto;padding:0 9px;font-size:11px;font-weight:600;letter-spacing:.02em;gap:3px;opacity:1;transition:background .15s,border-color .15s,color .15s,opacity .15s,transform .1s}
-    .sub-toggle.sub-off{opacity:.35;text-decoration:line-through}
+    .sub-toggle svg.lucide{width:14px;height:14px}
+    /* 字幕メニュー: コントロール列からのドロップアップ。.file-menu より後勝ちにするため2クラス */
+    .sub-menu-group{position:relative;display:flex}
+    .file-menu.sub-menu{display:none;top:auto;bottom:calc(100% + 6px);left:auto;right:0;min-width:120px}
+    .file-menu.sub-menu.open{display:flex}
+    .sub-menu-check{display:inline-flex;width:14px;justify-content:center;color:var(--accent)}
+    .sub-menu-check svg.lucide{width:13px;height:13px;stroke-width:2.4}
+    .file-menu-item.unchecked .sub-menu-check{visibility:hidden}
 
     .result-row{display:none;gap:6px;font-size:11px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .result-row.done{color:var(--success)} .result-row.error{color:var(--error)}
@@ -401,7 +419,11 @@
           <span class="file-panel-title" id="filePanelRootName">フォルダ未選択</span>
           <div class="file-panel-actions">
             <button class="ctrl-btn file-panel-btn" id="fileRefreshBtn" title="一覧を再読み込み" disabled><i data-lucide="refresh-cw"></i></button>
-            <button class="ctrl-btn file-panel-btn" id="selectRootBtn" title="ルートフォルダを選択"><i data-lucide="folder-open"></i></button>
+            <div class="root-select-group">
+              <button class="ctrl-btn file-panel-btn" id="selectRootBtn" title="ルートフォルダを選択"><i data-lucide="folder-open"></i></button>
+              <button class="ctrl-btn file-panel-btn root-history-caret" id="rootHistoryBtn" title="最近開いたフォルダ" disabled><i data-lucide="chevron-down"></i></button>
+              <div class="file-menu root-history-menu" id="rootHistoryMenu"></div>
+            </div>
           </div>
         </div>
         <div class="file-search-row">
@@ -420,8 +442,7 @@
             <div class="video-wrap" id="videoWrap">
               <div class="no-video" id="noVideo">
                 <i data-lucide="film"></i>
-                <div>動画ファイルを読み込んでください</div>
-                <button class="btn btn-primary" id="loadVideoBtn2"><i data-lucide="folder-open"></i> 動画を選択</button>
+                <div>左のファイル一覧から動画を選ぶか、<br>ここに動画ファイルをドロップしてください</div>
               </div>
               <video id="video" style="display:none"></video>
               <div class="subtitle-overlay-host" id="subtitleOverlayHost"></div>
@@ -459,8 +480,13 @@
               <span class="time-label"><i data-lucide="volume-2"></i></span>
               <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1" style="width:100px">
               <button class="ctrl-btn" id="bookmarkBtn" title="現在位置をブックマークに追加"><i data-lucide="bookmark-plus"></i></button>
-              <button class="ctrl-btn sub-toggle" id="toggleOrigBtn" title="原文字幕の表示/非表示">原文</button>
-              <button class="ctrl-btn sub-toggle" id="toggleJpBtn" title="日本語字幕の表示/非表示">日本語</button>
+              <div class="sub-menu-group">
+                <button class="ctrl-btn sub-toggle" id="subtitleMenuBtn" title="字幕の表示切り替え"><i data-lucide="captions"></i> 字幕</button>
+                <div class="file-menu sub-menu" id="subtitleMenu">
+                  <button class="file-menu-item" id="subMenuOrig"><span class="sub-menu-check"><i data-lucide="check"></i></span>原文</button>
+                  <button class="file-menu-item" id="subMenuJp"><span class="sub-menu-check"><i data-lucide="check"></i></span>日本語</button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="vertical-resizer" id="verticalResizer" aria-label="動画エリア高さを調整" role="separator"></div>
@@ -2183,7 +2209,6 @@
     }
 
     document.getElementById('loadVideoBtn').addEventListener('click',selectVideo)
-    document.getElementById('loadVideoBtn2').addEventListener('click',selectVideo)
 
     toggleOrigSrtBtn.addEventListener('click',async()=>{
       if(state.origSrtPath || origSubtitles.length){
@@ -2400,17 +2425,34 @@
       saveUiSettings({playback_rate:v})
     })
 
-    const toggleOrigBtn=document.getElementById('toggleOrigBtn')
-    const toggleJpBtn=document.getElementById('toggleJpBtn')
-    toggleOrigBtn.addEventListener('click',()=>{
-      const hidden=subOrigEl.style.display==='none'
-      subOrigEl.style.display=hidden?'':'none'
-      toggleOrigBtn.classList.toggle('sub-off',!hidden)
+    // 字幕メニュー: 原文/日本語の表示トグル。両方まとめて切り替えられるよう
+    // 項目クリックではメニューを閉じない（外側クリック・Esc で閉じる）
+    const subtitleMenuBtn=document.getElementById('subtitleMenuBtn')
+    const subtitleMenu=document.getElementById('subtitleMenu')
+    const subMenuOrig=document.getElementById('subMenuOrig')
+    const subMenuJp=document.getElementById('subMenuJp')
+    function updateSubtitleMenuUi(){
+      subMenuOrig.classList.toggle('unchecked', subOrigEl.style.display==='none')
+      subMenuJp.classList.toggle('unchecked', subJpEl.style.display==='none')
+    }
+    subtitleMenuBtn.addEventListener('click',()=>{
+      if(subtitleMenu.classList.toggle('open')) updateSubtitleMenuUi()
     })
-    toggleJpBtn.addEventListener('click',()=>{
-      const hidden=subJpEl.style.display==='none'
-      subJpEl.style.display=hidden?'':'none'
-      toggleJpBtn.classList.toggle('sub-off',!hidden)
+    subMenuOrig.addEventListener('click',()=>{
+      subOrigEl.style.display = subOrigEl.style.display==='none' ? '' : 'none'
+      updateSubtitleMenuUi()
+    })
+    subMenuJp.addEventListener('click',()=>{
+      subJpEl.style.display = subJpEl.style.display==='none' ? '' : 'none'
+      updateSubtitleMenuUi()
+    })
+    document.addEventListener('click',e=>{
+      if(!subtitleMenu.classList.contains('open')) return
+      if(e.target.closest('.sub-menu-group')) return
+      subtitleMenu.classList.remove('open')
+    })
+    document.addEventListener('keydown',e=>{
+      if(e.key==='Escape') subtitleMenu.classList.remove('open')
     })
 
     const videoWrap=document.getElementById('videoWrap')
@@ -2435,7 +2477,7 @@
     const filePanelResizer=document.getElementById('filePanelResizer')
     // children: フォルダパス → {folders, videos, error?}（取得済みキャッシュ。再読み込みでクリア）
     // menuPath: 「…」メニューを開いている行 / editingPath: 名前を編集中の行
-    const fileState={ root:null, expanded:new Set(), children:new Map(), searchQuery:'', searchResults:null, searchToken:0, menuPath:null, editingPath:null }
+    const fileState={ root:null, rootHistory:[], expanded:new Set(), children:new Map(), searchQuery:'', searchResults:null, searchToken:0, menuPath:null, editingPath:null }
 
     function updateFilePanelVisibility(){
       filePanel.style.display = state.showFilePanel ? '' : 'none'
@@ -2473,6 +2515,7 @@
 
     function rowMenuHtml(p,isDir){
       return `<div class="file-menu">`
+        +`<button class="file-menu-item" data-menu-reveal="${escHtml(p)}"><i data-lucide="external-link"></i> ${isDir?'フォルダ':'ファイル'}の場所を開く</button>`
         +`<button class="file-menu-item" data-menu-rename="${escHtml(p)}" data-menu-isdir="${isDir?1:0}"><i data-lucide="pencil"></i> 名前を変更</button>`
         +`<button class="file-menu-item danger" data-menu-delete="${escHtml(p)}" data-menu-isdir="${isDir?1:0}"><i data-lucide="trash-2"></i> ごみ箱に移動</button>`
         +`</div>`
@@ -2590,7 +2633,15 @@
       filePanelRootName.textContent=fileState.root?(fileState.root.split(/[\\/]/).filter(Boolean).pop()||fileState.root):'フォルダ未選択'
       filePanelRootName.title=fileState.root||''
       renderFileTree()
-      if(save) saveUiSettings({root_folder:fileState.root||''})
+      if(save){
+        if(fileState.root){
+          // Windows のパスは大文字小文字を区別しないため小文字比較で重複を除く
+          const key=fileState.root.toLowerCase()
+          fileState.rootHistory=[fileState.root,...fileState.rootHistory.filter(p=>p.toLowerCase()!==key)].slice(0,10)
+        }
+        saveUiSettings({root_folder:fileState.root||'',root_folder_history:fileState.rootHistory})
+        updateRootHistoryUi()
+      }
       if(fileState.root) await loadFolderChildren(fileState.root)
     }
 
@@ -2620,6 +2671,55 @@
     document.getElementById('selectRootBtn').addEventListener('click',selectRootFolder)
     fileRefreshBtn.addEventListener('click',refreshFileTree)
 
+    // ---------- ルートフォルダ履歴のプルダウン ----------
+    const rootHistoryBtn=document.getElementById('rootHistoryBtn')
+    const rootHistoryMenu=document.getElementById('rootHistoryMenu')
+
+    function updateRootHistoryUi(){
+      rootHistoryBtn.disabled=!fileState.rootHistory.length
+      if(!fileState.rootHistory.length) closeRootHistoryMenu()
+    }
+
+    function closeRootHistoryMenu(){ rootHistoryMenu.classList.remove('open') }
+
+    function renderRootHistoryMenu(){
+      rootHistoryMenu.textContent=''
+      for(const p of fileState.rootHistory){
+        const btn=document.createElement('button')
+        btn.className='file-menu-item root-history-item'
+        btn.title=p
+        const icon=document.createElement('i')
+        icon.dataset.lucide='folder'
+        const text=document.createElement('span')
+        text.className='root-history-text'
+        const name=document.createElement('span')
+        name.className='root-history-name'
+        name.textContent=p.split(/[\\/]/).filter(Boolean).pop()||p
+        const path=document.createElement('span')
+        path.className='root-history-path'
+        path.textContent=p
+        text.append(name,path)
+        btn.append(icon,text)
+        btn.addEventListener('click',async()=>{ closeRootHistoryMenu(); await setRootFolder(p) })
+        rootHistoryMenu.appendChild(btn)
+      }
+      lucide.createIcons({nodes:[rootHistoryMenu]})
+    }
+
+    rootHistoryBtn.addEventListener('click',()=>{
+      if(rootHistoryMenu.classList.contains('open')){ closeRootHistoryMenu(); return }
+      renderRootHistoryMenu()
+      rootHistoryMenu.classList.add('open')
+    })
+    document.addEventListener('click',e=>{
+      if(!rootHistoryMenu.classList.contains('open')) return
+      if(e.target.closest('#rootHistoryBtn')||e.target.closest('#rootHistoryMenu')) return
+      closeRootHistoryMenu()
+    })
+    document.addEventListener('keydown',e=>{
+      if(e.key==='Escape') closeRootHistoryMenu()
+    })
+
     fileTreeEl.addEventListener('click',async e=>{
       // 行より先に「…」ボタン・メニュー項目を処理する（行の open/展開を誘発しないため）
       const moreBtn=e.target.closest('[data-more-path]')
@@ -2627,6 +2727,13 @@
         const p=moreBtn.dataset.morePath
         fileState.menuPath = fileState.menuPath===p ? null : p
         renderFileTree()
+        return
+      }
+      const revealBtn=e.target.closest('[data-menu-reveal]')
+      if(revealBtn){
+        fileState.menuPath=null
+        renderFileTree()
+        window.electronAPI.showItemInFolder(revealBtn.dataset.menuReveal)
         return
       }
       const renameBtn=e.target.closest('[data-menu-rename]')
@@ -2939,6 +3046,10 @@
         state.showFilePanel = s.show_file_panel !== false
         updateFilePanelVisibility()
         if(typeof s.file_panel_width==='number' && s.file_panel_width>=180 && s.file_panel_width<=600) filePanel.style.width=s.file_panel_width+'px'
+        fileState.rootHistory=Array.isArray(s.root_folder_history)?s.root_folder_history.filter(p=>typeof p==='string'&&p):[]
+        // 履歴導入前から使っている場合は現在のルートを種として加える（保存は次回選択時）
+        if(s.root_folder && !fileState.rootHistory.some(p=>p.toLowerCase()===s.root_folder.toLowerCase())) fileState.rootHistory.unshift(s.root_folder)
+        updateRootHistoryUi()
         if(s.root_folder) setRootFolder(s.root_folder,{save:false})  // 起動時は保存し直さない
         state.analysisExpanded.actions = s.analysis_actions_expanded !== false
         state.analysisExpanded.summary = s.analysis_summary_expanded !== false
