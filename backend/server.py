@@ -503,6 +503,7 @@ class UISettingsRequest(BaseModel):
     root_folder_history: Optional[list] = None  # 最近開いたルートフォルダ（新しい順・最大10件）
     show_file_panel: Optional[bool] = None
     file_panel_width: Optional[int] = None  # px（180〜600 にクランプ）
+    seek_markers: Optional[bool] = None  # シークバーのチャプター・ブックマークマーカー表示
 
 
 class TOCLoadRequest(BaseModel):
@@ -714,6 +715,7 @@ def get_ui_settings():
         "root_folder_history": s.get("root_folder_history", []),
         "show_file_panel": s.get("show_file_panel", True),
         "file_panel_width": s.get("file_panel_width", 272),
+        "seek_markers": s.get("seek_markers", True),
     }
 
 
@@ -760,6 +762,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["show_file_panel"] = bool(req.show_file_panel)
     if req.file_panel_width is not None:
         to_save["file_panel_width"] = max(180, min(600, int(req.file_panel_width)))
+    if req.seek_markers is not None:
+        to_save["seek_markers"] = bool(req.seek_markers)
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}

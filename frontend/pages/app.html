@@ -178,7 +178,16 @@
     #dictTooltip .dict-body{color:var(--text)}
     #dictTooltip .dict-loading{color:var(--text-dim);font-style:italic}
 
-    .controls{background:var(--surface);border-top:1px solid var(--border);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    /* コントロールは2段: 1段目シークバー全幅（シーク精度優先）、2段目ボタン列 */
+    .controls{background:var(--surface);border-top:1px solid var(--border);padding:8px 14px 10px;display:flex;flex-direction:column;gap:8px}
+    .ctrl-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .seek-row{position:relative}
+    .seek-row input[type='range']{width:100%;display:block}
+    /* マーカー層: input の後に置いてトラック（不透明）より上に描画。操作を妨げないよう pointer-events 無効 */
+    .seek-markers{position:absolute;inset:0;pointer-events:none}
+    .seek-marker{position:absolute;top:50%;width:2px;height:9px;transform:translate(-50%,-50%);border-radius:1px;background:rgba(255,255,255,.45)}
+    .seek-marker.bookmark{background:var(--warning);height:12px}
+    .ctrl-btn.toggled-off{opacity:.45}
     .controls input[type='range']{-webkit-appearance:none;appearance:none;height:20px;border-radius:99px;background:transparent;outline:none;cursor:pointer;accent-color:var(--accent)}
     .controls input[type='range']::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--accent);cursor:pointer;margin-top:-3.5px}
     .controls input[type='range']::-webkit-slider-runnable-track{height:5px;border-radius:99px;background:var(--surface2)}
@@ -454,6 +463,13 @@
             </div>
             </div>
             <div class="controls">
+              <!-- 1段目: シークバー全幅（精度優先）。マーカー層はチャプター・ブックマーク位置を表示 -->
+              <div class="seek-row">
+                <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1">
+                <div class="seek-markers" id="seekMarkers"></div>
+              </div>
+              <!-- 2段目: 操作ボタン列 -->
+              <div class="ctrl-row">
               <button class="ctrl-btn" id="prevSubBtn" title="前の字幕へ"><i data-lucide="skip-back"></i></button>
               <!-- 内側=±3秒（YouTube 式の円形矢印＋数字。相対移動）、外側=字幕ジャンプ（縦棒付き skip アイコン。区切りへ移動）で意味を区別する -->
               <div class="ctrl-seek-group">
@@ -468,7 +484,7 @@
               </div>
               <button class="ctrl-btn" id="nextSubBtn" title="次の字幕へ"><i data-lucide="skip-forward"></i></button>
               <span class="time-label" id="timeLabel">0:00 / 0:00</span>
-              <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1" style="flex:1;min-width:120px">
+              <span style="flex:1"></span>
               <label class="time-label" for="speedSelect"><i data-lucide="zap"></i></label>
               <select id="speedSelect" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
                 <option value="0.5">0.5x</option>
@@ -480,12 +496,14 @@
               <span class="time-label"><i data-lucide="volume-2"></i></span>
               <input type="range" id="volumeBar" min="0" max="1" step="0.05" value="1" style="width:100px">
               <button class="ctrl-btn" id="bookmarkBtn" title="現在位置をブックマークに追加"><i data-lucide="bookmark-plus"></i></button>
+              <button class="ctrl-btn sub-toggle" id="seekMarkersBtn" title="シークバーのチャプター・ブックマークマーカー表示切り替え" aria-pressed="true"><i data-lucide="milestone"></i> マーカー</button>
               <div class="sub-menu-group">
                 <button class="ctrl-btn sub-toggle" id="subtitleMenuBtn" title="字幕の表示切り替え"><i data-lucide="captions"></i> 字幕</button>
                 <div class="file-menu sub-menu" id="subtitleMenu">
                   <button class="file-menu-item" id="subMenuOrig"><span class="sub-menu-check"><i data-lucide="check"></i></span>原文</button>
                   <button class="file-menu-item" id="subMenuJp"><span class="sub-menu-check"><i data-lucide="check"></i></span>日本語</button>
                 </div>
+              </div>
               </div>
             </div>
           </div>
@@ -777,7 +795,7 @@
   <script>
     const API = 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true,spec:true}, qaChat:[], qaSuggestions:null }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true,spec:true}, qaChat:[], qaSuggestions:null, seekMarkersVisible:true }
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -1358,6 +1376,7 @@
       state.tocDirty = true
       updateTocSaveButton()
       setResult('toc',true,message)
+      renderSeekMarkers()  // チャプター編集（時刻変更・追加・削除）をマーカーへ即反映
     }
 
     function setAnalysisSectionExpanded(name, expanded){
@@ -1471,6 +1490,7 @@
       document.getElementById('tagsWrap').innerHTML = (result.tags || []).map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')
       lucide.createIcons({nodes:[document.getElementById('scenesList')]})
       if(state.videoPath) loadCacheThumbnails(sceneRows, state.videoPath)
+      renderSeekMarkers()
     }
 
     async function captureSceneThumbnails(scenes, analysisResult){
@@ -1628,6 +1648,7 @@
         return `<div class="scene-item" data-start="${Number(b.time_sec)||0}" data-bookmark-id="${id}">${thumb}<div class="scene-info">${body}</div>${menu}</div>`
       }).join('')
       lucide.createIcons({nodes:[listEl]})
+      renderSeekMarkers()
     }
 
     async function persistBookmarks(message){
@@ -2380,6 +2401,40 @@
     document.getElementById('fwd3Btn').addEventListener('click',()=>skipSeconds(3))
     seekBar.addEventListener('input',()=>{ if(!isNaN(video.duration)) video.currentTime=(seekBar.value/100)*video.duration })
 
+    // シークバー上のチャプター・ブックマークマーカー。
+    // データ変更（分析・チャプター編集・ブックマーク編集）と動画ロードのたびに再描画する。
+    // 要素は呼び出しタイミングによらず動くよう毎回 getElementById で引く
+    function renderSeekMarkers(){
+      const host=document.getElementById('seekMarkers')
+      if(!host) return
+      const videoEl=document.getElementById('video')
+      const dur=(videoEl && isFinite(videoEl.duration) && videoEl.duration>0) ? videoEl.duration : (Number(state.tocData?.duration)||0)
+      if(!state.seekMarkersVisible || !dur){ host.innerHTML=''; return }
+      const toc=Array.isArray(state.tocData?.toc) ? state.tocData.toc : []
+      const scenes=Array.isArray(state.tocData?.scenes) ? state.tocData.scenes : []
+      // チャプターは下書き（toc）優先・なければ保存済み scenes（チャプタータブの表示と同じ優先順）
+      const chapterSecs=(toc.length?toc:scenes)
+        .map(c=>Number.isFinite(Number(c.start_sec)) ? Number(c.start_sec) : parseTsToSec(c.timestamp))
+      const marks=[
+        ...chapterSecs.map(t=>({t,cls:'chapter'})),
+        ...getBookmarks().map(b=>({t:Number(b.time_sec),cls:'bookmark'})),
+      ].filter(m=>Number.isFinite(m.t) && m.t>=0 && m.t<=dur)
+      host.innerHTML=marks.map(m=>`<div class="seek-marker ${m.cls}" style="left:${(m.t/dur*100).toFixed(3)}%"></div>`).join('')
+    }
+    function updateSeekMarkersBtn(){
+      const btn=document.getElementById('seekMarkersBtn')
+      if(!btn) return
+      btn.classList.toggle('toggled-off',!state.seekMarkersVisible)
+      btn.setAttribute('aria-pressed',state.seekMarkersVisible?'true':'false')
+    }
+    document.getElementById('seekMarkersBtn').addEventListener('click',()=>{
+      state.seekMarkersVisible=!state.seekMarkersVisible
+      updateSeekMarkersBtn()
+      renderSeekMarkers()
+      saveUiSettings({seek_markers:state.seekMarkersVisible})
+    })
+    video.addEventListener('loadedmetadata',renderSeekMarkers)
+
     // シークバーのホバープレビュー: 非表示のプレビュー用 video をホバー位置へ
     // シークして小窓表示する（本編の再生位置は動かさない。サーバー抽出なしで高速）。
     // 連続 mousemove は seeked 待ちで直列化し、最新位置だけを追いかける
@@ -3062,6 +3117,9 @@
         subtitleFontSel.value = ['noto','biz','yugothic','meiryo'].includes(s.subtitle_font) ? s.subtitle_font : 'noto'
         translationModeSel.value = s.translation_mode === 'fast' ? 'fast' : 'quality'
         screenshotFormatSel.value = s.screenshot_format === 'jpg' ? 'jpg' : 'png'
+        state.seekMarkersVisible = s.seek_markers !== false
+        updateSeekMarkersBtn()
+        renderSeekMarkers()
         applySubtitleDisplay(subtitleDisplaySel.value)
         applySubtitleFont(subtitleFontSel.value)
         setAnalysisSectionExpanded('actions', state.analysisExpanded.actions !== false)
