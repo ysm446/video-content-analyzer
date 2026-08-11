@@ -43,9 +43,10 @@
   サムネールはサーバー側生成（ffmpeg 入力シーク、2026-07-04 決定）
 - **実行環境**: Windows 11 / Python venv `.venv`（torch は Blackwell 対応の cu130 ホイール）
 - **VRAM 制約**: 1台の GPU を共有するため、ASR は使用後アンロード、VL は明示アンロードまで常駐
-- **UI**: Electron 統合 UI。コンセプトは**シンプルかつスタイリッシュ**で、他アプリと共有する
-  共通デザインの基準を [../design/ui-design-guidelines.md](../design/ui-design-guidelines.md) に定める
-  （色はトークン経由・Lucide Icons のみ・絵文字は使わない）。設定はポップアップ
+- **UI**: Electron 統合 UI。コンセプトは**シンプルかつスタイリッシュ**で、アートスタイル・
+  デザインルールは [../design/style-guide.md](../design/style-guide.md) を唯一の基準とする
+  （色はトークン経由・Lucide Icons のみ・絵文字は使わない）。**UI を変更するときは必ず
+  スタイルガイドに従い、新パターンを足すときはガイドも更新する。** 設定はポップアップ
   （左ナビ＋右コンテンツの2カラム、背景は暗転＋ぼかし）
 
 詳細な進行状況は [progress.md](progress.md)、ロードマップは [plan.md](plan.md)、変更履歴は

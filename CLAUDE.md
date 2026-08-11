@@ -22,12 +22,27 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 **まとまった作業（機能追加・修正・方針変更など）が終わるたびに、必ず `docs/` 内の
 該当ファイルを更新すること。** 更新を忘れない。
 
-- [docs/goals.md](docs/goals.md) … 目的・要件・確定方針。**要件や方針が変わったときだけ**更新。
-- [docs/plan.md](docs/plan.md) … これからやること（ロードマップ）。着手・完了で項目を移動する。
-- [docs/progress.md](docs/progress.md) … 現在の状態・完了/未完了チェックリスト。**毎回**「最終更新」日付を更新。
+- [docs/plan/goals.md](docs/plan/goals.md) … 目的・要件・確定方針。**要件や方針が変わったときだけ**更新。
+- [docs/plan/plan.md](docs/plan/plan.md) … これからやること（ロードマップ）。着手・完了で項目を移動する。
+- [docs/plan/progress.md](docs/plan/progress.md) … 現在の状態・完了/未完了チェックリスト。**毎回**「最終更新」日付を更新。
 - [docs/changelog.md](docs/changelog.md) … 変更履歴。**毎回**、その日の作業内容を新しい順（上）に追記。
 
 日付は実際の当日の日付（YYYY-MM-DD）を使う。相対表現（「今日」等）は使わない。
+
+## ⚠️ UI を変更するときは style-guide.md に従う（最重要ルール）
+
+**フロントエンド（`frontend/`）の見た目に関わる変更をするときは、着手前に
+[docs/design/style-guide.md](docs/design/style-guide.md) を読み、そのルールに従うこと。**
+アートスタイル（色・タイポグラフィ・余白・角丸・アイコン・モーション・部品の作り）は
+アプリ全体で一貫させる。ここが唯一の基準ドキュメント。
+
+- 色は `common.css` のトークン経由で使う（生 HEX / 生 rgba を書かない）
+- 文字サイズは 11 / 12 / 13 / 14、角丸・余白・寸法はガイドの表から選ぶ
+- アイコンは Lucide のみ（絵文字禁止）、stroke-width はガイドの表どおり
+- 似て非なる部品を新設せず、既存コンポーネント（`.btn-ghost` / `.file-menu` /
+  バッジ / 状態ドット等）を流用する
+- **変更後は style-guide.md §14 のチェックリストを必ず通す**
+- ガイドに無いパターンをどうしても新設するときは、**先に style-guide.md を更新してから**実装する
 
 ## 重要なパス
 
@@ -377,6 +392,8 @@ Lucide Icons（`frontend/vendor/` にローカル同梱。marked も同様）を
 - Lucide に無いアイコン（モデルのイジェクト ⏏ 等）は同じ stroke 流儀のカスタム
   インライン SVG で作り、`class="lucide"` を付けて共通 CSS（サイズ・stroke-width）を適用する。
   `createIcons()` は `<i data-lucide>` のみ置換するのでカスタム SVG はそのまま残る
+- 文脈ごとのサイズ・stroke-width の一覧は
+  [docs/design/style-guide.md](docs/design/style-guide.md) §7 を参照（そちらが基準）
 
 ## セキュリティ注意
 

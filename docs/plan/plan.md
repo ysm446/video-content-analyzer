@@ -34,7 +34,7 @@
 
 - [ ] **QA の時刻依存密サンプリング**（video-analysis-review.md 3-5）:
       「15:30 あたりで何をしてる？」等の質問時に該当区間を `extract_frames_between` で密に取り直す
-- [ ] **UI 構造の分離**（ui-design-guidelines.md §9-6/7）:
+- [ ] **UI 構造の分離**（style-guide.md §13「インラインスタイルの残存」）:
       設定モーダル等のインラインスタイルをクラス抽出し、汎用コンポーネント
       （モーダル/ドット/入力欄/チップ）を common.css へ移して他アプリと共有可能にする
 - [ ] **翻訳の文単位再グルーピング**（translation-accuracy.md 2-4）:
@@ -47,5 +47,5 @@
 - [ ] scene 検出閾値の適応化・長編での自動モード選択（video-analysis-review.md 4節）
 - [ ] transcript 検索の embedding 化（現在は 2-gram キーワード）
 - [ ] 分析テレメトリの統一（usage を analyze でも記録し予算チューニングに使う）
-- [ ] ライトテーマ（ui-design-guidelines.md §9-10。トークン化済みなので data-theme で実現可能）
+- [ ] ライトテーマ（style-guide.md §13。トークン化済みなので data-theme で実現可能）
 - [ ] チャット履歴の要約化（長い会話でのトークン圧迫対策）

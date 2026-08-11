@@ -4,6 +4,27 @@
 
 ---
 
+## 0) UI RULES — read `docs/design/style-guide.md` first
+
+Any change that touches how the app **looks** (`frontend/css/common.css`,
+`frontend/pages/app.html`, or any new UI) MUST follow
+[docs/design/style-guide.md](docs/design/style-guide.md). It is the single source of truth for
+color, typography, spacing, radii, icons, motion, and components — the art style must stay
+consistent across the whole app.
+
+- Read the relevant section **before** writing UI code.
+- Use the `common.css` tokens; never write raw HEX / raw `rgba()` (see §2-3 for the 3 exceptions).
+- Font sizes 11 / 12 / 13 / 14; radii, spacing and fixed heights come from the tables in §4–§5.
+- Lucide icons only, no emoji; stroke-width per §7. Call `lucide.createIcons()` after dynamic DOM.
+- Reuse existing components (`.btn-ghost`, `.file-menu`, badges, status dots) — do not invent
+  near-duplicates.
+- Run the checklist in **§14** before finishing.
+- If a genuinely new pattern is needed, **update style-guide.md first**, then implement it.
+
+Also keep `docs/` up to date after each unit of work (see `CLAUDE.md`).
+
+---
+
 ## 1) READ (UTF‑8 no BOM, line‑numbered)
 
 ```bash
