@@ -49,7 +49,7 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 | パス | 説明 |
 |---|---|
 | `models/hub/` | HuggingFace モデルキャッシュ（`HF_HOME=./models`） |
-| `models/{name}/` | GGUF モデルフォルダ（サブフォルダを再帰スキャン） |
+| `models/{name}/` | GGUF モデルフォルダ（サブフォルダを再帰スキャン）。設定 → ランタイム → モデルフォルダで別の場所を指定可（`settings.json` の `models_dir`。未指定ならここが既定） |
 | `runtime/llama-server/` | llama.cpp の Windows ビルド（`backend/llama_server.py` が配下を自動検出。設定 → ランタイム からインストール可） |
 | `runtime/ffmpeg/` | ffmpeg が PATH に無い環境向けの同梱先（起動時に PATH へ追加） |
 | `backend/runtime_manager.py` | ランタイムの状態検出・ダウンロード・展開 |
@@ -63,7 +63,11 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 
 ## モデル管理の仕組み
 
-- `model_catalog.py` が `models/` 配下を再帰スキャンして GGUF を検出
+- `model_catalog.py` が モデルフォルダ配下を再帰スキャンして GGUF を検出
+  （フォルダ直下の GGUF も対象）
+- モデルフォルダは `settings.json` の `models_dir`（設定 → ランタイム で指定）→
+  未指定・存在しない場合はアプリ内の `models/` にフォールバック。
+  Whisper / HF キャッシュ（`models/hub/`）は常にアプリ内 `models/` を使う
 - mmproj ファイルが存在する GGUF → **VL モデル**（動画レビュー用）
 - mmproj ファイルがない GGUF → **テキストモデル**（翻訳・辞書用）
 - モデルの選択・ロード・アンロードは UI のモデル管理ポップアップから操作
@@ -188,7 +192,8 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### ランタイム
 - `GET  /runtime/status` — llama-cpp / Whisper モデル / ffmpeg のインストール状態
-  （llama はインストール済みバージョン一覧、whisper は選択可能モデル一覧を含む）
+  （llama はインストール済みバージョン一覧、whisper は選択可能モデル一覧を含む）。
+  `models_dir` に GGUF モデルフォルダの状態（パス・既定かどうか・検出数）も含む
 - `GET  /runtime/llama/builds` — llama.cpp 最新リリースの Windows ビルド一覧。
   NVIDIA ドライバの対応 CUDA バージョン（nvidia-smi）以下で最大の CUDA ビルドに推奨フラグ
 - `POST /runtime/llama/select` — 使用する llama-server バージョンの切り替え
@@ -201,6 +206,10 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   （ja 約1.2GB / en 約360MB 等）は初回文字起こし時に `models/hub/` へ自動ダウンロード。
   現在値と選択肢は `/runtime/status` の `whisper.engine` / `whisper.engines`、
   ja/en 整列モデルの取得状況は `whisper.align_models`）
+- `POST /runtime/models-dir` — GGUF を探すフォルダの切り替え
+  （`{path}`。空文字で既定の `models/` に戻す。存在しないフォルダは 400。
+  settings.json の `models_dir`。変更後、選択中モデルが新フォルダに無ければ
+  アンロードして先頭のモデルに戻す。現在値は `/runtime/status` の `models_dir`）
 - `POST /runtime/install` — `{component, asset?, model?}` をダウンロード・インストール
   （SSE: resolving / downloading / extracting / canceled / done / error）。
   llama-cpp は asset でビルドを指定（省略時は推奨ビルド）、whisper は model でモデルを指定、
@@ -375,7 +384,7 @@ video.mp4
 | ブックマーク | ユーザーが再生位置に打つしおり。プレイヤーコントロール列またはブックマークタブ内のボタンで追加 → サーバー側 ffmpeg でサムネール生成 → 追加直後にタイトル・コメントのインライン編集を開く。行クリックでシーク、「…」メニューから編集・削除（サムネールも削除）。チャプターと違い即時保存（`/cache/patch`） |
 | ファイル一覧パネル | 画面左端のサイドバー。ルートフォルダ（`root_folder`）配下の動画を実階層ツリーで表示（フォルダ展開時に `/folder/list` で遅延読み込み）。各行に分析済み・字幕バッジと分析サムネール。検索ボックス入力で `/folder/search` による配下フラット表示。行クリックで動画を開き、再生中はハイライト。`*.cache/` 等の管理フォルダは表示しない。右端をドラッグで幅調整（`file_panel_width` 永続化・ダブルクリックで既定幅）。ルートフォルダ選択はスプリットボタンで、右端キャレットから最近開いたフォルダ履歴（ui-settings の `root_folder_history`・最大10件）をプルダウン選択できる。各行の「…」メニューから場所を開く（エクスプローラーで選択表示・IPC `fs:showItemInFolder`）、名前の変更（インライン編集・Enter 確定 / Esc キャンセル）、ごみ箱への移動。開いている動画をリネーム・削除するときはロック解除のため先に閉じてから実行し、リネーム後は新パスで自動再オープン |
 | 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プレイヤー / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
-| ランタイム設定 | llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。文字起こしエンジン（faster-whisper 単体 / + WhisperX 整列）もここで切り替え（整列モデルは初回文字起こし時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
+| ランタイム設定 | 先頭に「モデルフォルダ」（GGUF の置き場所。パスと検出数を表示し、フォルダ選択／既定に戻すで切り替え）。llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。文字起こしエンジン（faster-whisper 単体 / + WhisperX 整列）もここで切り替え（整列モデルは初回文字起こし時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |

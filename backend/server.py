@@ -22,6 +22,7 @@ os.environ["HF_HOME"] = str(Path(__file__).parent.parent / "models")
 
 from .align import Aligner, ASR_ENGINES, ENGINE_FASTER_WHISPER, ENGINE_WHISPERX, load_audio as load_align_audio
 from .asr import ASRProcessor
+from . import model_catalog
 from .model_catalog import available_review_models as scan_review_models
 from .model_catalog import available_translator_models as scan_translator_models
 from .translator import Translator, available_translator_models, get_prompts as _translator_prompts
@@ -481,6 +482,10 @@ class AsrEngineRequest(BaseModel):
     engine: str  # "faster-whisper" | "whisperx"
 
 
+class ModelsDirRequest(BaseModel):
+    path: str = ""  # GGUF を探すフォルダ（空文字なら既定の models/ に戻す）
+
+
 class UISettingsRequest(BaseModel):
     frame_mode: Optional[str] = None  # "uniform" | "scene"
     max_frames: Optional[int] = None
@@ -771,9 +776,54 @@ def post_ui_settings(req: UISettingsRequest):
 
 @app.get("/runtime/status")
 async def runtime_status():
-    """外部ランタイム（llama-cpp / Whisper モデル / ffmpeg）のインストール状態を返す"""
+    """外部ランタイム（llama-cpp / Whisper モデル / ffmpeg）とモデルフォルダの状態を返す"""
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, runtime_manager.get_status, asr.model_id, asr_engine)
+    status = await loop.run_in_executor(None, runtime_manager.get_status, asr.model_id, asr_engine)
+    status["models_dir"] = await loop.run_in_executor(None, model_catalog.models_dir_info)
+    return status
+
+
+def _resync_model_selection() -> dict:
+    """モデルフォルダ変更後、選択中モデルが新フォルダに無ければアンロードして先頭のモデルに戻す。"""
+    review_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
+    text_ids = {m["id"] for m in scan_translator_models() if m.get("exists")}
+    to_save: dict = {}
+
+    if video_reviewer.model_id not in review_ids:
+        video_reviewer.unload()
+        if new_id := model_catalog.default_review_model_id():
+            video_reviewer.set_model_id(new_id)
+            to_save["vl_model"] = new_id
+    if translator.model_id not in text_ids:
+        translator.unload()
+        # 通常は VL モデルと同じモデルを共用するので、使えるならそちらに揃える
+        new_id = video_reviewer.model_id if video_reviewer.model_id in text_ids else model_catalog.default_translator_model_id()
+        if new_id:
+            translator.set_model_id(new_id)
+            to_save["translator_model"] = new_id
+
+    if to_save:
+        save_settings(to_save)
+    return to_save
+
+
+@app.post("/runtime/models-dir")
+async def runtime_models_dir(req: ModelsDirRequest):
+    """GGUF モデルを探すフォルダを切り替える（空文字なら既定の models/ に戻す）"""
+    raw = (req.path or "").strip().strip('"')
+    if raw:
+        path = Path(raw).expanduser()
+        if not path.is_dir():
+            raise HTTPException(400, f"フォルダが見つかりません: {raw}")
+        value = str(path)
+    else:
+        value = ""
+
+    save_settings({"models_dir": value})
+    loop = asyncio.get_event_loop()
+    reset = await loop.run_in_executor(None, _resync_model_selection)
+    info = await loop.run_in_executor(None, model_catalog.models_dir_info)
+    return {"status": "ok", "models_dir": info, "reset": reset}
 
 
 @app.get("/runtime/llama/builds")

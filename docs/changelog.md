@@ -1,5 +1,18 @@
 # 変更履歴
 
+## 2026-08-23
+- **GGUF モデルフォルダを設定画面から指定できるように**
+  - 設定 → ランタイムに「モデルフォルダ」行を追加。フォルダ選択（Electron のダイアログ）と
+    「既定に戻す」で切り替え。現在のパス・検出した GGUF 数（うち vision 対応数）を表示し、
+    指定フォルダが見つからないときは警告付きで既定にフォールバックする
+  - `settings.json` に `models_dir` を追加（空文字＝既定の `models/`）
+  - `backend/model_catalog.py`: 固定の `MODELS_DIR` を廃止し `models_dir()` で毎回解決。
+    指定フォルダ直下に置かれた GGUF も拾うようにした（従来はサブフォルダのみ）
+  - `POST /runtime/models-dir` を追加。フォルダ変更後に選択中モデルが新フォルダに無ければ
+    アンロードして先頭のモデルに戻す（翻訳モデルは使えるなら VL モデルと同じものに揃える）
+  - `GET /runtime/status` のレスポンスに `models_dir` を追加
+  - Whisper / HF キャッシュ（`models/hub/`）は従来どおりアプリ内 `models/` のまま
+
 ## 2026-08-11
 - **UI スタイルガイドを `docs/design/style-guide.md` に一本化**
   - 旧 `docs/design/ui-design-guidelines.md` を統合・改題して削除（内容は現行実装に合わせて更新。

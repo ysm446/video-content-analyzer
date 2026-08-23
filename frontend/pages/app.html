@@ -846,6 +846,19 @@
       if(!el || !_runtimeStatus) return
       const s=_runtimeStatus
 
+      // --- モデルフォルダ（GGUF の置き場所） ---
+      const md=s.models_dir||{}
+      const mdOk=(md.count||0)>0 && !md.missing
+      const modelsDirHtml=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        ${_runtimeRowHead(mdOk,'モデルフォルダ',md.count?`GGUF ${md.count} 個（vision ${md.vl_count||0} 個）`:'GGUF が見つかりません',md.missing?'指定フォルダが見つからないため既定を使用中':'')}
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">翻訳・動画分析に使う GGUF モデルを探すフォルダ。未指定ならアプリ内の models/ を使います</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px;word-break:break-all">${escHtml(md.path||'')}${md.is_default?'（既定）':''}</div>
+        <div class="frame-setting" style="margin-top:8px">
+          <button class="btn btn-ghost" id="modelsDirSelect" style="padding:4px 12px;font-size:12px">フォルダを選択</button>
+          <button class="btn btn-ghost" id="modelsDirReset" style="padding:4px 12px;font-size:12px"${md.configured?'':' disabled'}>既定に戻す</button>
+        </div>
+      </div>`
+
       // --- llama.cpp ---
       const lc=s.llama_cpp||{}
       const versions=lc.versions||[]
@@ -914,9 +927,14 @@
         <div id="runtime-progress-ffmpeg" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
       </div>`
 
-      el.innerHTML=llamaHtml+whisperHtml+ffmpegHtml
+      el.innerHTML=modelsDirHtml+llamaHtml+whisperHtml+ffmpegHtml
 
       // イベント
+      document.getElementById('modelsDirSelect')?.addEventListener('click',async()=>{
+        const dir=await window.electronAPI.openFolder()
+        if(dir) await applyModelsDir(dir)
+      })
+      document.getElementById('modelsDirReset')?.addEventListener('click',()=>applyModelsDir(''))
       document.getElementById('llamaVersionApply')?.addEventListener('click',async()=>{
         const sel=document.getElementById('llamaVersionSel')
         if(!sel) return
@@ -966,8 +984,24 @@
       })
       document.getElementById('ffmpegInstall')?.addEventListener('click',()=>installRuntime('ffmpeg'))
     }
+    // モデルフォルダの切り替え（空文字で既定の models/ に戻す）。
+    // 新フォルダに無いモデルを選択中だった場合はバックエンド側でアンロード・先頭モデルに戻る
+    async function applyModelsDir(path){
+      try{
+        const res=await fetch(`${API}/runtime/models-dir`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})})
+        if(!res.ok) throw new Error(await res.text())
+        const info=await res.json()
+        await loadRuntimeStatus()
+        await fetchReviewModelStatus()
+        const n=info.models_dir?.count??0
+        updateGlobalStatus('app','done',n?`モデルフォルダを変更しました（GGUF ${n} 個）`:'モデルフォルダを変更しました（GGUF が見つかりません）')
+      }catch(e){
+        alert('モデルフォルダの変更に失敗しました: '+e.message)
+      }
+    }
+
     function _setRuntimeButtonsDisabled(disabled){
-      for(const id of ['llamaVersionApply','llamaBuildInstall','llamaBuildsFetch','whisperModelApply','asrEngineApply','ffmpegInstall']){
+      for(const id of ['modelsDirSelect','modelsDirReset','llamaVersionApply','llamaBuildInstall','llamaBuildsFetch','whisperModelApply','asrEngineApply','ffmpegInstall']){
         const b=document.getElementById(id)
         if(b) b.disabled=disabled
       }
