@@ -1,17 +1,17 @@
 # 変更履歴
 
-## 2026-08-23
-- **GGUF モデルフォルダを設定画面から指定できるように**
-  - 設定 → ランタイムに「モデルフォルダ」行を追加。フォルダ選択（Electron のダイアログ）と
-    「既定に戻す」で切り替え。現在のパス・検出した GGUF 数（うち vision 対応数）を表示し、
-    指定フォルダが見つからないときは警告付きで既定にフォールバックする
-  - `settings.json` に `models_dir` を追加（空文字＝既定の `models/`）
-  - `backend/model_catalog.py`: 固定の `MODELS_DIR` を廃止し `models_dir()` で毎回解決。
-    指定フォルダ直下に置かれた GGUF も拾うようにした（従来はサブフォルダのみ）
-  - `POST /runtime/models-dir` を追加。フォルダ変更後に選択中モデルが新フォルダに無ければ
-    アンロードして先頭のモデルに戻す（翻訳モデルは使えるなら VL モデルと同じものに揃える）
-  - `GET /runtime/status` のレスポンスに `models_dir` を追加
-  - Whisper / HF キャッシュ（`models/hub/`）は従来どおりアプリ内 `models/` のまま
+## 2026-08-27
+- **Python 環境をプロジェクト内に自己完結させた（miniconda 削除で起動不能になった対策）**
+  - 原因: `.venv` は削除済みの miniconda（`D:\miniconda3\conda_envs\main`）をベースに
+    作られていたため、`python.exe` が本体を見つけられず code=103 で即終了していた
+  - `runtime/python/` に python-build-standalone の CPython 3.10.21 を同梱し、そこから
+    `.venv` を再作成。torch(cu130)＋`requirements.txt` を再インストールし `/health` と
+    CUDA 認識を確認。外部の Python / conda / 他プロジェクトには依存しない
+  - `setup_python.bat` を追加（同梱 Python のダウンロード → venv 作成 → 依存インストール）
+  - `frontend/main.js`: PATH の `python` ではなく `.venv/Scripts/python.exe` を直接起動
+    （存在しなければ従来どおり PATH、`BACKEND_PYTHON` で上書き可）
+  - `start.bat`: `.venv` が無い／壊れている場合は `setup_python.bat` を案内
+  - README / CLAUDE.md のセットアップ手順を更新
 
 ## 2026-08-11
 - **UI スタイルガイドを `docs/design/style-guide.md` に一本化**

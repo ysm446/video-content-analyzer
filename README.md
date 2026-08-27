@@ -41,18 +41,28 @@
 
 | ソフトウェア | バージョン |
 |---|---|
-| Python | 3.10 以上 |
+| Python | 不要（`setup_python.bat` が 3.10 をプロジェクト内に同梱） |
 | Node.js + npm | Electron 実行用 |
 | ffmpeg | PATH にあること（無い場合は 設定 → ランタイム からインストール可） |
 | CUDA（任意） | GPU 推論を使う場合（強く推奨） |
 
 ## セットアップ
 
-### 1. Python venv を作成して依存をインストール
+### 1. Python 環境を作成（`setup_python.bat`）
+
+```bat
+setup_python.bat
+```
+
+`runtime\python\` にスタンドアロン CPython 3.10（python-build-standalone）をダウンロードして同梱し、
+そこから `.venv` を作成して依存パッケージ（torch は cu130 ホイール）をインストールします。
+システムの Python や conda には依存しないため、それらを削除・更新してもアプリは影響を受けません。
+
+手動で行う場合は同等の手順:
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+runtime\python\python\python.exe -m venv .venv
+.venv\Scriptsctivate
 pip install torch --index-url https://download.pytorch.org/whl/cu130  # Blackwell(sm_120) 対応
 pip install -r requirements.txt
 ```

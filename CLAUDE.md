@@ -12,7 +12,10 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 
 ## 環境
 
-- Python: venv `.venv`（`python -m venv .venv` → `pip install -r requirements.txt`）。Python 3.10 基準
+- Python: venv `.venv`。ベースは `runtime/python/python/`（python-build-standalone の CPython 3.10 を同梱）。
+  `setup_python.bat` がダウンロード → venv 作成 → 依存インストールまで行う。**システムの Python / conda に依存しない**
+  （venv の `home` が外部を指すと、その環境を消したとき起動不能になるため）。
+  Electron は `.venv/Scripts/python.exe` を直接起動する（`BACKEND_PYTHON` 環境変数で上書き可）
 - torch は Blackwell(sm_120) 対応のため cu130 ホイール: `pip install torch --index-url https://download.pytorch.org/whl/cu130`
 - OS: Windows 11
 - Shell: bash（Unix 構文を使う）
@@ -51,6 +54,7 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 | `models/hub/` | HuggingFace モデルキャッシュ（`HF_HOME=./models`） |
 | `models/{name}/` | GGUF モデルフォルダ（サブフォルダを再帰スキャン）。設定 → ランタイム → モデルフォルダで別の場所を指定可（`settings.json` の `models_dir`。未指定ならここが既定） |
 | `runtime/llama-server/` | llama.cpp の Windows ビルド（`backend/llama_server.py` が配下を自動検出。設定 → ランタイム からインストール可） |
+| `runtime/python/` | 同梱 CPython 3.10（`.venv` のベース。`setup_python.bat` が取得） |
 | `runtime/ffmpeg/` | ffmpeg が PATH に無い環境向けの同梱先（起動時に PATH へ追加） |
 | `backend/runtime_manager.py` | ランタイムの状態検出・ダウンロード・展開 |
 | `backend/` | Python バックエンドパッケージ |

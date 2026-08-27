@@ -101,7 +101,11 @@ async function startBackendProcess() {
 
   const projectRoot = path.resolve(__dirname, '..')
   const backendEntrypoint = path.join(projectRoot, 'run_backend.py')
-  const pythonCommand = process.env.BACKEND_PYTHON || 'python'
+  // 優先順: BACKEND_PYTHON 環境変数 → プロジェクト内 .venv → PATH の python
+  // （.venv は runtime/python/ に同梱したスタンドアロン CPython から作る。setup_python.bat 参照）
+  const venvPython = path.join(projectRoot, '.venv', 'Scripts', 'python.exe')
+  const pythonCommand =
+    process.env.BACKEND_PYTHON || (fs.existsSync(venvPython) ? venvPython : 'python')
 
   const env = {
     ...process.env,

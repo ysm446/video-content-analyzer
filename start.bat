@@ -5,9 +5,14 @@ echo  Video Content Analyzer
 echo =============================================
 echo.
 
+if not exist "%~dp0.venv\Scripts\python.exe" (
+    echo [ERROR] ".venv" が見つかりません。先に setup_python.bat を実行してください。
+    pause
+    exit /b 1
+)
 call "%~dp0.venv\Scripts\activate.bat"
 if errorlevel 1 (
-    echo [ERROR] Failed to activate venv ".venv". Run: python -m venv .venv ^&^& pip install -r requirements.txt
+    echo [ERROR] ".venv" を有効化できません（ベース Python が壊れている可能性）。setup_python.bat で作り直してください。
     pause
     exit /b 1
 )
