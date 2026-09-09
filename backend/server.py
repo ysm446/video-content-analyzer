@@ -510,6 +510,8 @@ class UISettingsRequest(BaseModel):
     show_file_panel: Optional[bool] = None
     file_panel_width: Optional[int] = None  # px（180〜600 にクランプ）
     seek_markers: Optional[bool] = None  # シークバーのチャプター・ブックマークマーカー表示
+    report_use_llm: Optional[bool] = None          # レポート: VL モデルで本文生成・画像選定
+    report_images_per_chapter: Optional[int] = None  # レポート: 1 章あたりの画像上限（1〜5）
 
 
 class TOCLoadRequest(BaseModel):
@@ -564,7 +566,9 @@ class ReportGenerateRequest(BaseModel):
     bookmarks: Optional[list[dict]] = None                # [{id, time_sec, title, comment}]
     max_images_per_chapter: int = Field(default=3, ge=1, le=8)
     image_max_side: int = Field(default=1280, ge=480, le=3840)
-    hash_distance: int = Field(default=10, ge=0, le=30)
+    hash_distance: int = Field(default=12, ge=0, le=30)
+    use_llm: bool = True                 # VL モデルで章ごとの本文と掲載画像を生成する（第2段階）
+    transcript: str = ""                 # "[m:ss] text" 形式（SRT が見つからない場合のフォールバック）
 
 
 class FolderListRequest(BaseModel):
@@ -732,6 +736,8 @@ def get_ui_settings():
         "show_file_panel": s.get("show_file_panel", True),
         "file_panel_width": s.get("file_panel_width", 272),
         "seek_markers": s.get("seek_markers", True),
+        "report_use_llm": s.get("report_use_llm", True),
+        "report_images_per_chapter": s.get("report_images_per_chapter", 3),
     }
 
 
@@ -780,6 +786,10 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["file_panel_width"] = max(180, min(600, int(req.file_panel_width)))
     if req.seek_markers is not None:
         to_save["seek_markers"] = bool(req.seek_markers)
+    if req.report_use_llm is not None:
+        to_save["report_use_llm"] = bool(req.report_use_llm)
+    if req.report_images_per_chapter is not None:
+        to_save["report_images_per_chapter"] = max(1, min(5, int(req.report_images_per_chapter)))
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -1392,15 +1402,40 @@ async def lookup(req: LookupRequest):
 # 動画レビュー（Qwen3.5 GGUF / llama.cpp）
 # ================================================================
 
+MODEL_HISTORY_MAX = 8
+
+
+def _push_model_history(model_id: str) -> list[str]:
+    """最近使ったモデル ID を settings.json の model_history（新しい順・最大 8 件）に記録する。"""
+    s = load_settings()
+    hist = [m for m in (s.get("model_history") or []) if isinstance(m, str) and m != model_id]
+    hist.insert(0, model_id)
+    hist = hist[:MODEL_HISTORY_MAX]
+    save_settings({"model_history": hist})
+    return hist
+
+
+def _recent_model_ids(available: list[dict]) -> list[str]:
+    """履歴のうち現在も存在するモデル ID だけを新しい順で返す（現在の選択が先頭）。"""
+    exists = {m["id"] for m in available if m.get("exists", True)}
+    hist = [m for m in (load_settings().get("model_history") or []) if isinstance(m, str) and m in exists]
+    cur = video_reviewer.model_id
+    if cur in exists and cur not in hist:
+        hist.insert(0, cur)
+    return hist
+
+
 @app.get("/review/models")
 def get_vl_models():
-    """利用可能な動画レビュー用モデルの一覧と現在の選択・ロード状態を返す"""
+    """利用可能な動画レビュー用モデルの一覧と現在の選択・ロード状態を返す。
+    recent は最近使った順のモデル ID（モデル管理ポップアップで先頭に並べる）。"""
     review_models = available_review_models()
     return {
         "current":   video_reviewer.model_id,
         "loaded":    video_reviewer.loaded,
         "translator_model_id": translator.model_id,
         "available": review_models,
+        "recent":    _recent_model_ids(review_models),
     }
 
 
@@ -1413,6 +1448,7 @@ def set_vl_model(req: SetVLModelRequest):
     video_reviewer.set_model_id(req.model_id)
     translator.set_model_id(req.model_id)
     save_settings({"vl_model": video_reviewer.model_id, "translator_model": translator.model_id})
+    _push_model_history(req.model_id)
     return {"status": "ok", "model_id": video_reviewer.model_id, "translator_model_id": translator.model_id}
 
 
@@ -1828,6 +1864,31 @@ async def cache_thumbnails_generate(req: ThumbnailsGenerateRequest):
     return {"status": "ok", "thumbnails": thumbnails}
 
 
+def _report_transcript_rows(video_path: Path, fallback_transcript: str) -> list[tuple[float, str]]:
+    """レポートの章本文に使う字幕行 [(sec, text)] を返す。
+
+    日本語 SRT → 補正 SRT → 原文 SRT（cache 内 → 旧・横置き）の順で探し、
+    無ければフロントから渡された "[m:ss] text" 形式の transcript を使う。
+    """
+    stem = video_path.stem
+    dirs = [video_path.parent / f"{stem}.cache", video_path.parent]
+    for suffix in ("japanese", "corrected", "original"):
+        for d in dirs:
+            srt = d / f"{stem}.{suffix}.srt"
+            if srt.exists():
+                try:
+                    segs = srt_file_to_segments(str(srt))
+                    return [(float(sg["timestamp"][0]), str(sg["text"]).replace("\n", " ")) for sg in segs]
+                except Exception as e:
+                    print(f"[Report] SRT 読み込み失敗 {srt}: {e}")
+    rows: list[tuple[float, str]] = []
+    for line in (fallback_transcript or "").splitlines():
+        m = re.match(r"^\[(\d+):(\d{2})\]\s*(.*)$", line.strip())
+        if m:
+            rows.append((int(m.group(1)) * 60 + int(m.group(2)), m.group(3)))
+    return rows
+
+
 @app.post("/report/generate")
 async def report_generate(req: ReportGenerateRequest):
     """章立て＋代表画像の 1 ページ Markdown レポートを {動画名}_report/ に生成する（SSE）。
@@ -1836,8 +1897,11 @@ async def report_generate(req: ReportGenerateRequest):
       {"status": "detecting_scenes"}
       {"status": "extracting", "phase": "candidates"|"images", "current", "total"}
       {"status": "selecting", "current", "total", "picked"}
+      {"status": "loading_model"}（use_llm で VL モデル未ロードのときのみ）
+      {"status": "generating", "current", "total", "title"}（use_llm のとき章ごと）
+      {"status": "report_warning", "message"}（章の本文生成失敗→機械選定で続行、打ち切り等）
       {"status": "writing"}
-      {"status": "done", "report_path", "dir", "chapters", "images", "stats"}
+      {"status": "done", "report_path", "html_path", "dir", "chapters", "images", "stats"}
       {"status": "canceled"} / {"status": "error", "message"}
     """
     video_path = Path(req.video_path)
@@ -1851,6 +1915,18 @@ async def report_generate(req: ReportGenerateRequest):
         cancel.clear_cancel()
         q: queue.Queue = queue.Queue()
 
+        reviewer = None
+        if req.use_llm:
+            if not video_reviewer.loaded:
+                yield sse({"status": "loading_model"})
+                try:
+                    await loop.run_in_executor(None, video_reviewer.load)
+                except Exception as e:
+                    yield sse({"status": "error", "message": f"VL モデルのロードに失敗: {e}"})
+                    return
+            reviewer = video_reviewer
+        transcript_rows = _report_transcript_rows(video_path, req.transcript) if req.use_llm else []
+
         def run():
             try:
                 result = report_builder.generate_report(
@@ -1859,6 +1935,8 @@ async def report_generate(req: ReportGenerateRequest):
                     image_max_side=req.image_max_side,
                     hash_distance=req.hash_distance,
                     progress=q.put,
+                    reviewer=reviewer,
+                    transcript_rows=transcript_rows,
                 )
                 q.put({"status": "done", **result})
             except cancel.CanceledError:

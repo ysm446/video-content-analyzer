@@ -65,25 +65,44 @@ video.mp4
 ```
 章の終了時刻はサーバー側で次章の開始から算出する（フロントの toc の `end_sec` は仮値のため使わない）。
 
-イベント: `detecting_scenes` → `extracting {phase:"candidates"}` → `selecting {current,total,picked}`
-→ `extracting {phase:"images",current,total}` → `writing` → `done {report_path,html_path,dir,chapters,images,stats}`
-／ `canceled` ／ `error`
+リクエストには `use_llm`（既定 true）と `transcript`（SRT が無いときのフォールバック）も渡せる。
+
+イベント: (`loading_model`) → `detecting_scenes` → `extracting {phase:"candidates"}` → `selecting {current,total,picked}`
+→ (`generating {current,total,title}` ／ `report_warning {message}`) → `extracting {phase:"images",current,total}`
+→ `writing` → `done {report_path,html_path,dir,chapters,images,stats}` ／ `canceled` ／ `error`
 
 ### フロント
 
 分析パネルの操作行に「レポート」ボタン（`.btn-ghost`・Lucide `book-text`）。章立てがあるときだけ有効。
 進捗はステータスバー（kind=`report`）、完了時にエクスプローラーで `report.html` を選択表示。
 
-## 第2段階（未着手）: VL による本文生成と画像選定
+## 第2段階（実装済み・2026-09-10）: VL による本文生成と画像選定
 
-- 章ごとに、間引き後の候補フレーム（番号付き）＋その時間範囲の字幕（日本語 SRT があればそれ）を
-  VL モデルに渡し、json_schema で「見出し・まとめ・要点・掲載するフレーム番号とキャプション」を返させる
-- 章単位で回すので分析の refine パスと同じくコンテキスト予算に収まりやすい
-- SSE で進捗・中止に対応。1 章あたり上限 3 枚・最低 1 枚
+`backend/report.py` の `generate_chapter_texts()` ＋ `VideoReviewer.report_chapter()`
+
+- 章ごとに、間引き後の候補フレーム（最大 6 枚・長辺 640px・時刻ラベル付き）と、その区間の
+  字幕行（最大 1800 文字。長ければ等間隔に間引き）を VL モデルに渡し、json_schema で
+  `{summary, points[], images[{time, caption}]}` を返させる。`time` は候補の時刻ラベルを
+  そのまま返させ、サーバー側で最近傍の候補にスナップ（±2 秒超は無視）
+- 字幕は `_report_transcript_rows()` が 日本語 SRT → 補正 SRT → 原文 SRT（cache 内 → 旧・横置き）の
+  順で探し、無ければフロントから渡された `[m:ss] text` 形式の transcript を使う
+- プロンプトで「スライド・図・製品・デモ画面など情報量の多いフレームを優先、話者だけのフレームは
+  他に無いときだけ、似た画像は 1 枚に」と指示。1 章あたり上限は設定値（既定 3）・最低 1 枚
+- 章単位で回すので分析の refine パスと同じくコンテキスト予算に収まる。章の生成に失敗したら
+  `report_warning` を流して機械選定（第1段階）の結果で続行。トークン上限打ち切りも警告
+- 本文は summary（2〜4 文）＋ points（箇条書き）。画像キャプションは「内容（時刻）」の形式
+- 実測（Computex 12 分・19 章・Qwen3.8-27B Q4_K_M）: 116 秒（約 6 秒/章）・画像 21 枚。
+  機械選定のみ（26 枚）より講演者ショットが減り、各章 1 枚のスライド中心になった
+
+### 設定（設定 → 動画分析 → レポート）
+
+- `report_use_llm`（既定 ON）: オフにすると第1段階のみ（本文はチャプターの説明をそのまま使う）
+- `report_images_per_chapter`（1〜5・既定 3）
 
 ## 第3段階（未着手）
 
 - アプリ内プレビュー（marked＋`renderMarkdown()` 経由）・章単位の再生成
 - [x] 単一 HTML 書き出し（画像 base64 埋め込み）… 2026-09-10 に前倒し実装
 - 複数ページ化のオプション（章ごとの md＋目次ページ）
-- 画像上限・解像度の設定 UI（現状はリクエスト既定値）
+- 解像度の設定 UI（画像上限は実装済み。解像度は 1280px 固定）
+- 章タイトルの見直し（現状はチャプターのタイトルをそのまま使う）

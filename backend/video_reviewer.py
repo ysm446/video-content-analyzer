@@ -153,6 +153,32 @@ _QUESTIONS_SCHEMA = {
     "required": ["questions"],
 }
 
+# レポート（章ごとの本文生成＋掲載画像の選定）用
+REPORT_SYSTEM = (
+    "/no_think\n"
+    "あなたは動画の内容を文書にまとめる編集者です。"
+    "章のフレーム画像（時刻ラベル付き）と、あればその区間の字幕をもとに、"
+    "読者が動画を見なくても内容が分かる日本語の章本文を書き、掲載する画像を選びます。"
+    "画像の内容と字幕に書かれていることだけを根拠にし、推測で補わないでください。"
+)
+
+_REPORT_CHAPTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "points": {"type": "array", "items": {"type": "string"}},
+        "images": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"time": {"type": "string"}, "caption": {"type": "string"}},
+                "required": ["time", "caption"],
+            },
+        },
+    },
+    "required": ["summary", "points", "images"],
+}
+
 _TRANSCRIPT_MAX_CHARS = 3000
 QA_MAX_NEW_TOKENS = 2048
 
@@ -1178,6 +1204,48 @@ class VideoReviewer:
         if isinstance(result.get("scenes"), list):
             result["scenes"] = self._dedup_scenes(result["scenes"])
         result["_analysis_meta"] = gen_meta
+        return result
+
+    def report_chapter(self, frames: list[Image.Image], timestamps: list[float], title: str, start_sec: float, end_sec: float, transcript: str = "", max_images: int = 3, video_context: str = "") -> dict:
+        """レポートの 1 章分: 本文（summary / points）と掲載画像（time / caption）を生成する。
+
+        フレームは間引き済みの候補（時刻ラベル付き）。画像は候補の時刻ラベルで指し示させ、
+        呼び出し側で最近傍の候補にスナップする。
+        """
+        self._ensure_loaded()
+        ts_labels = "、".join(f"[{self._fmt_ts(t)}]" for t in timestamps)
+        parts = [f"章タイトル: {title}", f"区間: {self._fmt_ts(start_sec)} 〜 {self._fmt_ts(end_sec)}"]
+        if video_context:
+            parts.append(f"動画全体の情報:\n{video_context}")
+        parts.append(f"候補フレームの時刻ラベル: {ts_labels}")
+        if transcript:
+            parts.append(f"この区間の字幕:\n{transcript}")
+        parts.append(
+            "次の JSON のみを出力してください。\n"
+            "- summary: この章で語られている内容のまとめ（2〜4 文）。話者の主張・数値・固有名詞は字幕に基づいて具体的に\n"
+            "- points: 要点の箇条書き（2〜5 個・各 1 文）\n"
+            f"- images: 掲載する画像を候補から最大 {max_images} 枚（最低 1 枚）。time は候補の時刻ラベルをそのまま、"
+            "caption は写っている内容を説明する短い日本語（時刻は書かない）。"
+            "スライド・図・製品・デモ画面など情報量の多いフレームを優先し、話者が映っているだけのフレームは他に候補が無いときだけ選ぶ。"
+            "内容が同じ・似ている画像は 1 枚にまとめる"
+        )
+        raw, gen_meta = self._infer(
+            frames,
+            REPORT_SYSTEM,
+            "\n\n".join(parts),
+            max_new_tokens=1024,
+            timestamps=timestamps,
+            response_format={"type": "json_schema", "json_schema": {"name": "report_chapter", "schema": _REPORT_CHAPTER_SCHEMA}},
+        )
+        clean = self._strip_code_fences(raw)
+        try:
+            result = json.loads(clean.strip())
+        except Exception:
+            maybe = self._extract_balanced_json(clean)
+            result = json.loads(maybe) if maybe else {}
+        if not isinstance(result, dict):
+            result = {}
+        result["_meta"] = gen_meta
         return result
 
     def suggest_questions(self, video_info: str, transcript: str = "", history: list[dict] | None = None, count: int = 3, bookmarks: list[dict] | None = None) -> list[str]:

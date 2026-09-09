@@ -1,6 +1,24 @@
 # 変更履歴
 
 ## 2026-09-10
+- **モデル管理ポップアップ: 最近使ったモデルを先頭に表示**
+  - `POST /review/models` で選択したモデル ID を settings.json の `model_history`（新しい順・最大8件）に記録し、
+    `GET /review/models` が存在するものだけ `recent` として返す
+  - ポップアップのリストを「最近使ったモデル」「その他」の2グループに分けて描画（`.modal-model-group`）。
+    履歴が無ければ従来どおりの一覧
+- **ファイル一覧: 行の右クリックで「…」と同じメニューを開けるように**
+  - `fileTree` の `contextmenu` で動画行・フォルダ行を拾い、`fileState.menuPath` を切り替えて再描画
+    （メニュー上・リネーム入力中は素通し）。表示位置・項目は「…」メニューと共通
+- **動画レポートの第2段階: VL モデルによる章ごとの本文生成と画像選定**（→ design/report.md）
+  - `VideoReviewer.report_chapter()` を追加。候補フレーム（最大 6 枚・時刻ラベル付き）と区間の
+    字幕を渡し、json_schema で summary / points / images{time, caption} を生成。時刻は候補に
+    スナップし、失敗した章は `report_warning` を流して機械選定で続行
+  - `/report/generate` に `use_llm` と `transcript` を追加。字幕は日本語 → 補正 → 原文 SRT の順で探す。
+    モデル未ロード時は `loading_model` を流してロード
+  - 設定 → 動画分析 に「レポート」グループ（VL 使用の ON/OFF・1 章あたりの画像上限）を追加
+    （ui-settings `report_use_llm` / `report_images_per_chapter`）
+  - report.md / report.html に要点の箇条書きと内容キャプションを出力
+  - 実動画（Computex 12 分・19 章）で 116 秒・21 枚。講演者ショットが減りスライド中心の選定になった
 - **動画レポート（1ページ Markdown＋画像）の第1段階を実装**（→ design/report.md）
   - `backend/report.py` を新設。章立て（toc）を骨格に、ffmpeg のシーン変化検出で候補フレームを
     集め、dHash＋16×16 画素差の二段判定で「同じ絵」を捨て「似た絵」を補欠に回して

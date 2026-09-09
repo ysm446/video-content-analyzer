@@ -245,6 +245,8 @@
     .model-modal-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);font-size:14px;font-weight:600;flex-shrink:0}
     .model-modal-body{overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
     .modal-section-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+    .modal-model-group{font-size:11px;color:var(--text-dim);letter-spacing:.04em;margin:6px 12px 4px}
+    .modal-model-group:not(:first-child){margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
     .modal-model-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--radius);cursor:pointer;border:1px solid transparent}
     .modal-model-item:hover{background:var(--surface2)}
     .modal-model-item.selected{background:var(--accent-tint-bg);border-color:var(--accent-tint-border)}
@@ -721,6 +723,25 @@
                 </select>
               </div>
               <div class="frame-hint" id="frameHint"></div>
+            </div>
+            <div>
+              <div class="section-label">レポート</div>
+              <div class="frame-setting">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" id="reportUseLlm" checked style="accent-color:var(--accent)"> VL モデルで章ごとの本文と掲載画像を生成する
+                </label>
+              </div>
+              <div class="frame-setting" style="margin-top:8px">
+                <label>1 章あたりの画像：</label>
+                <select id="reportImagesPerChapter" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+                  <option value="1">最大 1 枚</option>
+                  <option value="2">最大 2 枚</option>
+                  <option value="3" selected>最大 3 枚</option>
+                  <option value="4">最大 4 枚</option>
+                  <option value="5">最大 5 枚</option>
+                </select>
+              </div>
+              <div class="frame-hint">「レポート」ボタンで章立てと代表画像を「動画名_report」フォルダに Markdown と単一 HTML で書き出します。VL モデルを使うと章ごとに字幕とフレームから本文（まとめ・要点）を書き、情報量の多い画像を選びます。オフにすると画像はシーン検出と類似判定だけで機械的に選び、本文はチャプターの説明をそのまま使います。</div>
             </div>
           </section>
           <section class="settings-section" id="settings-section-subtitle">
@@ -2872,6 +2893,17 @@
       if(e.target.closest('#selectRootBtn2')) await selectRootFolder()
     })
 
+    // 行の右クリックでも「…」と同じメニューを開く（リネーム入力中・メニュー上は素通し）
+    fileTreeEl.addEventListener('contextmenu',e=>{
+      if(e.target.closest('.file-menu')||e.target.closest('.file-rename-input')) return
+      const row=e.target.closest('[data-video-path],[data-folder-path]')
+      if(!row) return
+      e.preventDefault()
+      const p=row.dataset.videoPath||row.dataset.folderPath
+      fileState.menuPath = fileState.menuPath===p ? null : p
+      renderFileTree()
+    })
+
     // メニュー外クリックで閉じる（fileTree 内のクリックは上のハンドラが先に処理）
     document.addEventListener('click',e=>{
       if(!fileState.menuPath) return
@@ -3089,6 +3121,10 @@
 
     // スクリーンショット（F12）: 再生位置のフレームをサーバー側 ffmpeg で
     // {動画名}_screenshot/ にフル解像度保存する
+    const reportUseLlmChk=document.getElementById('reportUseLlm')
+    const reportImagesSel=document.getElementById('reportImagesPerChapter')
+    reportUseLlmChk.addEventListener('change',()=>saveUiSettings({report_use_llm:reportUseLlmChk.checked}))
+    reportImagesSel.addEventListener('change',()=>saveUiSettings({report_images_per_chapter:parseInt(reportImagesSel.value)||3}))
     const screenshotFormatSel=document.getElementById('screenshotFormat')
     function getScreenshotFormat(){ return screenshotFormatSel.value==='jpg' ? 'jpg' : 'png' }
     screenshotFormatSel.addEventListener('change',()=>saveUiSettings({screenshot_format:getScreenshotFormat()}))
@@ -3161,6 +3197,8 @@
         subtitleFontSel.value = ['noto','biz','yugothic','meiryo'].includes(s.subtitle_font) ? s.subtitle_font : 'noto'
         translationModeSel.value = s.translation_mode === 'fast' ? 'fast' : 'quality'
         screenshotFormatSel.value = s.screenshot_format === 'jpg' ? 'jpg' : 'png'
+        reportUseLlmChk.checked = s.report_use_llm !== false
+        reportImagesSel.value = String([1,2,3,4,5].includes(Number(s.report_images_per_chapter)) ? Number(s.report_images_per_chapter) : 3)
         state.seekMarkersVisible = s.seek_markers !== false
         updateSeekMarkersBtn()
         renderSeekMarkers()
@@ -3235,14 +3273,24 @@
       updateModelStatusUi(info)
       if(!_modalSelectedId) _modalSelectedId=info.current
       const list=document.getElementById('modalModelList')
-      list.innerHTML=(info.available||[]).map(m=>`
+      const available=info.available||[]
+      const itemHtml=m=>`
         <div class="modal-model-item${_modalSelectedId===m.id?' selected':''}" data-id="${escHtml(m.id)}">
           <div style="min-width:0;flex:1">
             <div class="modal-model-name">${escHtml(m.label||m.id)}</div>
             <div class="modal-model-meta">${m.vram_gb?m.vram_gb+' GB · ':''}${escHtml(m.note||'')}</div>
           </div>
           ${info.loaded&&info.current===m.id?'<span class="modal-loaded-badge">ロード済み</span>':''}
-        </div>`).join('')
+        </div>`
+      // 最近使ったモデル（サーバーの model_history・新しい順）を先頭グループに、残りをその下に
+      const byId=new Map(available.map(m=>[m.id,m]))
+      const recent=(info.recent||[]).map(id=>byId.get(id)).filter(Boolean)
+      const recentIds=new Set(recent.map(m=>m.id))
+      const rest=available.filter(m=>!recentIds.has(m.id))
+      list.innerHTML=(recent.length
+        ? `<div class="modal-model-group">最近使ったモデル</div>${recent.map(itemHtml).join('')}`
+          +(rest.length?`<div class="modal-model-group">その他</div>${rest.map(itemHtml).join('')}`:'')
+        : available.map(itemHtml).join(''))
       list.querySelectorAll('.modal-model-item').forEach(el=>{
         el.addEventListener('click',()=>{
           _modalSelectedId=el.dataset.id
@@ -3537,15 +3585,21 @@
       const bookmarks=(Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[]).map(b=>({id:b.id,time_sec:b.time_sec,title:b.title||'',comment:b.comment||''}))
       beginCancelable()
       let reportPath=null
+      let sawModelLoad=false
+      const useLlm=reportUseLlmChk.checked
+      const maxImages=parseInt(reportImagesSel.value)||3
       try{
         setProgress('report',5,'準備中...')
-        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,bookmarks,max_images_per_chapter:3,image_max_side:1280})})
+        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,bookmarks,max_images_per_chapter:maxImages,image_max_side:1280,use_llm:useLlm,transcript:useLlm?state.origTranscript:''})})
         await readSSE(res,event=>{
-          if(event.status==='detecting_scenes') setProgress('report',15,'場面の切り替わりを検出中...')
-          else if(event.status==='extracting'&&event.phase==='candidates') setProgress('report',35,`候補フレーム抽出中 (${event.current}/${event.total})`)
-          else if(event.status==='selecting') setProgress('report',45,`画像を選定中 (${event.current}/${event.total} 章)`)
-          else if(event.status==='extracting'&&event.phase==='images') setProgress('report',50+Math.round(40*(event.total?event.current/event.total:1)),`画像を書き出し中 (${event.current}/${event.total})`)
-          else if(event.status==='writing') setProgress('report',95,'Markdown を書き出し中...')
+          if(event.status==='loading_model'){ sawModelLoad=true; beginImplicitModelLoad(); setProgress('report',5,'VL モデルをロード中...') }
+          else if(event.status==='detecting_scenes') setProgress('report',10,'場面の切り替わりを検出中...')
+          else if(event.status==='extracting'&&event.phase==='candidates') setProgress('report',15,`候補フレーム抽出中 (${event.current}/${event.total})`)
+          else if(event.status==='selecting') setProgress('report',20,`画像を選定中 (${event.current}/${event.total} 章)`)
+          else if(event.status==='generating') setProgress('report',20+Math.round(60*(event.total?(event.current-1)/event.total:0)),`本文を生成中 (${event.current}/${event.total} 章: ${event.title||''})`)
+          else if(event.status==='report_warning') setProgress('report',null,`注意: ${event.message}`)
+          else if(event.status==='extracting'&&event.phase==='images') setProgress('report',82+Math.round(12*(event.total?event.current/event.total:1)),`画像を書き出し中 (${event.current}/${event.total})`)
+          else if(event.status==='writing') setProgress('report',96,'Markdown / HTML を書き出し中...')
           else if(event.status==='done'){
             reportPath=event.html_path||event.report_path
             setResult('report',true,`レポート生成完了: 章 ${event.chapters} / 画像 ${event.images} 枚 → ${reportPath}`)
@@ -3554,7 +3608,7 @@
           else if(event.status==='error'){ setResult('report',false,event.message) }
         })
       }catch(e){ setResult('report',false,`接続エラー: ${e.message}`) }
-      finally{ endCancelable(); btn.classList.remove('running'); updateReportButton() }
+      finally{ endCancelable(); if(sawModelLoad) endImplicitModelLoad(); btn.classList.remove('running'); updateReportButton() }
       if(reportPath && window.electronAPI?.showItemInFolder) window.electronAPI.showItemInFolder(reportPath)
     })
 

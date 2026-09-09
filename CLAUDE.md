@@ -133,8 +133,8 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /lookup` — 単語辞書検索（翻訳モデルを共用）
 
 ### 動画レビュー
-- `GET  /review/models` — VL モデル一覧・状態
-- `POST /review/models` — VL モデル切り替え
+- `GET  /review/models` — VL モデル一覧・状態（`recent`: 最近使ったモデル ID・新しい順）
+- `POST /review/models` — VL モデル切り替え（`model_history` に記録）
 - `POST /review/load` — VL モデルを明示的にロード
 - `POST /review/unload` — VL モデルを VRAM から解放
 - `POST /review/analyze` — 動画分析（SSE）
@@ -182,7 +182,7 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### 設定
 - `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode / screenshot_format /
-  root_folder / show_file_panel 等）
+  root_folder / show_file_panel / report_use_llm / report_images_per_chapter 等）
 - `POST /ui-settings` — UI 設定保存
 
 ### 動画情報
@@ -200,9 +200,13 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /report/generate` — 章立て（`chapters`）＋ `meta` ＋ `bookmarks` から
   `{動画名}_report/report.md`・`report.html`（画像 base64 埋め込みの単一ファイル）・`report.json`・
   `images/`（長辺 1280px JPEG）を生成（SSE・中止対応）。
-  第1段階は LLM を使わず、ffmpeg シーン変化検出 → dHash＋画素差で類似画像を間引き →
-  章ごと最大 3 枚。イベント: detecting_scenes / extracting{phase} / selecting / writing /
-  done{report_path,dir,chapters,images,stats} / canceled / error。詳細は docs/design/report.md
+  ffmpeg シーン変化検出 → dHash＋画素差で類似画像を間引き → `use_llm`（既定 true）なら
+  章ごとに VL モデルへ候補フレーム＋区間の字幕（日本語→補正→原文 SRT の順、無ければ
+  `transcript`）を渡して本文（summary / points）と掲載画像・キャプションを json_schema で生成
+  （`VideoReviewer.report_chapter`）。失敗した章は機械選定で続行。
+  イベント: (loading_model) / detecting_scenes / extracting{phase} / selecting /
+  (generating{current,total,title} / report_warning) / writing /
+  done{report_path,html_path,dir,chapters,images,stats} / canceled / error。詳細は docs/design/report.md
 
 ### ランタイム
 - `GET  /runtime/status` — llama-cpp / Whisper モデル / ffmpeg のインストール状態
@@ -401,13 +405,13 @@ video.mp4
 | チャプターエリア | ヘッダーのタブで「チャプター」（LLM 生成シーン一覧・下書き→保存方式）と「ブックマーク」を切り替え |
 | シークバー | コントロール2段構成の1段目に全幅で独立表示（2段目が操作ボタン列）。マウスオーバーでサムネールプレビュー。チャプター位置（灰）・ブックマーク位置（橙）のティックマーカーを重ね描画し、コントロール列の「マーカー」トグルで表示切り替え（ui-settings `seek_markers`・既定 ON） |
 | ブックマーク | ユーザーが再生位置に打つしおり。プレイヤーコントロール列またはブックマークタブ内のボタンで追加 → サーバー側 ffmpeg でサムネール生成 → 追加直後にタイトル・コメントのインライン編集を開く。行クリックでシーク、「…」メニューから編集・削除（サムネールも削除）。チャプターと違い即時保存（`/cache/patch`） |
-| ファイル一覧パネル | 画面左端のサイドバー。ルートフォルダ（`root_folder`）配下の動画を実階層ツリーで表示（フォルダ展開時に `/folder/list` で遅延読み込み）。各行に分析済み・字幕バッジと分析サムネール。検索ボックス入力で `/folder/search` による配下フラット表示。行クリックで動画を開き、再生中はハイライト。`*.cache/` 等の管理フォルダは表示しない。右端をドラッグで幅調整（`file_panel_width` 永続化・ダブルクリックで既定幅）。ルートフォルダ選択はスプリットボタンで、右端キャレットから最近開いたフォルダ履歴（ui-settings の `root_folder_history`・最大10件）をプルダウン選択できる。各行の「…」メニューから場所を開く（エクスプローラーで選択表示・IPC `fs:showItemInFolder`）、名前の変更（インライン編集・Enter 確定 / Esc キャンセル）、ごみ箱への移動。開いている動画をリネーム・削除するときはロック解除のため先に閉じてから実行し、リネーム後は新パスで自動再オープン |
+| ファイル一覧パネル | 画面左端のサイドバー。ルートフォルダ（`root_folder`）配下の動画を実階層ツリーで表示（フォルダ展開時に `/folder/list` で遅延読み込み）。各行に分析済み・字幕バッジと分析サムネール。検索ボックス入力で `/folder/search` による配下フラット表示。行クリックで動画を開き、再生中はハイライト。`*.cache/` 等の管理フォルダは表示しない。右端をドラッグで幅調整（`file_panel_width` 永続化・ダブルクリックで既定幅）。ルートフォルダ選択はスプリットボタンで、右端キャレットから最近開いたフォルダ履歴（ui-settings の `root_folder_history`・最大10件）をプルダウン選択できる。各行の「…」ボタンまたは行の右クリックで開くメニューから場所を開く（エクスプローラーで選択表示・IPC `fs:showItemInFolder`）、名前の変更（インライン編集・Enter 確定 / Esc キャンセル）、ごみ箱への移動。開いている動画をリネーム・削除するときはロック解除のため先に閉じてから実行し、リネーム後は新パスで自動再オープン |
 | 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プレイヤー / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
 | ランタイム設定 | 先頭に「モデルフォルダ」（GGUF の置き場所。パスと検出数を表示し、フォルダ選択／既定に戻すで切り替え）。llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。文字起こしエンジン（faster-whisper 単体 / + WhisperX 整列）もここで切り替え（整列モデルは初回文字起こし時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
-| モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード |
+| モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード。最近使ったモデル（settings.json の `model_history`・新しい順・最大8件。`GET /review/models` の `recent`）を「最近使ったモデル」グループとして先頭に表示し、残りは「その他」に並べる |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |
-| レポート | 分析パネル操作行の「レポート」ボタン（章立てがあるときのみ有効）。`POST /report/generate` で `{動画名}_report/` に 1 ページ Markdown＋画像を書き出し、完了時にエクスプローラーで選択表示。進捗はステータスバー（kind=report）、中止ボタン対応 |
+| レポート | 分析パネル操作行の「レポート」ボタン（章立てがあるときのみ有効）。`POST /report/generate` で `{動画名}_report/` に 1 ページ Markdown＋単一 HTML＋画像を書き出し、完了時にエクスプローラーで選択表示。設定 → 動画分析 → レポート で VL による本文生成の ON/OFF と 1 章あたりの画像上限を指定。進捗はステータスバー（kind=report）、中止ボタン対応 |
 | F12 | 再生位置のスクリーンショットを動画と同じ場所の `{動画名}_screenshot/` に保存（`POST /screenshot`。形式は設定 → プレイヤーで png/jpg を選択。結果はステータスバーに表示） |
 | Ctrl+R / F5 | 開発用リロードショートカット（main.js で登録） |
 

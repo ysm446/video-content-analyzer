@@ -70,6 +70,7 @@ class ChapterOut:
     end_sec: float
     summary: str
     images: list[ChapterImage] = field(default_factory=list)
+    points: list[str] = field(default_factory=list)
 
 
 # ---------- 画像ユーティリティ ----------
@@ -232,8 +233,8 @@ def select_images(
     max_per_chapter: int,
     hash_distance: int,
     progress: ProgressFn,
-) -> tuple[list[list[float]], dict]:
-    """各章に載せる時刻のリストを決める。戻り値は章ごとの時刻リストと統計。"""
+) -> tuple[list[list[float]], list[list[float]], dict]:
+    """各章に載せる時刻を決める。戻り値は (機械選定の時刻, VL に見せる候補の時刻, 統計)。"""
     progress({"status": "detecting_scenes"})
     detected = detect_scene_changes(video_path)
     cancel.raise_if_canceled()
@@ -294,6 +295,7 @@ def select_images(
     # その章に他の候補が無いときだけ 1 枚使う
     kept: list[Signature] = []
     selected: list[list[float]] = []
+    candidates: list[list[float]] = []
     dropped_similar = 0
     dropped_blank = 0
     for i, lst in enumerate(per_chapter):
@@ -328,6 +330,7 @@ def select_images(
             uniq = [lst[0][0]]
         picked = _spread_pick(uniq, max_per_chapter)
         selected.append(picked)
+        candidates.append(_spread_pick(uniq, MAX_CANDIDATES_PER_CHAPTER))
         progress({"status": "selecting", "current": i + 1, "total": len(per_chapter), "picked": len(picked)})
 
     stats = {
@@ -337,7 +340,135 @@ def select_images(
         "dropped_blank": dropped_blank,
         "selected": sum(len(s) for s in selected),
     }
-    return selected, stats
+    return selected, candidates, stats
+
+
+# ---------- VL モデルによる本文生成と画像選定（第2段階） ----------
+
+MAX_CANDIDATES_PER_CHAPTER = 6   # モデルに見せる候補フレームの上限
+CANDIDATE_MAX_SIDE = 640         # モデルに渡す候補フレームの長辺（VRAM 側で更に縮小される）
+CHAPTER_TRANSCRIPT_MAX_CHARS = 1800
+
+
+def slice_transcript_rows(rows: list[tuple[float, str]], start_sec: float, end_sec: float, max_chars: int = CHAPTER_TRANSCRIPT_MAX_CHARS) -> str:
+    """時刻付き字幕行から区間内のものを取り出し、長ければ等間隔に間引いて返す。"""
+    picked = [(t, txt) for t, txt in rows if start_sec <= t < end_sec and txt.strip()]
+    if not picked:
+        return ""
+    total = sum(len(txt) + 8 for _, txt in picked)
+    if total > max_chars:
+        keep = max(1, int(len(picked) * max_chars / total))
+        picked = _spread_pick(picked, keep)
+    return "\n".join(f"[{fmt_ts(t)}] {txt.strip()}" for t, txt in picked)
+
+
+def _parse_label_ts(value) -> float | None:
+    """"[m:ss]" / "m:ss" / "h:mm:ss" を秒に。解釈できなければ None。"""
+    if value is None:
+        return None
+    s = str(value).strip().strip("[]")
+    m = re.match(r"^(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$", s)
+    if not m:
+        return None
+    h = int(m.group(1) or 0)
+    return h * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+
+
+def _video_context_text(meta: dict) -> str:
+    parts = []
+    if meta.get("genre"):
+        parts.append(f"ジャンル: {meta['genre']}")
+    if meta.get("summary"):
+        parts.append(f"概要: {meta['summary']}")
+    tags = [t for t in (meta.get("tags") or []) if isinstance(t, str)]
+    if tags:
+        parts.append("タグ: " + ", ".join(tags[:12]))
+    return "\n".join(parts)
+
+
+def generate_chapter_texts(
+    video_path: str,
+    reviewer,
+    norm: list[dict],
+    candidates: list[list[float]],
+    fallback: list[list[float]],
+    meta: dict,
+    transcript_rows: list[tuple[float, str]],
+    max_per_chapter: int,
+    progress: ProgressFn,
+) -> tuple[list[dict], list[list[tuple[float, str]]]]:
+    """章ごとに VL モデルで本文と掲載画像を決める。
+
+    戻り値: (章ごとの {summary, points}, 章ごとの [(time_sec, caption)])。
+    失敗した章は progress に report_warning を流し、機械選定の結果（fallback）を使う。
+    """
+    video_context = _video_context_text(meta)
+    texts: list[dict] = []
+    picks: list[list[tuple[float, str]]] = []
+    total = len(norm)
+    for ci, c in enumerate(norm):
+        cancel.raise_if_canceled()
+        progress({"status": "generating", "current": ci + 1, "total": total, "title": c["title"]})
+        cand_ts = candidates[ci] or fallback[ci]
+        fb = [(ts, fmt_ts(ts)) for ts in fallback[ci]]
+        if not cand_ts:
+            texts.append({})
+            picks.append(fb)
+            continue
+        # 候補フレームを並列シークで取得（モデル用なので長辺 640px）
+        def grab(ts: float):
+            if cancel.is_canceled():
+                return None
+            return grab_frame(video_path, ts, CANDIDATE_MAX_SIDE)
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            got = list(ex.map(grab, cand_ts))
+        cancel.raise_if_canceled()
+        frames = [im for im in got if im is not None]
+        ts_ok = [ts for ts, im in zip(cand_ts, got) if im is not None]
+        if not frames:
+            texts.append({})
+            picks.append(fb)
+            continue
+        transcript = slice_transcript_rows(transcript_rows, c["start_sec"], c["end_sec"])
+        try:
+            res = reviewer.report_chapter(
+                frames, ts_ok, c["title"], c["start_sec"], c["end_sec"],
+                transcript=transcript, max_images=max_per_chapter, video_context=video_context,
+            )
+        except cancel.CanceledError:
+            raise
+        except Exception as e:
+            progress({"status": "report_warning", "message": f"章 {ci + 1}「{c['title']}」の本文生成に失敗したため機械選定で続行します: {e}", "current": ci + 1, "total": total})
+            texts.append({})
+            picks.append(fb)
+            continue
+        gm = res.get("_meta") or {}
+        if gm.get("finish_reason") == "length":
+            progress({"status": "report_warning", "message": f"章 {ci + 1}: 出力がトークン上限で打ち切られました", "current": ci + 1, "total": total})
+        summary = str(res.get("summary") or "").strip()
+        points = [str(x).strip() for x in (res.get("points") or []) if str(x).strip()][:6]
+        chosen: list[tuple[float, str]] = []
+        seen: set[float] = set()
+        for im in res.get("images") or []:
+            if not isinstance(im, dict):
+                continue
+            t = _parse_label_ts(im.get("time"))
+            if t is None:
+                continue
+            # 候補の最近傍にスナップ（ラベルは秒単位なので ±1 秒程度のずれを吸収）
+            snap = min(ts_ok, key=lambda x: abs(x - t))
+            if abs(snap - t) > 2.0 or snap in seen:
+                continue
+            seen.add(snap)
+            chosen.append((snap, str(im.get("caption") or "").strip()))
+            if len(chosen) >= max_per_chapter:
+                break
+        if not chosen:
+            chosen = fb[:1] or [(ts_ok[0], fmt_ts(ts_ok[0]))]
+        chosen.sort(key=lambda x: x[0])
+        texts.append({"summary": summary, "points": points})
+        picks.append(chosen)
+    return texts, picks
 
 
 # ---------- Markdown ----------
@@ -397,6 +528,10 @@ def build_markdown(
         if ch.summary:
             lines.append(_md_escape(ch.summary))
             lines.append("")
+        if ch.points:
+            for pt in ch.points:
+                lines.append(f"- {_md_escape(pt)}")
+            lines.append("")
         for im in ch.images:
             cap = im.caption or fmt_ts(im.ts)
             lines.append(f"![{_md_escape(cap)}]({im.file})")
@@ -433,7 +568,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-
 main{max-width:900px;margin:0 auto;padding:32px 24px 64px}
 h1{font-size:26px;margin:0 0 6px}h2{font-size:20px;margin:40px 0 8px;padding-top:12px;border-top:1px solid var(--line)}h3{font-size:16px;margin:24px 0 6px}
 .info{color:var(--dim);font-size:13px}.tags{margin:8px 0 0}.tag{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font-size:12px;margin:0 6px 6px 0}
-.range{color:var(--dim);font-size:13px;margin:0 0 8px}p{margin:0 0 10px;white-space:pre-wrap}
+.range{color:var(--dim);font-size:13px;margin:0 0 8px}p{margin:0 0 10px;white-space:pre-wrap}ul{margin:0 0 10px;padding-left:1.4em}
 figure{margin:14px 0}figure img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);display:block}
 figcaption{color:var(--dim);font-size:12px;margin-top:4px}
 nav ol{padding-left:1.4em;margin:0}nav a{color:inherit}nav .ts{color:var(--dim);font-size:12px;margin-left:6px}
@@ -491,6 +626,8 @@ def build_html(structure: dict, out_dir: Path, embed_images: bool = True) -> str
         o.append(f"<div class=\"range\">{fmt_ts(float(ch.get('start_sec') or 0))} 〜 {fmt_ts(float(ch.get('end_sec') or 0))}</div>")
         if ch.get("summary"):
             o.append(f"<p>{_h(ch['summary'])}</p>")
+        if ch.get("points"):
+            o.append("<ul>" + "".join(f"<li>{_h(pt)}</li>" for pt in ch["points"]) + "</ul>")
         for im in ch.get("images") or []:
             cap = im.get("caption") or fmt_ts(float(im.get("time_sec") or 0))
             o.append(f"<figure><img src=\"{src(im['file'])}\" alt=\"{_h(cap)}\" loading=\"lazy\"><figcaption>{_h(cap)}</figcaption></figure>")
@@ -520,8 +657,14 @@ def generate_report(
     image_max_side: int = DEFAULT_IMAGE_MAX_SIDE,
     hash_distance: int = DEFAULT_HASH_DISTANCE,
     progress: ProgressFn | None = None,
+    reviewer=None,
+    transcript_rows: list[tuple[float, str]] | None = None,
 ) -> dict:
-    """レポートを生成して {report_path, html_path, dir, chapters, images, stats} を返す。"""
+    """レポートを生成して {report_path, html_path, dir, chapters, images, stats} を返す。
+
+    reviewer（VideoReviewer・ロード済み）を渡すと章ごとに VL モデルで本文と掲載画像を生成する
+    （第2段階）。渡さなければ機械選定のみ（第1段階）。transcript_rows は [(sec, text)] の字幕行。
+    """
     progress = progress or (lambda _e: None)
     meta = meta or {}
     bookmarks = [b for b in (bookmarks or []) if isinstance(b, dict)]
@@ -547,7 +690,17 @@ def generate_report(
         nxt = norm[i + 1]["start_sec"] if i + 1 < len(norm) else duration
         c["end_sec"] = max(c["start_sec"], nxt if nxt > c["start_sec"] else duration)
 
-    selected, stats = select_images(str(p), norm, duration, max_per_chapter, hash_distance, progress)
+    selected, candidates, stats = select_images(str(p), norm, duration, max_per_chapter, hash_distance, progress)
+    texts: list[dict] = [{} for _ in norm]
+    captions: list[dict[float, str]] = [{} for _ in norm]
+    if reviewer is not None:
+        texts, picks = generate_chapter_texts(
+            str(p), reviewer, norm, candidates, selected, meta, transcript_rows or [], max_per_chapter, progress
+        )
+        selected = [[ts for ts, _ in pk] for pk in picks]
+        captions = [{ts: cap for ts, cap in pk} for pk in picks]
+        stats["selected"] = sum(len(s) for s in selected)
+        stats["llm"] = True
 
     out_dir = report_dir_for(p)
     img_dir = out_dir / "images"
@@ -599,11 +752,14 @@ def generate_report(
 
     chapters_out: list[ChapterOut] = []
     for ci, c in enumerate(norm):
-        ch = ChapterOut(index=ci + 1, title=c["title"], start_sec=c["start_sec"], end_sec=c["end_sec"], summary=c["summary"])
+        t = texts[ci] or {}
+        ch = ChapterOut(index=ci + 1, title=c["title"], start_sec=c["start_sec"], end_sec=c["end_sec"],
+                        summary=t.get("summary") or c["summary"], points=list(t.get("points") or []))
         for k, ts in enumerate(selected[ci]):
             f = lock_files.get(("ch", (ci, k)))
             if f:
-                ch.images.append(ChapterImage(ts=ts, file=f, caption=fmt_ts(ts)))
+                cap = captions[ci].get(ts) or ""
+                ch.images.append(ChapterImage(ts=ts, file=f, caption=(f"{cap}（{fmt_ts(ts)}）" if cap else fmt_ts(ts))))
         chapters_out.append(ch)
     bookmark_images = {bid: lock_files[("bm", bid)] for bid, _ in bm_jobs if ("bm", bid) in lock_files}
 
@@ -622,6 +778,7 @@ def generate_report(
             {
                 "index": ch.index, "title": ch.title, "start_sec": ch.start_sec, "end_sec": ch.end_sec,
                 "summary": ch.summary,
+                "points": ch.points,
                 "images": [{"time_sec": im.ts, "file": im.file, "caption": im.caption} for im in ch.images],
             }
             for ch in chapters_out
