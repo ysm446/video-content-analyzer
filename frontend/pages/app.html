@@ -2586,11 +2586,17 @@
       if(document.fullscreenElement) document.exitFullscreen()
       else document.getElementById('videoWrap').requestFullscreen().catch(()=>{})
     })
+    // 「前の字幕へ」の連打対策: ジャンプ直後は再生が少し進んでいるため、現在位置基準で探すと
+    // 今いる字幕の先頭に戻り続けてしまう。直前のジャンプから 1.5 秒以内の再クリックは
+    // 前回のジャンプ先より前の字幕を探す（1 クリックごとに 1 つずつ遡れる）
+    let _lastPrevSubJump={at:0,target:null}
     prevSubBtn.addEventListener('click',()=>{
-      const t=video.currentTime
+      let t=video.currentTime
+      if(_lastPrevSubJump.target!==null && Date.now()-_lastPrevSubJump.at<1500) t=Math.min(t,_lastPrevSubJump.target)
       const prevs=[findPrevSubByTime(origSubtitles,t),findPrevSubByTime(jpSubtitles,t)].filter(Boolean)
       if(prevs.length===0) return
       const prev=prevs.reduce((a,b)=>a.start>=b.start?a:b)
+      _lastPrevSubJump={at:Date.now(),target:prev.start}
       video.currentTime=prev.start
       updateSubtitles()
     })
