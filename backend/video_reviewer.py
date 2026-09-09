@@ -1206,6 +1206,19 @@ class VideoReviewer:
         result["_analysis_meta"] = gen_meta
         return result
 
+    def text_infer(self, system: str, prompt: str, max_new_tokens: int = 1024, response_format: dict | None = None) -> tuple[str, dict]:
+        """フレーム無しのテキストのみ推論（アウトライン生成等）。(テキスト, 生成メタ) を返す。"""
+        self._ensure_loaded()
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+        t0 = time.time()
+        raw, gen_meta = _vision_server.chat_with_meta(self.model_id, messages, max_new_tokens, response_format)
+        gen_meta = dict(gen_meta or {})
+        gen_meta["elapsed_seconds"] = round(time.time() - t0, 2)
+        return self._clean_generated_text(raw), gen_meta
+
     def report_chapter(self, frames: list[Image.Image], timestamps: list[float], title: str, start_sec: float, end_sec: float, transcript: str = "", max_images: int = 3, video_context: str = "") -> dict:
         """レポートの 1 章分: 本文（summary / points）と掲載画像（time / caption）を生成する。
 

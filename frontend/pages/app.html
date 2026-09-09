@@ -702,6 +702,17 @@
             </div>
             <div>
               <div class="section-label">解析</div>
+              <div class="frame-setting" style="margin-bottom:8px">
+                <label>動画の種類：</label>
+                <select id="videoKind" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
+                  <option value="auto" selected>自動（字幕があれば話題で章分け）</option>
+                  <option value="presentation">プレゼン・講演・解説</option>
+                  <option value="talk">対談・インタビュー・配信</option>
+                  <option value="tutorial">チュートリアル・画面操作</option>
+                  <option value="footage">映像作品・Vlog・スポーツ</option>
+                </select>
+              </div>
+              <div class="frame-hint" style="margin:0 0 10px">プレゼン・対談・チュートリアルは字幕の話題の切れ目で章を分け、章名も話題名にします（字幕が必要。先に文字起こしを実行）。映像作品は従来どおり場面の変化で分けます。</div>
               <div class="frame-setting">
                 <label>解析モード：</label>
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
@@ -728,6 +739,11 @@
               <div class="frame-setting">
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
                   <input type="checkbox" id="reportUseLlm" checked style="accent-color:var(--accent)"> VL モデルで章ごとの本文と掲載画像を生成する
+                </label>
+              </div>
+              <div class="frame-setting" style="margin-top:6px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" id="reportRebuildChapters" checked style="accent-color:var(--accent)"> レポート用に字幕から章立てを作り直す（プレイヤーのチャプターは変えない）
                 </label>
               </div>
               <div class="frame-setting" style="margin-top:8px">
@@ -1893,6 +1909,8 @@
           summary:result?.summary||'',
           detail:result?.detail||'',
           tags:Array.isArray(result?.tags)?result.tags:[],
+          video_kind:result?.video_kind||getVideoKind(),
+          chapter_basis:result?.chapter_basis||'visual',
         },
         toc,
         bookmarks:Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[],
@@ -3067,6 +3085,10 @@
     function getFrameMode(){ return document.querySelector('input[name="frameMode"]:checked').value }
     function getAnalysisMode(){ return document.querySelector('input[name="analysisMode"]:checked').value }
     function getOutputLang(){ return outputLangSel.value==='en'?'en':'ja' }
+    const videoKindSel=document.getElementById('videoKind')
+    const VIDEO_KINDS=['auto','presentation','talk','tutorial','footage']
+    function getVideoKind(){ return VIDEO_KINDS.includes(videoKindSel.value)?videoKindSel.value:'auto' }
+    videoKindSel.addEventListener('change',()=>saveUiSettings({video_kind:getVideoKind()}))
     function getSubtitleDisplay(){ return subtitleDisplaySel.value==='overlay' ? 'overlay' : 'below' }
     function getSubtitleFont(){ return ['noto','biz','yugothic','meiryo'].includes(subtitleFontSel.value) ? subtitleFontSel.value : 'noto' }
     function applySubtitleFont(mode){
@@ -3124,6 +3146,8 @@
     const reportUseLlmChk=document.getElementById('reportUseLlm')
     const reportImagesSel=document.getElementById('reportImagesPerChapter')
     reportUseLlmChk.addEventListener('change',()=>saveUiSettings({report_use_llm:reportUseLlmChk.checked}))
+    const reportRebuildChk=document.getElementById('reportRebuildChapters')
+    reportRebuildChk.addEventListener('change',()=>saveUiSettings({report_rebuild_chapters:reportRebuildChk.checked}))
     reportImagesSel.addEventListener('change',()=>saveUiSettings({report_images_per_chapter:parseInt(reportImagesSel.value)||3}))
     const screenshotFormatSel=document.getElementById('screenshotFormat')
     function getScreenshotFormat(){ return screenshotFormatSel.value==='jpg' ? 'jpg' : 'png' }
@@ -3198,6 +3222,8 @@
         translationModeSel.value = s.translation_mode === 'fast' ? 'fast' : 'quality'
         screenshotFormatSel.value = s.screenshot_format === 'jpg' ? 'jpg' : 'png'
         reportUseLlmChk.checked = s.report_use_llm !== false
+        reportRebuildChk.checked = s.report_rebuild_chapters !== false
+        videoKindSel.value = VIDEO_KINDS.includes(s.video_kind) ? s.video_kind : 'auto'
         reportImagesSel.value = String([1,2,3,4,5].includes(Number(s.report_images_per_chapter)) ? Number(s.report_images_per_chapter) : 3)
         state.seekMarkersVisible = s.seek_markers !== false
         updateSeekMarkersBtn()
@@ -3432,7 +3458,7 @@
       let sawModelLoad=false
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang()})})
+        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang(),video_kind:getVideoKind()})})
         await readSSE(res,event=>{
           if(event.status==='loading_model'){
             sawModelLoad=true
@@ -3440,7 +3466,8 @@
             setProgress('analyze',15,'モデルをロード中...')
           }
           else if(event.status==='extracting_frames') setProgress('analyze',35,'フレーム抽出中...')
-          else if(event.status==='analyzing') setProgress('analyze',70,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
+          else if(event.status==='analyzing') setProgress('analyze',60,`${event.count} 枚を分析中（${event.mode==='scene'?'シーン検出':'均等'}）`)
+          else if(event.status==='outlining') setProgress('analyze',80,`字幕から章立てを作成中（目安 ${event.target} 章）`)
           else if(event.status==='analyze_warning'||event.status==='refine_warning') setProgress('analyze',70,`注意: ${event.message}`)
           else if(event.status==='done'){
             setProgress('analyze',100,'完了')
@@ -3590,12 +3617,15 @@
       let sawModelLoad=false
       const useLlm=reportUseLlmChk.checked
       const maxImages=parseInt(reportImagesSel.value)||3
+      const rebuild=reportRebuildChk.checked
+      const videoKind=VIDEO_KINDS.includes(meta.video_kind)?meta.video_kind:getVideoKind()
       try{
         setProgress('report',5,'準備中...')
-        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,bookmarks,max_images_per_chapter:maxImages,image_max_side:1280,use_llm:useLlm,transcript:useLlm?state.origTranscript:''})})
+        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,bookmarks,max_images_per_chapter:maxImages,image_max_side:1280,use_llm:useLlm,transcript:useLlm?state.origTranscript:'',rebuild_chapters:rebuild,video_kind:videoKind})})
         await readSSE(res,event=>{
           if(event.status==='loading_model'){ sawModelLoad=true; beginImplicitModelLoad(); setProgress('report',5,'VL モデルをロード中...') }
           else if(event.status==='detecting_scenes') setProgress('report',10,'場面の切り替わりを検出中...')
+          else if(event.status==='outlining') setProgress('report',14,`字幕から章立てを作成中（目安 ${event.target} 章）`)
           else if(event.status==='extracting'&&event.phase==='candidates') setProgress('report',15,`候補フレーム抽出中 (${event.current}/${event.total})`)
           else if(event.status==='selecting') setProgress('report',20,`画像を選定中 (${event.current}/${event.total} 章)`)
           else if(event.status==='generating') setProgress('report',20+Math.round(60*(event.total?(event.current-1)/event.total:0)),`本文を生成中 (${event.current}/${event.total} 章: ${event.title||''})`)

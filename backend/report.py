@@ -233,10 +233,13 @@ def select_images(
     max_per_chapter: int,
     hash_distance: int,
     progress: ProgressFn,
+    detected: list[tuple[float, Image.Image]] | None = None,
 ) -> tuple[list[list[float]], list[list[float]], dict]:
-    """各章に載せる時刻を決める。戻り値は (機械選定の時刻, VL に見せる候補の時刻, 統計)。"""
-    progress({"status": "detecting_scenes"})
-    detected = detect_scene_changes(video_path)
+    """各章に載せる時刻を決める。戻り値は (機械選定の時刻, VL に見せる候補の時刻, 統計)。
+    detected を渡すとシーン検出を省略する（章立ての作り直しで先に検出済みのとき）。"""
+    if detected is None:
+        progress({"status": "detecting_scenes"})
+        detected = detect_scene_changes(video_path)
     cancel.raise_if_canceled()
 
     # 章ごとに候補を振り分け、候補が乏しい章には章の先頭・中間を補う
@@ -659,6 +662,7 @@ def generate_report(
     progress: ProgressFn | None = None,
     reviewer=None,
     transcript_rows: list[tuple[float, str]] | None = None,
+    detected: list[tuple[float, Image.Image]] | None = None,
 ) -> dict:
     """レポートを生成して {report_path, html_path, dir, chapters, images, stats} を返す。
 
@@ -690,7 +694,7 @@ def generate_report(
         nxt = norm[i + 1]["start_sec"] if i + 1 < len(norm) else duration
         c["end_sec"] = max(c["start_sec"], nxt if nxt > c["start_sec"] else duration)
 
-    selected, candidates, stats = select_images(str(p), norm, duration, max_per_chapter, hash_distance, progress)
+    selected, candidates, stats = select_images(str(p), norm, duration, max_per_chapter, hash_distance, progress, detected=detected)
     texts: list[dict] = [{} for _ in norm]
     captions: list[dict[float, str]] = [{} for _ in norm]
     if reviewer is not None:

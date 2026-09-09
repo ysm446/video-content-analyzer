@@ -1,6 +1,20 @@
 # 変更履歴
 
 ## 2026-09-10
+- **動画の種類プリセットと、字幕主導の話題アウトライン（章立て）**（→ design/video-kinds.md）
+  - `backend/outline.py` を新設。auto / presentation / talk / tutorial / footage の種類ごとに
+    「章分けの基準（話題／場面／両方）・粒度・章名の付け方」を持ち、話題主導のときは字幕全文
+    （等間隔サンプル・最大 9000 文字）をテキストのみ推論（`VideoReviewer.text_infer`）に渡して
+    json_schema で章立てを生成。最短長未満の章は統合
+  - `/review/analyze` に `video_kind` を追加。話題主導で字幕があるときは coarse パス後に
+    `outlining` を流してアウトラインで scenes を置き換え、refine は行わない。結果と data.json の
+    meta に `video_kind` / `chapter_basis` を保存
+  - `/report/generate` に `rebuild_chapters` / `video_kind` を追加。字幕から章立てを作り直して
+    レポートを作る（プレイヤーのチャプターは変えない）。シーン検出は境界ヒントと画像候補に共用
+  - 設定 → 動画分析 に「動画の種類」セレクトと「レポート用に字幕から章立てを作り直す」チェックを追加
+    （ui-settings `video_kind` / `report_rebuild_chapters`）
+  - 実動画（Computex 12 分）: 映像主導 19 章（重複・描写的な章名）→ 話題主導 6 章
+    （「RTX Spark による PC の再発明」等）。分析 28 秒、レポート 56 秒
 - **モデル管理ポップアップ: 項目のクリックで即ロード**
   - リスト項目をクリックするとそのままロードを開始（ポップアップは閉じ、モデルピルのシマーで進行表示）。
     ロード済みのモデルをクリックした場合は閉じるだけ

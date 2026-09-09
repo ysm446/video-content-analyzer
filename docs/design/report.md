@@ -76,6 +76,13 @@ video.mp4
 分析パネルの操作行に「レポート」ボタン（`.btn-ghost`・Lucide `book-text`）。章立てがあるときだけ有効。
 進捗はステータスバー（kind=`report`）、完了時にエクスプローラーで `report.html` を選択表示。
 
+## 章立ての作り直し（2026-09-10・→ video-kinds.md）
+
+分析のチャプターは映像主導で細切れになりやすいため、設定「レポート用に字幕から章立てを作り直す」
+（既定 ON）が有効で VL を使うときは、`/report/generate` が先にシーン検出＋字幕から話題アウトラインを
+作り、その章でレポートを組む。プレイヤーのチャプターは変えない。種類は `meta.video_kind` → 設定値。
+Computex 12 分では 19 章 → 5 章になった。
+
 ## 第2段階（実装済み・2026-09-10）: VL による本文生成と画像選定
 
 `backend/report.py` の `generate_chapter_texts()` ＋ `VideoReviewer.report_chapter()`

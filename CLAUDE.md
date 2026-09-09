@@ -63,6 +63,7 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 | `backend/vram.py` | VRAM 制限ユーティリティ（全モデル共通） |
 | `backend/align.py` | wav2vec2 CTC 強制アライメント（WhisperX 移植・エンジン=whisperx 時に使用） |
 | `backend/model_catalog.py` | models/ フォルダスキャン・モデル一覧生成 |
+| `backend/outline.py` | 動画の種類プリセット（auto / presentation / talk / tutorial / footage）と、字幕主導の話題アウトライン生成。分析とレポートの両方が使う（→ docs/design/video-kinds.md） |
 | `backend/report.py` | 動画レポート（章立て＋代表画像の 1 ページ Markdown）生成。シーン変化検出＋知覚ハッシュ間引き（→ docs/design/report.md） |
 | `run_backend.py` | uvicorn 起動エントリーポイント（CUDA キャップ設定） |
 | `start.bat` | Windows 起動スクリプト |
@@ -139,7 +140,9 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /review/models` — VL モデル切り替え（`model_history` に記録）
 - `POST /review/load` — VL モデルを明示的にロード
 - `POST /review/unload` — VL モデルを VRAM から解放
-- `POST /review/analyze` — 動画分析（SSE）
+- `POST /review/analyze` — 動画分析（SSE）。`video_kind`（既定 auto）が話題主導の種類で字幕があるときは
+  coarse パスのあと `outlining` イベントを流し、字幕から話題アウトラインを作って映像主導の scenes を
+  置き換える（refine は行わない）。結果に `video_kind` / `chapter_basis` を含む（→ docs/design/video-kinds.md）
 - `POST /review/qa` — 動画への質問（SSE）。`history` で直近ターンを渡すマルチターン対応。
   `bookmarks`（ユーザーのしおり `[{time_sec, title, comment}]`）を渡すと
   「ユーザーが付けたしおり」ラベル付きセクションとしてプロンプトに挿入される。
@@ -184,7 +187,8 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### 設定
 - `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode / screenshot_format /
-  root_folder / show_file_panel / report_use_llm / report_images_per_chapter 等）
+  root_folder / show_file_panel / video_kind / report_use_llm / report_rebuild_chapters /
+  report_images_per_chapter 等。`video_kinds` に種類の選択肢）
 - `POST /ui-settings` — UI 設定保存
 
 ### 動画情報
@@ -202,11 +206,13 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 - `POST /report/generate` — 章立て（`chapters`）＋ `meta` ＋ `bookmarks` から
   `{動画名}_report/report.md`・`report.html`（画像 base64 埋め込みの単一ファイル）・`report.json`・
   `images/`（長辺 1280px JPEG）を生成（SSE・中止対応）。
+  `rebuild_chapters`（既定 true・use_llm 時）なら先にシーン検出＋字幕から話題アウトラインを作り、
+  その章でレポートを作る（プレイヤーのチャプターは変えない。`video_kind` で基準を指定）。
   ffmpeg シーン変化検出 → dHash＋画素差で類似画像を間引き → `use_llm`（既定 true）なら
   章ごとに VL モデルへ候補フレーム＋区間の字幕（日本語→補正→原文 SRT の順、無ければ
   `transcript`）を渡して本文（summary / points）と掲載画像・キャプションを json_schema で生成
   （`VideoReviewer.report_chapter`）。失敗した章は機械選定で続行。
-  イベント: (loading_model) / detecting_scenes / extracting{phase} / selecting /
+  イベント: (loading_model) / detecting_scenes / (outlining{kind,target}) / extracting{phase} / selecting /
   (generating{current,total,title} / report_warning) / writing /
   done{report_path,html_path,dir,chapters,images,stats} / canceled / error。詳細は docs/design/report.md
 
@@ -246,7 +252,9 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
     "genre": "ジャンル",
     "summary": "動画全体の概要（1〜2文）",
     "detail": "内容のまとめ（概要より詳しい複数文／箇条書き）",
-    "tags": ["タグ1", "タグ2"]
+    "tags": ["タグ1", "タグ2"],
+    "video_kind": "presentation",
+    "chapter_basis": "topic"
   },
   "scenes": [
     {
@@ -310,11 +318,12 @@ error             → {message}
 loading_model     → VL モデルが未ロードの場合のみ
 extracting_frames → {pass: "coarse"} / refine 時は {pass: "refine", current, total, range}
 analyzing         → {count, interval, duration, mode, pass, analysis_mode}
+outlining         → {kind, target}（video_kind が話題主導で字幕があるとき。字幕から章立てを生成中）
 analyze_warning   → {pass, message}（トークン上限打ち切り・コンテキスト予算による
                      フレーム間引き/解像度削減・画像処理エラーの縮小リトライを通知）
 refine_warning    → {message, current, total, range}（refine 失敗時、coarse 結果で継続）
 canceled          → ユーザーが POST /cancel で中断したとき
-done              → {result: {summary, detail, scenes, tags, genre}, meta}
+done              → {result: {summary, detail, scenes, tags, genre, video_kind, chapter_basis}, meta}
 error             → {message}
 ```
 ※ transcript はフロントエンドがリクエストで送る（analyze 内で ASR は行わない）
@@ -408,6 +417,7 @@ video.mp4
 | シークバー | コントロール2段構成の1段目に全幅で独立表示（2段目が操作ボタン列）。マウスオーバーでサムネールプレビュー。チャプター位置（灰）・ブックマーク位置（橙）のティックマーカーを重ね描画し、コントロール列の「マーカー」トグルで表示切り替え（ui-settings `seek_markers`・既定 ON） |
 | ブックマーク | ユーザーが再生位置に打つしおり。プレイヤーコントロール列またはブックマークタブ内のボタンで追加 → サーバー側 ffmpeg でサムネール生成 → 追加直後にタイトル・コメントのインライン編集を開く。行クリックでシーク、「…」メニューから編集・削除（サムネールも削除）。チャプターと違い即時保存（`/cache/patch`） |
 | ファイル一覧パネル | 画面左端のサイドバー。ルートフォルダ（`root_folder`）配下の動画を実階層ツリーで表示（フォルダ展開時に `/folder/list` で遅延読み込み）。各行に分析済み・字幕バッジと分析サムネール。検索ボックス入力で `/folder/search` による配下フラット表示。行クリックで動画を開き、再生中はハイライト。`*.cache/` 等の管理フォルダは表示しない。右端をドラッグで幅調整（`file_panel_width` 永続化・ダブルクリックで既定幅）。ルートフォルダ選択はスプリットボタンで、右端キャレットから最近開いたフォルダ履歴（ui-settings の `root_folder_history`・最大10件）をプルダウン選択できる。各行の「…」ボタンまたは行の右クリックで開くメニューから場所を開く（エクスプローラーで選択表示・IPC `fs:showItemInFolder`）、名前の変更（インライン編集・Enter 確定 / Esc キャンセル）、ごみ箱への移動。開いている動画をリネーム・削除するときはロック解除のため先に閉じてから実行し、リネーム後は新パスで自動再オープン |
+| 動画の種類 | 設定 → 動画分析 → 解析 の先頭。auto / プレゼン・講演・解説 / 対談・インタビュー・配信 / チュートリアル・画面操作 / 映像作品・Vlog・スポーツ。話題主導の種類は字幕の話題の切れ目で章を分け、章名も話題名になる（字幕が必要）。レポートは「レポート用に字幕から章立てを作り直す」で同じ仕組みを使う |
 | 設定ポップアップ | 左に項目ナビ（動画分析 / 字幕 / プレイヤー / プロンプト / ランタイム / 情報）、右にパラメータの2カラム構成。背景は暗転＋ぼかし（backdrop-filter）。Esc / 背景クリックで閉じる |
 | ランタイム設定 | 先頭に「モデルフォルダ」（GGUF の置き場所。パスと検出数を表示し、フォルダ選択／既定に戻すで切り替え）。llama-cpp はビルド一覧（CUDA/CPU/Vulkan 等・推奨マーク付き）から選んでインストールし、使用バージョンをプルダウンで切り替え。Whisper は tiny〜large-v3-turbo から選んでインストール・使用モデルを切り替え（未インストールのモデルは適用時に自動ダウンロード）。文字起こしエンジン（faster-whisper 単体 / + WhisperX 整列）もここで切り替え（整列モデルは初回文字起こし時に自動ダウンロード）。進捗は行内表示、ステータスバーの中止ボタンで中断可（Whisper を除く） |
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード。リストの項目をクリックすると即ロード（ロードボタンは廃止。フッターはアンロードのみ）。最近使ったモデル（settings.json の `model_history`・新しい順・最大8件。`GET /review/models` の `recent`）を「最近使ったモデル」グループとして先頭に表示し、残りは「その他」に並べる |

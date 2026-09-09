@@ -32,6 +32,7 @@ from . import prompts as _prompts
 from . import cancel
 from . import runtime_manager
 from . import report as report_builder
+from . import outline as outline_builder
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -441,6 +442,7 @@ class ReviewRequest(BaseModel):
     frame_mode:   str   = "uniform"  # "uniform" | "scene"
     analysis_mode: str  = "speed"    # "speed" | "balanced" | "quality"
     output_lang: str = "ja"          # "ja" | "en"
+    video_kind: str = "auto"         # backend/outline.py の VIDEO_KINDS（章分けの基準・粒度・章名の付け方）
 
 
 class QuestionsRequest(BaseModel):
@@ -510,6 +512,8 @@ class UISettingsRequest(BaseModel):
     show_file_panel: Optional[bool] = None
     file_panel_width: Optional[int] = None  # px（180〜600 にクランプ）
     seek_markers: Optional[bool] = None  # シークバーのチャプター・ブックマークマーカー表示
+    video_kind: Optional[str] = None               # 動画の種類（章分けの基準・粒度）
+    report_rebuild_chapters: Optional[bool] = None # レポート: 字幕から章立てを作り直す
     report_use_llm: Optional[bool] = None          # レポート: VL モデルで本文生成・画像選定
     report_images_per_chapter: Optional[int] = None  # レポート: 1 章あたりの画像上限（1〜5）
 
@@ -569,6 +573,8 @@ class ReportGenerateRequest(BaseModel):
     hash_distance: int = Field(default=12, ge=0, le=30)
     use_llm: bool = True                 # VL モデルで章ごとの本文と掲載画像を生成する（第2段階）
     transcript: str = ""                 # "[m:ss] text" 形式（SRT が見つからない場合のフォールバック）
+    rebuild_chapters: bool = True        # 字幕から話題ごとの章立てを作り直す（use_llm のときのみ）
+    video_kind: str = "auto"             # 章立ての基準（分析時の meta.video_kind か設定値）
 
 
 class FolderListRequest(BaseModel):
@@ -736,6 +742,9 @@ def get_ui_settings():
         "show_file_panel": s.get("show_file_panel", True),
         "file_panel_width": s.get("file_panel_width", 272),
         "seek_markers": s.get("seek_markers", True),
+        "video_kind": s.get("video_kind", "auto"),
+        "video_kinds": outline_builder.kind_options(),
+        "report_rebuild_chapters": s.get("report_rebuild_chapters", True),
         "report_use_llm": s.get("report_use_llm", True),
         "report_images_per_chapter": s.get("report_images_per_chapter", 3),
     }
@@ -786,6 +795,10 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["file_panel_width"] = max(180, min(600, int(req.file_panel_width)))
     if req.seek_markers is not None:
         to_save["seek_markers"] = bool(req.seek_markers)
+    if req.video_kind is not None:
+        to_save["video_kind"] = req.video_kind if req.video_kind in outline_builder.VIDEO_KINDS else "auto"
+    if req.report_rebuild_chapters is not None:
+        to_save["report_rebuild_chapters"] = bool(req.report_rebuild_chapters)
     if req.report_use_llm is not None:
         to_save["report_use_llm"] = bool(req.report_use_llm)
     if req.report_images_per_chapter is not None:
@@ -1490,12 +1503,15 @@ async def review_analyze(req: ReviewRequest):
         raise HTTPException(400, f"無効な frame_mode: {req.frame_mode}")
     _validate_analysis_mode(req.analysis_mode)
     _validate_output_lang(req.output_lang)
+    if req.video_kind not in outline_builder.VIDEO_KINDS:
+        raise HTTPException(400, f"無効な video_kind: {req.video_kind}")
 
     async def stream():
         loop = asyncio.get_event_loop()
         cancel.clear_cancel()
         transcript = req.transcript
         plan = _analysis_plan(req.analysis_mode, req.max_frames)
+        kind = outline_builder.resolve_kind(req.video_kind, transcript)
 
         try:
             if not video_reviewer.loaded:
@@ -1544,6 +1560,28 @@ async def review_analyze(req: ReviewRequest):
             duration = float(meta.get("duration") or 0.0)
             _snap_scene_timestamps(coarse_result, meta.get("timestamps") or [], meta.get("interval"))
             entries = _build_toc_entries(coarse_result, duration)
+            chapter_basis = "visual"
+
+            # 話題主導の種類（プレゼン・対談・チュートリアル）: 字幕からアウトラインを作って
+            # 映像主導の scenes を置き換える。字幕が無い・失敗したら映像主導のまま続行
+            if kind.basis != outline_builder.BASIS_VISUAL and transcript.strip():
+                hints = (meta.get("timestamps") or []) if (kind.basis == outline_builder.BASIS_BOTH and meta.get("mode") == "scene") else None
+                yield sse({"status": "outlining", "kind": kind.id, "target": outline_builder.chapter_target(kind, duration)})
+                try:
+                    outline_entries = await loop.run_in_executor(
+                        None, outline_builder.generate_outline, video_reviewer, transcript, duration, kind, hints, req.output_lang
+                    )
+                except cancel.CanceledError:
+                    raise
+                except Exception as e:
+                    outline_entries = []
+                    yield sse({"status": "analyze_warning", "pass": "outline", "message": f"章立ての生成に失敗したため映像主導の章で続行します: {e}"})
+                if outline_entries:
+                    entries = outline_entries
+                    chapter_basis = "topic"
+                    plan = {**plan, "refine_limit": 0}  # refine は映像の細分化なので話題主導では行わない
+                elif transcript.strip():
+                    yield sse({"status": "analyze_warning", "pass": "outline", "message": "字幕から章立てを作れなかったため映像主導の章で続行します"})
 
             if int(plan["refine_limit"]) > 0 and entries:
                 targets = _select_refine_targets(entries, duration, plan)
@@ -1599,6 +1637,8 @@ async def review_analyze(req: ReviewRequest):
                 "detail": coarse_result.get("detail", ""),
                 "genre": coarse_result.get("genre", "不明"),
                 "tags": coarse_result.get("tags", []),
+                "video_kind": kind.id,
+                "chapter_basis": chapter_basis,
                 "scenes": [
                     {
                         "timestamp": e.get("timestamp", "0:00"),
@@ -1927,16 +1967,44 @@ async def report_generate(req: ReportGenerateRequest):
             reviewer = video_reviewer
         transcript_rows = _report_transcript_rows(video_path, req.transcript) if req.use_llm else []
 
+        # 字幕から話題ごとの章立てを作り直す（分析のチャプターは映像主導で細切れになりやすいため）。
+        # シーン検出は境界のヒントに使い、結果は generate_report にも渡して二重検出を避ける
+        chapters = req.chapters
+        detected = None
+        if req.use_llm and req.rebuild_chapters and transcript_rows:
+            transcript_text = outline_builder.rows_to_text(transcript_rows)
+            kind = outline_builder.resolve_kind(req.video_kind, transcript_text)
+            duration = report_builder.probe_duration(str(video_path))
+            try:
+                yield sse({"status": "detecting_scenes"})
+                detected = await loop.run_in_executor(None, report_builder.detect_scene_changes, str(video_path))
+                hints = [t for t, _ in detected] if kind.basis == outline_builder.BASIS_BOTH else None
+                yield sse({"status": "outlining", "kind": kind.id, "target": outline_builder.chapter_target(kind, duration)})
+                rebuilt = await loop.run_in_executor(
+                    None, outline_builder.generate_outline, video_reviewer, transcript_text, duration, kind, hints, "ja"
+                )
+            except cancel.CanceledError:
+                yield sse_canceled()
+                return
+            except Exception as e:
+                rebuilt = []
+                yield sse({"status": "report_warning", "message": f"章立ての作り直しに失敗したため分析のチャプターを使います: {e}"})
+            if rebuilt:
+                chapters = [{"start_sec": c["start_sec"], "title": c["title"], "summary": c["summary"]} for c in rebuilt]
+            else:
+                yield sse({"status": "report_warning", "message": "字幕から章立てを作れなかったため分析のチャプターを使います"})
+
         def run():
             try:
                 result = report_builder.generate_report(
-                    str(video_path), req.chapters, req.meta, req.bookmarks,
+                    str(video_path), chapters, req.meta, req.bookmarks,
                     max_per_chapter=req.max_images_per_chapter,
                     image_max_side=req.image_max_side,
                     hash_distance=req.hash_distance,
                     progress=q.put,
                     reviewer=reviewer,
                     transcript_rows=transcript_rows,
+                    detected=detected,
                 )
                 q.put({"status": "done", **result})
             except cancel.CanceledError:
