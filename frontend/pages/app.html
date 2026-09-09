@@ -652,12 +652,11 @@
       <div class="model-modal-body">
         <div>
           <div class="modal-section-label">動画レビューモデル</div>
-          <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">字幕翻訳もここで選択したモデルを共通で使います。</div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">クリックしたモデルをすぐにロードします。字幕翻訳も同じモデルを共通で使います。</div>
           <div id="modalModelList"></div>
           <div class="modal-footer-row" style="margin-top:10px">
             <span class="modal-status-text" id="modalStatusText">未ロード</span>
             <div style="display:flex;gap:6px;margin-left:auto;flex-shrink:0">
-              <button class="btn btn-primary" id="modalLoadBtn" style="padding:5px 14px;font-size:12px"><i data-lucide="download"></i> ロード</button>
               <button class="btn btn-ghost" id="modalUnloadBtn" style="padding:5px 14px;font-size:12px" disabled><svg class="lucide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5.5 5.5 13.8h13L12 5.5Z"/><path d="M6 18.5h12"/></svg> アンロード</button>
             </div>
           </div>
@@ -3296,12 +3295,14 @@
         el.addEventListener('click',()=>{
           _modalSelectedId=el.dataset.id
           list.querySelectorAll('.modal-model-item').forEach(e=>e.classList.toggle('selected',e===el))
+          // クリックで即ロード（ロード済みのモデルをクリックしても何もしない）
+          if(info.loaded && info.current===el.dataset.id){ modelModal.style.display='none'; return }
+          loadModelById(el.dataset.id)
         })
       })
       const label=info.available?.find(m=>m.id===info.current)?.label??info.current??''
       document.getElementById('modalStatusText').textContent=info.loaded?`ロード済み: ${label}`:'未ロード'
       document.getElementById('modalUnloadBtn').disabled=!info.loaded
-      document.getElementById('modalLoadBtn').disabled=false
     }
 
     async function unloadCurrentModel(){
@@ -3320,9 +3321,9 @@
     document.getElementById('modelModalClose').addEventListener('click',()=>modelModal.style.display='none')
     document.getElementById('modelModalBg').addEventListener('click',()=>modelModal.style.display='none')
 
-    document.getElementById('modalLoadBtn').addEventListener('click',async()=>{
-      if(!_modalSelectedId || _modelLoading) return
-      const selectedId=_modalSelectedId
+    async function loadModelById(selectedId){
+      if(!selectedId || _modelLoading) return
+      _modalSelectedId=selectedId
       // ポップアップは即閉じ、モデルピルのシマーアニメーションで進行を示す
       modelModal.style.display='none'
       _modelLoading=true
@@ -3346,7 +3347,7 @@
         await fetchReviewModelStatus()
       }
       fetchQaSuggestions()  // ロード完了後に内容ベースの質問チップを生成
-    })
+    }
 
     document.getElementById('modalUnloadBtn').addEventListener('click',unloadCurrentModel)
 
