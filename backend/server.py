@@ -1929,6 +1929,41 @@ def _report_transcript_rows(video_path: Path, fallback_transcript: str) -> list[
     return rows
 
 
+class ReportLoadRequest(BaseModel):
+    video_path: str
+
+
+@app.post("/report/load")
+def report_load(req: ReportLoadRequest):
+    """生成済みレポートの構造（report.json）を返す。無ければ 404。アプリ内プレビュー用。"""
+    out_dir = report_builder.report_dir_for(req.video_path)
+    data_file = out_dir / "report.json"
+    if not data_file.exists():
+        raise HTTPException(404, "レポートがありません")
+    try:
+        data = json.loads(data_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"report.json の読み込みに失敗: {e}")
+    html_path = out_dir / "report.html"
+    return {
+        "data": data,
+        "report_path": str(out_dir / "report.md"),
+        "html_path": str(html_path) if html_path.exists() else None,
+    }
+
+
+@app.get("/report/image")
+def report_image(video_path: str, name: str):
+    """レポートフォルダの画像（images/...）を返す。フォルダ外参照は拒否。"""
+    out_dir = report_builder.report_dir_for(video_path).resolve()
+    img_path = (out_dir / name).resolve()
+    if not img_path.is_relative_to(out_dir / "images"):
+        raise HTTPException(403, "不正なパス")
+    if not img_path.exists():
+        raise HTTPException(404, "画像が見つかりません")
+    return FileResponse(img_path, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/report/generate")
 async def report_generate(req: ReportGenerateRequest):
     """章立て＋代表画像の 1 ページ Markdown レポートを {動画名}_report/ に生成する（SSE）。

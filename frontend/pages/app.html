@@ -76,12 +76,17 @@
     .file-panel{width:272px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);min-height:0}
     .file-panel-header{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 12px 14px;min-height:56px;box-sizing:border-box;border-bottom:1px solid var(--border)}
     .file-panel-title{font-size:12px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-    .file-panel-actions{display:flex;gap:4px;flex-shrink:0}
-    .file-panel-btn{width:28px;height:28px;border-radius:8px}
+    .file-panel-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+    /* .ctrl-btn（円形 34px）より後勝ちにするため2クラスで指定し、ヘッダー用の 28px・角丸 8px にする */
+    .ctrl-btn.file-panel-btn{width:28px;height:28px;border-radius:8px}
+    .ctrl-btn.file-panel-btn:disabled{opacity:.45;cursor:default;transform:none}
+    .ctrl-btn.file-panel-btn:disabled:hover{background:var(--surface2);border-color:var(--border)}
     .file-panel-btn svg.lucide{width:14px;height:14px}
-    .root-select-group{display:flex}
-    .root-select-group #selectRootBtn{border-top-right-radius:0;border-bottom-right-radius:0}
-    .root-history-caret{width:16px;margin-left:1px;border-top-left-radius:0;border-bottom-left-radius:0}
+    /* スプリットボタン: 本体＋キャレットを枠線を共有する一体の角丸にする（style-guide.md §9 アイコンボタン） */
+    .root-select-group{display:inline-flex;align-items:center}
+    .root-select-group .ctrl-btn.file-panel-btn:first-child{border-top-right-radius:0;border-bottom-right-radius:0}
+    .root-select-group .ctrl-btn.root-history-caret{width:20px;margin-left:-1px;border-top-left-radius:0;border-bottom-left-radius:0}
+    .root-select-group .ctrl-btn.file-panel-btn:hover:not(:disabled){position:relative;z-index:1}
     .root-history-caret svg.lucide{width:12px;height:12px;stroke-width:2.4}
     /* 位置はヘッダー（position:relative）基準。.file-menu より後勝ちにするため2クラスで上書き */
     .file-menu.root-history-menu{display:none;top:calc(100% - 6px);left:auto;right:10px;min-width:210px;max-width:calc(100% - 20px)}
@@ -374,6 +379,25 @@
     .pane-tab.active{color:var(--accent);background:var(--accent-tint-bg)}
     /* タブ列右端の小さなアイコンボタン（ブックマーク追加）。ヘッダー内なので
        リストをスクロールしても隠れない */
+    /* レポートのアプリ内プレビュー（チャプター／ブックマークと同じペインの3つ目のタブ） */
+    .report-view{display:flex;flex-direction:column;gap:12px}
+    .report-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .report-toolbar .btn{font-size:11px;padding:3px 10px;display:inline-flex;align-items:center;gap:5px}
+    .report-meta{font-size:12px;color:var(--text-dim);line-height:1.5}
+    .report-text{font-size:13px;line-height:1.6;white-space:pre-wrap}
+    .report-toc{display:flex;flex-direction:column;gap:2px}
+    .report-toc-item{display:flex;gap:8px;align-items:baseline;font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer;color:var(--text)}
+    .report-toc-item:hover{background:var(--surface2)}
+    .report-toc-ts{color:var(--text-dim);font-variant-numeric:tabular-nums;flex-shrink:0}
+    .report-chapter{padding:10px 12px;background:var(--surface2);border-radius:8px;display:flex;flex-direction:column;gap:8px}
+    .report-chapter-title{font-size:14px;font-weight:600;line-height:1.4;cursor:pointer;display:flex;gap:8px;align-items:baseline}
+    .report-chapter-title:hover{color:var(--accent-hover)}
+    .report-chapter-range{font-size:11px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+    .report-points{margin:0;padding-left:1.2em;font-size:13px;line-height:1.6}
+    .report-figure{margin:0;cursor:pointer}
+    .report-figure img{width:100%;border-radius:6px;display:block;border:1px solid var(--border);background:#000}
+    .report-figure:hover img{filter:brightness(1.08)}
+    .report-figure figcaption{font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.4}
     .pane-header-btn{margin-left:auto;width:28px;height:28px;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
     .pane-header-btn:hover{background:var(--surface3);border-color:var(--border-strong)}
     .pane-header-btn:disabled{opacity:.45;cursor:default}
@@ -586,6 +610,7 @@
             <div class="analysis-header" style="display:flex;align-items:center;gap:4px">
               <button class="pane-tab active" id="paneTabChapters" type="button">チャプター</button>
               <button class="pane-tab" id="paneTabBookmarks" type="button">ブックマーク</button>
+              <button class="pane-tab" id="paneTabReport" type="button">レポート</button>
               <button class="pane-header-btn" id="addBookmarkBtn" type="button" title="現在位置をブックマーク" style="display:none"><i data-lucide="bookmark-plus"></i></button>
             </div>
             <div class="analysis-scroll">
@@ -608,6 +633,13 @@
                 <div class="result-row" id="bookmarkResult" style="margin-bottom:8px"></div>
                 <div class="scenes-list" id="bookmarksList"></div>
                 <div id="bookmarksEmpty" class="qa-placeholder" style="padding:16px">再生位置でブックマークを追加すると、しおりとしてここに記録されます</div>
+              </div>
+              <div id="reportView" style="display:none">
+                <div class="report-view" id="reportContent" style="display:none"></div>
+                <div id="reportEmpty" class="qa-placeholder" style="padding:16px;flex-direction:column;gap:10px">
+                  <span>レポートはまだありません。動画を分析してから「レポート」で生成すると、ここに表示されます</span>
+                  <button class="btn btn-ghost" id="reportEmptyGenerateBtn" type="button" style="font-size:11px;padding:3px 10px;display:inline-flex;align-items:center;gap:5px"><i data-lucide="book-text"></i> レポートを生成</button>
+                </div>
               </div>
             </div>
           </section>
@@ -1682,11 +1714,103 @@
       state.paneTab=name
       document.getElementById('paneTabChapters').classList.toggle('active',name==='chapters')
       document.getElementById('paneTabBookmarks').classList.toggle('active',name==='bookmarks')
+      document.getElementById('paneTabReport').classList.toggle('active',name==='report')
       document.getElementById('addBookmarkBtn').style.display = name==='bookmarks'?'':'none'
       document.getElementById('analysisView').style.display = name==='chapters'?'':'none'
       document.getElementById('bookmarksView').style.display = name==='bookmarks'?'':'none'
+      document.getElementById('reportView').style.display = name==='report'?'':'none'
       if(name==='bookmarks') renderBookmarks()
+      if(name==='report') renderReportPreview()
     }
+
+    // ---------- レポートのアプリ内プレビュー ----------
+    // 生成済みの report.json を /report/load で読み、章タイトル・画像のクリックで再生位置へ飛べる形で表示する。
+    // 本文はモデル出力（信頼できないテキスト）なので必ず escHtml を通す
+    const reportState={data:null,htmlPath:null,reportPath:null}
+    async function loadReportPreview(){
+      reportState.data=null; reportState.htmlPath=null; reportState.reportPath=null
+      if(state.videoPath){
+        try{
+          const res=await fetch(`${API}/report/load`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath})})
+          if(res.ok){
+            const body=await res.json()
+            reportState.data=body.data||null
+            reportState.htmlPath=body.html_path||null
+            reportState.reportPath=body.report_path||null
+          }
+        }catch{}
+      }
+      renderReportPreview()
+    }
+    function reportImageUrl(rel){
+      return `${API}/report/image?video_path=${encodeURIComponent(state.videoPath||'')}&name=${encodeURIComponent(rel)}`
+    }
+    function renderReportPreview(){
+      const content=document.getElementById('reportContent')
+      const empty=document.getElementById('reportEmpty')
+      const d=reportState.data
+      if(!d||!state.videoPath){
+        content.style.display='none'; content.innerHTML=''
+        empty.style.display='flex'
+        document.getElementById('reportEmptyGenerateBtn').disabled=document.getElementById('reportBtn').disabled
+        return
+      }
+      empty.style.display='none'
+      content.style.display=''
+      const meta=d.meta||{}
+      const chapters=Array.isArray(d.chapters)?d.chapters:[]
+      const info=[`長さ ${fmtTs(d.duration||0)}`]
+      if(meta.genre) info.push(escHtml(meta.genre))
+      if(d.generated_at) info.push(`生成 ${escHtml(d.generated_at)}`)
+      const stats=d.stats||{}
+      const tags=(meta.tags||[]).filter(t=>typeof t==='string'&&t.trim())
+      let html=`<div class="report-toolbar">
+          <button class="btn btn-ghost" id="reportOpenBtn" type="button" title="レポートファイルの場所を開く"><i data-lucide="external-link"></i> 場所を開く</button>
+          <button class="btn btn-ghost" id="reportRegenBtn" type="button" title="レポートを作り直す"><i data-lucide="refresh-cw"></i> 再生成</button>
+        </div>
+        <div class="report-meta">${info.join(' ／ ')}${chapters.length?` ／ ${chapters.length} 章・画像 ${stats.selected??''} 枚`:''}</div>`
+      if(tags.length) html+=`<div class="tags-wrap">${tags.map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')}</div>`
+      if(meta.summary) html+=`<div class="report-text">${escHtml(meta.summary)}</div>`
+      if(meta.detail) html+=`<div class="report-text" style="color:var(--text-dim)">${escHtml(meta.detail)}</div>`
+      if(chapters.length){
+        html+=`<div><div class="section-label">目次</div><div class="report-toc">${chapters.map(ch=>
+          `<div class="report-toc-item" data-start="${Number(ch.start_sec)||0}"><span class="report-toc-ts">${fmtTs(ch.start_sec||0)}</span><span>${ch.index}. ${escHtml(ch.title||'')}</span></div>`).join('')}</div></div>`
+        html+=chapters.map(ch=>{
+          const pts=(ch.points||[]).filter(p=>typeof p==='string'&&p.trim())
+          const imgs=(ch.images||[]).map(im=>`<figure class="report-figure" data-start="${Number(im.time_sec)||0}" title="クリックでこの場面へ"><img src="${escHtml(reportImageUrl(im.file))}" alt="${escHtml(im.caption||'')}" loading="lazy"><figcaption>${escHtml(im.caption||fmtTs(im.time_sec||0))}</figcaption></figure>`).join('')
+          return `<div class="report-chapter" id="reportCh${ch.index}">
+            <div class="report-chapter-title" data-start="${Number(ch.start_sec)||0}" title="クリックでこの章の先頭へ"><span>${ch.index}. ${escHtml(ch.title||'')}</span><span class="report-chapter-range">${fmtTs(ch.start_sec||0)} 〜 ${fmtTs(ch.end_sec||0)}</span></div>
+            ${ch.summary?`<div class="report-text">${escHtml(ch.summary)}</div>`:''}
+            ${pts.length?`<ul class="report-points">${pts.map(p=>`<li>${escHtml(p)}</li>`).join('')}</ul>`:''}
+            ${imgs}
+          </div>`
+        }).join('')
+      }
+      const bms=Array.isArray(d.bookmarks)?d.bookmarks:[]
+      if(bms.length){
+        html+=`<div><div class="section-label">ブックマーク</div>${bms.map(b=>`<div class="report-chapter" style="margin-bottom:8px">
+          <div class="report-chapter-title" data-start="${Number(b.time_sec)||0}"><span>${escHtml(b.title||'')}</span><span class="report-chapter-range">${fmtTs(b.time_sec||0)}</span></div>
+          ${b.image?`<figure class="report-figure" data-start="${Number(b.time_sec)||0}"><img src="${escHtml(reportImageUrl(b.image))}" alt="" loading="lazy"></figure>`:''}
+          ${b.comment?`<div class="report-text">${escHtml(b.comment)}</div>`:''}
+        </div>`).join('')}</div>`
+      }
+      content.innerHTML=html
+      lucide.createIcons({nodes:[content]})
+      document.getElementById('reportOpenBtn').addEventListener('click',()=>{
+        const p=reportState.htmlPath||reportState.reportPath
+        if(p&&window.electronAPI?.showItemInFolder) window.electronAPI.showItemInFolder(p)
+      })
+      document.getElementById('reportRegenBtn').addEventListener('click',()=>document.getElementById('reportBtn').click())
+      document.getElementById('reportRegenBtn').disabled=document.getElementById('reportBtn').disabled
+    }
+    // 章タイトル・目次・画像のクリックで再生位置へ
+    document.getElementById('reportView').addEventListener('click',e=>{
+      const el=e.target.closest('[data-start]')
+      if(!el||e.target.closest('button')) return
+      const t=Number(el.dataset.start)
+      if(Number.isFinite(t)&&state.videoPath){ video.currentTime=Math.max(0,Math.min(video.duration||t,t)); updateSubtitles() }
+    })
+    document.getElementById('reportEmptyGenerateBtn').addEventListener('click',()=>document.getElementById('reportBtn').click())
 
     function getBookmarks(){
       return (state.tocData && Array.isArray(state.tocData.bookmarks)) ? state.tocData.bookmarks : []
@@ -1792,6 +1916,7 @@
 
     document.getElementById('paneTabChapters').addEventListener('click',()=>switchPaneTab('chapters'))
     document.getElementById('paneTabBookmarks').addEventListener('click',()=>switchPaneTab('bookmarks'))
+    document.getElementById('paneTabReport').addEventListener('click',()=>switchPaneTab('report'))
     document.getElementById('addBookmarkBtn').addEventListener('click',addBookmarkAtCurrentTime)
     document.getElementById('bookmarkBtn').addEventListener('click',addBookmarkAtCurrentTime)
 
@@ -2159,6 +2284,7 @@
       state.origTranscript=''; state.tocPath=null; state.tocData=null; state.tocDirty=false
       resetSection('transcribe'); resetSection('translate')
       updateReportButton()
+      loadReportPreview()
       clearAnalysisDetail()
       setCurrentVideo(null)
       syncSubtitleToggleButtons()
@@ -2228,6 +2354,7 @@
     }
 
     async function tryAutoLoadCache(videoFilePath){
+      loadReportPreview()  // レポートは data.json と独立に読む（無ければ空表示）
       // 新キャッシュ (video.cache/data.json) を優先、なければ旧 .toc.json にフォールバック
       try{
         const res=await fetch(`${API}/cache/load`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:videoFilePath})})
@@ -3602,6 +3729,8 @@
       if(!btn) return
       const hasChapters=Array.isArray(state.tocData?.toc)&&state.tocData.toc.length>0
       btn.disabled=!state.videoPath||!hasChapters||btn.classList.contains('running')
+      const emptyBtn=document.getElementById('reportEmptyGenerateBtn'); if(emptyBtn) emptyBtn.disabled=btn.disabled
+      const regen=document.getElementById('reportRegenBtn'); if(regen) regen.disabled=btn.disabled
     }
     document.getElementById('reportBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ updateGlobalStatus('report','error','先に動画を読み込んでください'); return }
@@ -3641,7 +3770,7 @@
         })
       }catch(e){ setResult('report',false,`接続エラー: ${e.message}`) }
       finally{ endCancelable(); if(sawModelLoad) endImplicitModelLoad(); btn.classList.remove('running'); updateReportButton() }
-      if(reportPath && window.electronAPI?.showItemInFolder) window.electronAPI.showItemInFolder(reportPath)
+      if(reportPath){ await loadReportPreview(); switchPaneTab('report') }
     })
 
     qaBtn.addEventListener('click',submitQuestion)
