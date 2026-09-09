@@ -31,6 +31,7 @@ from .video_reviewer import VideoReviewer, available_review_models, get_prompts 
 from . import prompts as _prompts
 from . import cancel
 from . import runtime_manager
+from . import report as report_builder
 
 SETTINGS_PATH = Path(__file__).parent.parent / "settings.json"
 
@@ -554,6 +555,16 @@ class ScreenshotRequest(BaseModel):
     video_path: str
     time_sec: float
     format: str = "png"  # "png" | "jpg"
+
+
+class ReportGenerateRequest(BaseModel):
+    video_path: str
+    chapters: list[dict] = Field(default_factory=list)   # [{start_sec, end_sec?, title, summary}]
+    meta: Optional[dict] = None                           # {genre, summary, detail, tags}
+    bookmarks: Optional[list[dict]] = None                # [{id, time_sec, title, comment}]
+    max_images_per_chapter: int = Field(default=3, ge=1, le=8)
+    image_max_side: int = Field(default=1280, ge=480, le=3840)
+    hash_distance: int = Field(default=10, ge=0, le=30)
 
 
 class FolderListRequest(BaseModel):
@@ -1817,6 +1828,56 @@ async def cache_thumbnails_generate(req: ThumbnailsGenerateRequest):
     return {"status": "ok", "thumbnails": thumbnails}
 
 
+@app.post("/report/generate")
+async def report_generate(req: ReportGenerateRequest):
+    """章立て＋代表画像の 1 ページ Markdown レポートを {動画名}_report/ に生成する（SSE）。
+
+    Events:
+      {"status": "detecting_scenes"}
+      {"status": "extracting", "phase": "candidates"|"images", "current", "total"}
+      {"status": "selecting", "current", "total", "picked"}
+      {"status": "writing"}
+      {"status": "done", "report_path", "dir", "chapters", "images", "stats"}
+      {"status": "canceled"} / {"status": "error", "message"}
+    """
+    video_path = Path(req.video_path)
+    if not video_path.exists():
+        raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
+    if len(req.chapters) > 200:
+        raise HTTPException(400, "chapters が多すぎます（最大200）")
+
+    async def stream():
+        loop = asyncio.get_event_loop()
+        cancel.clear_cancel()
+        q: queue.Queue = queue.Queue()
+
+        def run():
+            try:
+                result = report_builder.generate_report(
+                    str(video_path), req.chapters, req.meta, req.bookmarks,
+                    max_per_chapter=req.max_images_per_chapter,
+                    image_max_side=req.image_max_side,
+                    hash_distance=req.hash_distance,
+                    progress=q.put,
+                )
+                q.put({"status": "done", **result})
+            except cancel.CanceledError:
+                q.put({"status": "canceled"})
+            except Exception as e:
+                q.put({"status": "error", "message": str(e)})
+            finally:
+                q.put(None)
+
+        fut = loop.run_in_executor(None, run)
+        while True:
+            ev = await loop.run_in_executor(None, q.get)
+            if ev is None:
+                break
+            yield sse(ev)
+        await fut
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
 @app.post("/video/info")
 async def video_info(req: VideoInfoRequest):
     """動画のスペック（解像度・コーデック・ビットレート等）を ffprobe で返す。"""
@@ -1948,7 +2009,7 @@ VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv"}
 
 # ファイル一覧に出さない管理用フォルダ（分析キャッシュ・スクリーンショット・隠しフォルダ）
 def _is_managed_dir(name: str) -> bool:
-    return name.startswith(".") or name.endswith(".cache") or name.endswith("_screenshot")
+    return name.startswith(".") or name.endswith(".cache") or name.endswith("_screenshot") or name.endswith("_report")
 
 
 def _is_analyzed(cache: Path) -> bool:
@@ -2055,7 +2116,7 @@ _INVALID_NAME_CHARS = set('\\/:*?"<>|')
 
 @app.post("/file/rename")
 def file_rename(req: FileRenameRequest):
-    """動画/フォルダのリネーム。動画はサイドカー（.cache/・SRT・_screenshot/）も一緒にリネームする。"""
+    """動画/フォルダのリネーム。動画はサイドカー（.cache/・SRT・_screenshot/・_report/）も一緒にリネームする。"""
     p = Path(req.path)
     if not p.is_absolute() or not p.exists():
         raise HTTPException(404, "ファイルが見つかりません")
@@ -2110,8 +2171,9 @@ def file_rename(req: FileRenameRequest):
             continue
         for suffix in ("original", "corrected", "japanese"):
             _try_rename(d / f"{old_stem}.{suffix}.srt", d / f"{new_stem}.{suffix}.srt")
-    # スクリーンショットフォルダ
+    # スクリーンショット・レポートフォルダ
     _try_rename(p.parent / (old_stem + "_screenshot"), p.parent / (new_stem + "_screenshot"))
+    _try_rename(p.parent / (old_stem + "_report"), p.parent / (new_stem + "_report"))
 
     # data.json 内の動画ファイル名も更新
     data_file = new_cache / "data.json"

@@ -61,6 +61,7 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 | `backend/vram.py` | VRAM 制限ユーティリティ（全モデル共通） |
 | `backend/align.py` | wav2vec2 CTC 強制アライメント（WhisperX 移植・エンジン=whisperx 時に使用） |
 | `backend/model_catalog.py` | models/ フォルダスキャン・モデル一覧生成 |
+| `backend/report.py` | 動画レポート（章立て＋代表画像の 1 ページ Markdown）生成。シーン変化検出＋知覚ハッシュ間引き（→ docs/design/report.md） |
 | `run_backend.py` | uvicorn 起動エントリーポイント（CUDA キャップ設定） |
 | `start.bat` | Windows 起動スクリプト |
 | `settings.json` | モデル選択・UI 設定の永続化（自動生成） |
@@ -168,13 +169,14 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   動画ごとに `analyzed` / `has_original_srt` / `has_japanese_srt` / `thumbnail`（scene_0.jpg）を返す。
   `analyzed` は data.json の内容（meta / scenes / toc の有無）で判定（ブックマークだけの
   data.json を分析済みと誤表示しないため）。字幕・サムネールは存在チェックのみ。
-  `*.cache/`・`*_screenshot/`・隠しフォルダは一覧から除外
+  `*.cache/`・`*_screenshot/`・`*_report/`・隠しフォルダは一覧から除外
 - `POST /folder/search` — ルート配下を再帰走査しファイル名部分一致で動画を検索
   （`{root, query}`。上限300件・`truncated` フラグ・`rel_dir` 付き）
 - `POST /file/rename` — 動画/フォルダのリネーム（`{path, new_name}`）。動画はサイドカー
   （`.cache/` とその中の SRT・旧横置き SRT・`_screenshot/`・data.json の `video` フィールド）も
   一緒にリネーム。動画本体を先にリネームするため、再生ロック等で失敗してもサイドカーは無傷。
   一部サイドカーの失敗は `warnings` で返す。404/400（不正文字）/409（同名あり）
+- `*.cache/`・`*_screenshot/`・`*_report/` はサイドカーとしてリネーム・削除に追随する
 - 削除はバックエンドではなく Electron の `shell.trashItem`（IPC `fs:trashItem`）で
   OS のごみ箱に移動（完全削除はしない）。動画はサイドカーもまとめて移動
 
@@ -193,6 +195,14 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   保存先は動画と同じ場所の `{動画名}_screenshot/`、ファイル名は
   `{動画名}_{HH-MM-SS.mmm}.{png|jpg}`（形式は ui-settings の `screenshot_format`）。
   末尾・範囲外の時刻は `duration - 0.1` にクランプ
+
+### 動画レポート
+- `POST /report/generate` — 章立て（`chapters`）＋ `meta` ＋ `bookmarks` から
+  `{動画名}_report/report.md`・`report.html`（画像 base64 埋め込みの単一ファイル）・`report.json`・
+  `images/`（長辺 1280px JPEG）を生成（SSE・中止対応）。
+  第1段階は LLM を使わず、ffmpeg シーン変化検出 → dHash＋画素差で類似画像を間引き →
+  章ごと最大 3 枚。イベント: detecting_scenes / extracting{phase} / selecting / writing /
+  done{report_path,dir,chapters,images,stats} / canceled / error。詳細は docs/design/report.md
 
 ### ランタイム
 - `GET  /runtime/status` — llama-cpp / Whisper モデル / ffmpeg のインストール状態
@@ -372,6 +382,11 @@ video.mp4
     ├── data.json            （シーン・メタ・transcript キャッシュ）
     └── thumbnails/
         └── scene_N.jpg
+└── video_report/            （レポート生成・ユーザー向け成果物。docs/design/report.md）
+    ├── report.md        （正本）
+    ├── report.html      （画像埋め込みの単一 HTML・md から派生）
+    ├── report.json
+    └── images/
 ```
 
 字幕も解析成果物として `video.cache/` に集約する。読み込み時は cache 内を優先し、
@@ -392,6 +407,7 @@ video.mp4
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |
+| レポート | 分析パネル操作行の「レポート」ボタン（章立てがあるときのみ有効）。`POST /report/generate` で `{動画名}_report/` に 1 ページ Markdown＋画像を書き出し、完了時にエクスプローラーで選択表示。進捗はステータスバー（kind=report）、中止ボタン対応 |
 | F12 | 再生位置のスクリーンショットを動画と同じ場所の `{動画名}_screenshot/` に保存（`POST /screenshot`。形式は設定 → プレイヤーで png/jpg を選択。結果はステータスバーに表示） |
 | Ctrl+R / F5 | 開発用リロードショートカット（main.js で登録） |
 

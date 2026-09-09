@@ -565,6 +565,7 @@
                         <button class="btn btn-primary detail-action-btn" id="refineBtn" disabled><i data-lucide="spell-check"></i> 補正</button>
                         <button class="btn btn-primary detail-action-btn" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
                         <button class="btn btn-primary detail-action-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
+                        <button class="btn btn-ghost detail-action-btn" id="reportBtn" disabled title="章立てと代表画像を Markdown と単一 HTML にまとめて「動画名_report」フォルダに書き出す"><i data-lucide="book-text"></i> レポート</button>
                         <button class="btn detail-action-btn detail-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
                       </div>
                     </div>
@@ -1131,7 +1132,7 @@
       _taskTargets[kind]=path ? (String(path).split(/[\\/]/).pop() || '') : ''
     }
     function updateGlobalStatus(kind,stateName,text){
-      const labelMap={transcribe:'文字起こし',refine:'補正',translate:'字幕生成',analyze:'動画分析',toc:'チャプター',bookmark:'ブックマーク',qa:'チャット',app:'ステータス'}
+      const labelMap={transcribe:'文字起こし',refine:'補正',translate:'字幕生成',analyze:'動画分析',report:'レポート',toc:'チャプター',bookmark:'ブックマーク',qa:'チャット',app:'ステータス'}
       const dot=document.getElementById('globalStatusDot')
       const label=document.getElementById('globalStatusLabel')
       const body=document.getElementById('globalStatusText')
@@ -1633,6 +1634,7 @@
       renderAnalysisDetail(analysisFromTocData(data))
       renderBookmarks()
       renderQaSuggestions()
+      updateReportButton()
     }
 
     // ---------- ブックマーク（しおり）----------
@@ -2117,6 +2119,7 @@
       state.origSrtPath=null; state.correctedSrtPath=null; state.jpSrtPath=null
       state.origTranscript=''; state.tocPath=null; state.tocData=null; state.tocDirty=false
       resetSection('transcribe'); resetSection('translate')
+      updateReportButton()
       clearAnalysisDetail()
       setCurrentVideo(null)
       syncSubtitleToggleButtons()
@@ -2939,7 +2942,7 @@
       const targets=[p]
       if(!isDir){
         const stem=p.replace(/\.[^.]+$/,'')
-        targets.push(stem+'.cache', stem+'_screenshot', stem+'.original.srt', stem+'.corrected.srt', stem+'.japanese.srt')
+        targets.push(stem+'.cache', stem+'_screenshot', stem+'_report', stem+'.original.srt', stem+'.corrected.srt', stem+'.japanese.srt')
       }
       const first=await window.electronAPI.trashItem(targets[0])
       if(!first.ok){
@@ -3513,6 +3516,47 @@
 
       qaBtn.disabled=false
     }
+
+
+    // ---- レポート生成（章立て＋代表画像の 1 ページ Markdown を {動画名}_report/ に書き出す）----
+    // 第1段階は LLM を使わず、シーン変化検出＋知覚ハッシュの間引きで画像を選ぶ
+    function updateReportButton(){
+      const btn=document.getElementById('reportBtn')
+      if(!btn) return
+      const hasChapters=Array.isArray(state.tocData?.toc)&&state.tocData.toc.length>0
+      btn.disabled=!state.videoPath||!hasChapters||btn.classList.contains('running')
+    }
+    document.getElementById('reportBtn').addEventListener('click',async()=>{
+      if(!state.videoPath){ updateGlobalStatus('report','error','先に動画を読み込んでください'); return }
+      const toc=Array.isArray(state.tocData?.toc)?state.tocData.toc:[]
+      if(!toc.length){ updateGlobalStatus('report','error','章立てがありません。先に動画分析を実行してください'); return }
+      const btn=document.getElementById('reportBtn'); btn.disabled=true; btn.classList.add('running')
+      setTaskTarget('report',state.videoPath)
+      const chapters=toc.map(ch=>({start_sec:ch.start_sec||0,title:ch.title||'',summary:ch.summary||''}))  // end_sec はサーバー側で次章の開始から算出
+      const meta=state.tocData?.meta||{}
+      const bookmarks=(Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[]).map(b=>({id:b.id,time_sec:b.time_sec,title:b.title||'',comment:b.comment||''}))
+      beginCancelable()
+      let reportPath=null
+      try{
+        setProgress('report',5,'準備中...')
+        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,bookmarks,max_images_per_chapter:3,image_max_side:1280})})
+        await readSSE(res,event=>{
+          if(event.status==='detecting_scenes') setProgress('report',15,'場面の切り替わりを検出中...')
+          else if(event.status==='extracting'&&event.phase==='candidates') setProgress('report',35,`候補フレーム抽出中 (${event.current}/${event.total})`)
+          else if(event.status==='selecting') setProgress('report',45,`画像を選定中 (${event.current}/${event.total} 章)`)
+          else if(event.status==='extracting'&&event.phase==='images') setProgress('report',50+Math.round(40*(event.total?event.current/event.total:1)),`画像を書き出し中 (${event.current}/${event.total})`)
+          else if(event.status==='writing') setProgress('report',95,'Markdown を書き出し中...')
+          else if(event.status==='done'){
+            reportPath=event.html_path||event.report_path
+            setResult('report',true,`レポート生成完了: 章 ${event.chapters} / 画像 ${event.images} 枚 → ${reportPath}`)
+          }
+          else if(event.status==='canceled'){ markCanceled('report') }
+          else if(event.status==='error'){ setResult('report',false,event.message) }
+        })
+      }catch(e){ setResult('report',false,`接続エラー: ${e.message}`) }
+      finally{ endCancelable(); btn.classList.remove('running'); updateReportButton() }
+      if(reportPath && window.electronAPI?.showItemInFolder) window.electronAPI.showItemInFolder(reportPath)
+    })
 
     qaBtn.addEventListener('click',submitQuestion)
     qaInput.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.isComposing) submitQuestion() })
