@@ -1,6 +1,14 @@
 # 変更履歴
 
 ## 2026-09-10
+- **ポートが使用中なら空きポートへ自動で切り替えて起動**
+  - `frontend/main.js`: 起動時に 127.0.0.1 の 8765 / 8766 / 8767 が bind できるか確認し、使用中なら
+    次の空きポートを選ぶ（`resolvePorts`）。環境変数 `BACKEND_PORT` / `LLAMA_CPP_PORT` /
+    `LLAMA_CPP_VISION_PORT` でバックエンド・llama-server に渡し、ヘルスチェックも同じポートで行う。
+    環境変数を外から与えた場合はその値を固定使用
+  - `preload.js` が IPC `backend:url` で接続先を同期取得し `electronAPI.backendUrl` として公開。
+    `app.html` の `API` はそれを使う（未定義時は従来の 8765）
+  - `run_backend.py` 単体起動時も 8765 が使用中なら次の空きポートで起動し、URL をコンソールに表示
 - **モデル管理ポップアップ: 最近使ったモデルを先頭に表示**
   - `POST /review/models` で選択したモデル ID を settings.json の `model_history`（新しい順・最大8件）に記録し、
     `GET /review/models` が存在するものだけ `recent` として返す

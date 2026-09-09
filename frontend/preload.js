@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
+// バックエンドの接続先（ポートは使用中なら起動時に変わるため main から受け取る）
+const backendUrl = ipcRenderer.sendSync('backend:url')
+
 contextBridge.exposeInMainWorld('electronAPI', {
+  backendUrl,
+
   // ファイルダイアログ
   openVideo: ()         => ipcRenderer.invoke('dialog:openVideo'),
   openFolder: ()        => ipcRenderer.invoke('dialog:openFolder'),

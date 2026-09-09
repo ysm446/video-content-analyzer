@@ -6,7 +6,9 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 
 動画から字幕を自動生成・2言語同時再生、および GGUF VL モデルによる動画内容分析ができるデスクトップアプリ。
 
-- **バックエンド**: Python + FastAPI（ポート 8765）
+- **バックエンド**: Python + FastAPI（既定ポート 8765。使用中なら Electron が起動時に空きポートへ
+  自動変更し、`BACKEND_PORT` / `LLAMA_CPP_PORT` / `LLAMA_CPP_VISION_PORT` 環境変数でバックエンドに渡す。
+  レンダラーは preload の `electronAPI.backendUrl` で接続先を受け取る）
 - **フロントエンド**: Electron
 - **モデル**: faster-whisper（音声認識）、GGUF テキストモデル（翻訳・辞書）、GGUF VL モデル（動画レビュー）
 

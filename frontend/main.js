@@ -2,10 +2,17 @@ const { app, BrowserWindow, ipcMain, dialog, protocol, Menu, shell } = require('
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
+const net = require('net')
 const { spawn, spawnSync } = require('child_process')
 
 const BACKEND_HOST = '127.0.0.1'
-const BACKEND_PORT = 8765
+// 既定ポート。使用中なら起動時に空きポートへ自動で切り替える（下の resolvePorts）
+const DEFAULT_BACKEND_PORT = 8765
+const DEFAULT_LLAMA_TEXT_PORT = 8766
+const DEFAULT_LLAMA_VISION_PORT = 8767
+let BACKEND_PORT = DEFAULT_BACKEND_PORT
+let LLAMA_TEXT_PORT = DEFAULT_LLAMA_TEXT_PORT
+let LLAMA_VISION_PORT = DEFAULT_LLAMA_VISION_PORT
 const BACKEND_START_TIMEOUT_MS = 30000
 const BACKEND_HEALTHCHECK_INTERVAL_MS = 500
 const BACKEND_HEALTHCHECK_TIMEOUT_MS = 1000
@@ -16,6 +23,52 @@ let isCleaningUpBackend = false
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// 127.0.0.1 の指定ポートに bind できるか（使用中なら false）
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer()
+    srv.unref()
+    srv.once('error', () => resolve(false))
+    srv.listen({ host: BACKEND_HOST, port, exclusive: true }, () => {
+      srv.close(() => resolve(true))
+    })
+  })
+}
+
+// start から順に空きポートを探す（exclude は今回すでに割り当てたポート）
+async function findFreePort(start, exclude = new Set()) {
+  for (let port = start; port < start + 200; port++) {
+    if (exclude.has(port)) continue
+    if (await isPortFree(port)) return port
+  }
+  throw new Error(`No free port found from ${start}`)
+}
+
+// バックエンド（FastAPI）と llama-server（翻訳用・動画レビュー用）のポートを決める。
+// 既定ポートが他プロセス（前回の取り残し・他アプリ）に使われていても起動できるようにする。
+// 環境変数 BACKEND_PORT / LLAMA_CPP_PORT / LLAMA_CPP_VISION_PORT で固定指定も可（空き確認はしない）。
+async function resolvePorts() {
+  const used = new Set()
+  const pick = async (envName, def) => {
+    const forced = parseInt(process.env[envName] || '', 10)
+    const port = Number.isFinite(forced) && forced > 0 ? forced : await findFreePort(def, used)
+    used.add(port)
+    return port
+  }
+  BACKEND_PORT = await pick('BACKEND_PORT', DEFAULT_BACKEND_PORT)
+  LLAMA_TEXT_PORT = await pick('LLAMA_CPP_PORT', DEFAULT_LLAMA_TEXT_PORT)
+  LLAMA_VISION_PORT = await pick('LLAMA_CPP_VISION_PORT', DEFAULT_LLAMA_VISION_PORT)
+  const changed = []
+  if (BACKEND_PORT !== DEFAULT_BACKEND_PORT) changed.push(`backend ${DEFAULT_BACKEND_PORT}→${BACKEND_PORT}`)
+  if (LLAMA_TEXT_PORT !== DEFAULT_LLAMA_TEXT_PORT) changed.push(`llama(text) ${DEFAULT_LLAMA_TEXT_PORT}→${LLAMA_TEXT_PORT}`)
+  if (LLAMA_VISION_PORT !== DEFAULT_LLAMA_VISION_PORT) changed.push(`llama(vision) ${DEFAULT_LLAMA_VISION_PORT}→${LLAMA_VISION_PORT}`)
+  console.log(`[ports] backend=${BACKEND_PORT} llama-text=${LLAMA_TEXT_PORT} llama-vision=${LLAMA_VISION_PORT}` + (changed.length ? ` (使用中のため変更: ${changed.join(', ')})` : ''))
+}
+
+function backendUrl() {
+  return `http://${BACKEND_HOST}:${BACKEND_PORT}`
 }
 
 function checkBackendHealth() {
@@ -107,11 +160,15 @@ async function startBackendProcess() {
   const pythonCommand =
     process.env.BACKEND_PYTHON || (fs.existsSync(venvPython) ? venvPython : 'python')
 
+  await resolvePorts()
   const env = {
     ...process.env,
     HF_HOME: path.join(projectRoot, 'models'),
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
+    BACKEND_PORT: String(BACKEND_PORT),
+    LLAMA_CPP_PORT: String(LLAMA_TEXT_PORT),
+    LLAMA_CPP_VISION_PORT: String(LLAMA_VISION_PORT),
   }
 
   backendProcess = spawn(pythonCommand, [backendEntrypoint], {
@@ -206,6 +263,11 @@ process.on('exit', () => {
 })
 
 // ---------- IPC ハンドラー ----------
+
+// レンダラーがバックエンドの接続先を知るため（preload が起動時に同期取得）
+ipcMain.on('backend:url', (event) => {
+  event.returnValue = backendUrl()
+})
 
 // 動画ファイルを開くダイアログ
 ipcMain.handle('dialog:openVideo', async () => {

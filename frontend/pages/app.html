@@ -815,7 +815,8 @@
   </div>
 
   <script>
-    const API = 'http://127.0.0.1:8765'
+    // 接続先は Electron main が決める（既定 8765。使用中なら空きポートへ自動変更）
+    const API = (window.electronAPI && window.electronAPI.backendUrl) || 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
     const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true,spec:true}, qaChat:[], qaSuggestions:null, seekMarkersVisible:true }
 
