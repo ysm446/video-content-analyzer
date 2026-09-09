@@ -305,7 +305,7 @@
     .qa-meta-item svg.lucide{width:13px;height:13px;stroke-width:2.2}
     .qa-answering{font-size:12px;color:var(--text-dim)}
     .qa-elapsed{font-size:11px;color:var(--text-dim);margin-top:3px;font-variant-numeric:tabular-nums}
-    .qa-suggest-row{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:0 10px 10px;flex-shrink:0}
+    .qa-suggest-row{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:2px 0 0;flex-shrink:0}
     .qa-suggest-chip{border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;padding:6px 14px;border-radius:99px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:background .15s,border-color .15s;animation:chip-in .2s ease}
     @keyframes chip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
     .qa-suggest-chip:hover{background:var(--accent-tint-bg);border-color:var(--accent-tint-border)}
@@ -617,8 +617,8 @@
             </div>
             <div class="qa-history" id="qaHistory">
               <div class="qa-placeholder" id="qaPlaceholder">動画を読み込むと質問できます</div>
+              <div class="qa-suggest-row" id="qaSuggestRow" style="display:none"></div>
             </div>
-            <div class="qa-suggest-row" id="qaSuggestRow" style="display:none"></div>
             <div class="qa-input-row">
               <input type="text" class="qa-input" id="qaInput" disabled placeholder="例：この動画の要点は？">
               <button class="btn btn-primary" id="qaBtn" disabled style="padding:8px 14px">送信</button>
@@ -1221,6 +1221,7 @@
 
     // テンプレート質問チップ（固定は即表示、内容ベースはモデルロード済みのとき遅延生成で差し替え）
     const QA_STATIC_SUGGESTIONS=['この動画を要約して','重要なポイントを3つ挙げて']
+    let _qaAnswering=false  // 回答生成中はチップを隠す
     function renderQaSuggestions(){
       const row=document.getElementById('qaSuggestRow')
       const input=document.getElementById('qaInput')
@@ -1230,8 +1231,14 @@
       const source=state.qaSuggestions||[]
       const dynamic=source.filter(q=>typeof q==='string'&&q.trim()&&!QA_STATIC_SUGGESTIONS.includes(q.trim())).slice(0,3)
       const all=[...QA_STATIC_SUGGESTIONS,...dynamic]
+      // チップは会話の末尾（最後の回答の直後）に置く。回答生成中は隠す
+      if(_qaAnswering){ row.style.display='none'; row.innerHTML=''; return }
+      const hist=document.getElementById('qaHistory')
+      const atBottom=hist&&(hist.scrollHeight-hist.scrollTop-hist.clientHeight<40)
+      if(hist&&hist.lastElementChild!==row) hist.appendChild(row)
       row.innerHTML=all.map(q=>`<button class="qa-suggest-chip" type="button" title="${escHtml(q)}">${escHtml(q)}</button>`).join('')
       row.style.display=all.length?'flex':'none'
+      if(all.length&&atBottom&&state.qaChat.length) row.scrollIntoView({behavior:'smooth',block:'end'})
       row.querySelectorAll('.qa-suggest-chip').forEach((b,i)=>b.addEventListener('click',()=>{
         if(document.getElementById('qaBtn').disabled) return
         document.getElementById('qaInput').value=all[i]
@@ -3415,6 +3422,8 @@
       const q=qaInput.value.trim()
       if(!q || !state.videoPath) return
       qaInput.value=''; qaBtn.disabled=true
+      _qaAnswering=true
+      renderQaSuggestions()  // 回答中はチップを隠す（回答後に末尾へ再表示）
 
       const pair=document.createElement('div')
       pair.className='qa-pair'
@@ -3435,7 +3444,9 @@
       const elapsed=document.createElement('div')
       elapsed.className='qa-elapsed'
       pair.appendChild(elapsed)
-      qaHistory.appendChild(pair)
+      const suggestRow=document.getElementById('qaSuggestRow')
+      if(suggestRow&&suggestRow.parentElement===qaHistory) qaHistory.insertBefore(pair,suggestRow)
+      else qaHistory.appendChild(pair)
       pair.scrollIntoView({behavior:'smooth'})
 
       const qaStart=Date.now()
@@ -3496,6 +3507,8 @@
         })
       }catch(e){ thinking.textContent='接続エラー: '+e.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',`接続エラー: ${e.message}`) }
       finally{ endCancelable(ac); if(sawModelLoad) endImplicitModelLoad() }
+      _qaAnswering=false
+      renderQaSuggestions()  // まず既存チップを会話の末尾に再表示
       fetchQaSuggestions()  // 回答後、会話を踏まえたフォローアップ質問に差し替え（モデルはロード済み）
 
       qaBtn.disabled=false
@@ -3506,9 +3519,11 @@
     document.getElementById('cancelBtn').addEventListener('click',cancelAllProcesses)
     document.getElementById('clearHistoryBtn').addEventListener('click',()=>{
       const ph=document.getElementById('qaPlaceholder')
+      const row=document.getElementById('qaSuggestRow')
       qaHistory.innerHTML=''
       state.qaChat=[]
       if(ph) qaHistory.appendChild(ph)
+      if(row) qaHistory.appendChild(row)
       ph.style.display=qaInput.disabled?'flex':'none'
       // 前の会話に基づくフォローアップ質問チップもリセットして再生成
       state.qaSuggestions=null
