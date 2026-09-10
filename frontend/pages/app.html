@@ -1911,6 +1911,7 @@
       }finally{
         state.addingBookmark=false
         switchPaneTab('bookmarks')
+        document.querySelector('#bookmarksList .bm-edit-title')?.focus()
       }
     }
 
@@ -1919,6 +1920,15 @@
     document.getElementById('paneTabReport').addEventListener('click',()=>switchPaneTab('report'))
     document.getElementById('addBookmarkBtn').addEventListener('click',addBookmarkAtCurrentTime)
     document.getElementById('bookmarkBtn').addEventListener('click',addBookmarkAtCurrentTime)
+
+    document.getElementById('bookmarksList').addEventListener('keydown',e=>{
+      if(e.key!=='Enter' || e.isComposing || e.keyCode===229) return
+      if(!e.target.matches('.bm-edit-title, .bm-edit-comment')) return
+      if(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      e.target.closest('.scene-edit')?.querySelector('.bm-edit-save')?.click()
+    })
 
     document.getElementById('bookmarksList').addEventListener('click',e=>{
       const menuBtn=e.target.closest('[data-bm-menu]')
