@@ -20,6 +20,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // エクスプローラーで場所を開く（項目を選択状態で表示）
   showItemInFolder: (filePath) => ipcRenderer.invoke('fs:showItemInFolder', filePath),
 
+  // http(s) の URL を既定ブラウザで開く（アプリ内では遷移させない）
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+
+  // バックエンドプロセスが終了したときの通知（稼働中のクラッシュ検知）
+  onBackendExited: (callback) => {
+    ipcRenderer.on('backend:exited', (_event, info) => callback(info))
+  },
+
   // ドラッグ&ドロップされた File オブジェクトから絶対パスを取得
   // (Electron 32+ で file.path が sandbox 環境で使えなくなったための代替)
   getPathForFile: (file) => webUtils.getPathForFile(file),

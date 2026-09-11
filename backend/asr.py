@@ -10,6 +10,7 @@ import os
 import site
 
 import re
+from pathlib import Path
 
 from . import cancel
 
@@ -17,7 +18,7 @@ from . import cancel
 # 実際に使うモデルは ASRProcessor.model_id（設定画面から切り替え、settings.json に永続化）。
 MODEL_ID = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 # モデルキャッシュ先（HF_HOME と同じ models/ 配下に置く）
-DOWNLOAD_ROOT = os.environ.get("WHISPER_DOWNLOAD_ROOT", "models")
+DOWNLOAD_ROOT = os.environ.get("WHISPER_DOWNLOAD_ROOT") or str(Path(__file__).resolve().parent.parent / "models")  # cwd に依存させない（runtime_manager と同じ場所）
 
 # 字幕セグメント分割のしきい値（単語タイムスタンプから再分割する際に使用）
 SEG_MAX_SEC = 7.0       # 1 セグメントの最大長（秒）→ ここを超えたら強制 flush

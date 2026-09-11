@@ -124,7 +124,10 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 
 ### 字幕生成
 - `GET  /health` — 起動確認
-- `POST /cancel` — 実行中処理の中断要求（全 SSE 処理共通。`backend/cancel.py` のフラグを立てる）
+- `POST /cancel` — 実行中処理の中断要求（全 SSE 処理共通。`backend/cancel.py` のフラグを立てる。
+  SSE 処理が実行中でなければ無視して `accepted: false` を返す。SSE 処理は `sse_response()` の
+  共通ラッパーで `begin_job / end_job` を登録し、終了時にフラグを自動でクリアする。
+  クライアント切断時は中断フラグを立ててワーカーを止める）
 - `GET  /models` — 翻訳モデル一覧・状態
 - `POST /models` — 翻訳モデル切り替え（`{translator: model_id}`）
 - `POST /transcribe` — 動画→原文SRT（SSE）。エンジンが whisperx のときは
@@ -167,11 +170,15 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   name は `bookmark_*.jpg` のみ許可）
 - `POST /cache/thumbnail/delete` — `thumbnails/` 内のブックマーク画像を削除
   （`bookmark_*.jpg` のみ。シーンサムネールは対象外。存在しない場合も成功扱い）
-- `GET  /cache/image?video_path=...&name=...` — サムネール画像ファイルを返す（Cache-Control: no-store）
+- `GET  /cache/image?video_path=...&name=...&v=...` — サムネール画像ファイルを返す
+  （`Cache-Control: private, max-age=86400`。同名上書きに備えてフロントが `v`（動画オープン・
+  再生成のたびに更新する版）を付けるので、一覧の再描画で毎回取り直さない）
 
 ### ファイル一覧（ファイルマネージャー）
 - `POST /folder/list` — フォルダ直下のサブフォルダ・動画一覧（再帰しない。ツリーの遅延読み込み用）。
-  動画ごとに `analyzed` / `has_original_srt` / `has_japanese_srt` / `thumbnail`（scene_0.jpg）を返す。
+  `analyzed` 判定の data.json 解析は (mtime, size) でメモリキャッシュする。
+  動画ごとに `analyzed` / `has_original_srt` / `has_japanese_srt` / `thumbnail`（scene_0.jpg）/
+  `thumbnail_mtime`（一覧サムネール URL のキャッシュキー）を返す。
   `analyzed` は data.json の内容（meta / scenes / toc の有無）で判定（ブックマークだけの
   data.json を分析済みと誤表示しないため）。字幕・サムネールは存在チェックのみ。
   `*.cache/`・`*_screenshot/`・`*_report/`・隠しフォルダは一覧から除外
@@ -363,11 +370,14 @@ error            → {message}
 
 3段階の制限で VRAM 枯渇を防ぐ：
 
-1. **`set_process_memory_fraction(0.9)`** — 起動時に設定。CUDA アロケータ全体へのハードキャップ
-2. **`max_memory_map()`** — `from_pretrained` の `max_memory` 引数に渡す
+1. **`set_process_memory_fraction(0.9)`** — torch の CUDA アロケータ上限。torch を GPU で使うのは
+   wav2vec2 アライナーだけなので `align.py` の `Aligner.load()` で初回に設定する
+   （起動時に呼ぶと API プロセスが CUDA コンテキストを常時保持し、別プロセスの llama-server と
+   VRAM を奪い合うため）。llama-server（別プロセス）と CTranslate2（独自アロケータ）には効かない
+2. **`max_memory_map()`** — `from_pretrained` の `max_memory` 引数に渡す（HF フォールバック経路のみ）
 3. **`MAX_PIXELS_PER_FRAME = 256 * 28 * 28`** — VL モデルの視覚トークン数を制限
 
-調整は `vram.py` の定数を変更するだけで全モデルに反映される。
+`vram.py` は torch を遅延 import する（モジュール import 時に CUDA を初期化しない）。
 
 ## 翻訳・VL の実装方針
 
@@ -449,5 +459,12 @@ Lucide Icons（`frontend/vendor/` にローカル同梱。marked も同様）を
   外部サイトの Origin と非ローカル Host（DNS リバインディング）は 403
 - モデル出力（動画内容由来＝信頼できないテキスト）を innerHTML に入れるときは必ず
   `renderMarkdown()`（内部で `sanitizeHtml()`）を通す
-- `/cache/thumbnail` の `filename` はパス区切りを含む名前を拒否。`/cache/image` は
-  `Path.is_relative_to` でキャッシュフォルダ外参照を拒否
+- `/cache/thumbnail` の `filename` は `scene_*.jpg` / `bookmark_*.jpg` のみ許可（パス区切り不可）。
+  `/cache/image` は `Path.is_relative_to` でキャッシュフォルダ外参照を拒否
+- Electron 側: `will-navigate` を禁止し `setWindowOpenHandler` は deny（モデル出力のリンクで
+  アプリのウィンドウが外部ページへ遷移して preload の `electronAPI` が露出しないように）。
+  http(s) リンクはレンダラーの委譲クリックで IPC `shell:openExternal` に渡し既定ブラウザで開く。
+  IPC `fs:readFile` は `.srt` / `.vtt` の絶対パスのみ（50MB 上限）、`fs:trashItem` /
+  `fs:showItemInFolder` は絶対パス文字列のみ受け付ける
+- モデルフォルダのスキャン（`model_catalog._scan_models`）は 3 秒 TTL でキャッシュ。
+  フォルダ変更・ランタイムインストール後は `invalidate_cache()` で捨てる

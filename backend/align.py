@@ -93,7 +93,8 @@ def load_audio(path: str, sr: int = SAMPLE_RATE) -> np.ndarray:
     if proc.returncode != 0:
         tail = proc.stderr.decode("utf-8", errors="replace")[-500:]
         raise RuntimeError(f"ffmpeg での音声デコードに失敗しました: {tail}")
-    return np.frombuffer(proc.stdout, np.float32).copy()
+    # bytes → 書き込み可能な配列へ（.copy() だと PCM 全体（3 時間で ~700MB）を二重に持つ）
+    return np.frombuffer(bytearray(proc.stdout), np.float32)
 
 
 @dataclass
@@ -213,6 +214,10 @@ class Aligner:
         model = Wav2Vec2ForCTC.from_pretrained(model_id)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda":
+            # torch を GPU で使うのはこのアライナーだけなので、アロケータ上限はここで設定する
+            from .vram import set_process_memory_fraction
+            set_process_memory_fraction()
         try:
             model = model.to(device)
         except torch.cuda.OutOfMemoryError:

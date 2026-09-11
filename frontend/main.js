@@ -20,6 +20,10 @@ const BACKEND_HEALTHCHECK_TIMEOUT_MS = 1000
 let backendProcess = null
 let isQuitting = false
 let isCleaningUpBackend = false
+// 起動失敗時の診断用（exit コードと stderr の末尾）
+let backendExit = { code: null, signal: null }
+const backendStderrTail = []
+const BACKEND_STDERR_TAIL_LINES = 20
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -96,6 +100,13 @@ function checkBackendHealth() {
 async function waitForBackendReady(timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
+    // プロセスが既に落ちていれば（.venv 無し・依存不足等）タイムアウトまで待たずに失敗させる
+    if (!backendProcess) {
+      throw new Error(
+        `Backend process exited during startup (code=${backendExit.code}, signal=${backendExit.signal}).\n` +
+        (backendStderrTail.join('\n') || '(no stderr output)')
+      )
+    }
     if (await checkBackendHealth()) {
       return
     }
@@ -185,10 +196,22 @@ async function startBackendProcess() {
   })
   backendProcess.stderr.on('data', (chunk) => {
     console.error(`[backend] ${chunk.trimEnd()}`)
+    for (const line of String(chunk).split(/\r?\n/)) {
+      if (!line.trim()) continue
+      backendStderrTail.push(line)
+      if (backendStderrTail.length > BACKEND_STDERR_TAIL_LINES) backendStderrTail.shift()
+    }
   })
   backendProcess.on('exit', (code, signal) => {
     console.log(`[backend] exited (code=${code}, signal=${signal})`)
+    backendExit = { code, signal }
     backendProcess = null
+    // 稼働中にバックエンドが落ちた場合はレンダラーへ通知（fetch が黙って失敗し続けるのを防ぐ）
+    if (!isQuitting) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('backend:exited', { code, signal })
+      }
+    }
   })
 
   await waitForBackendReady(BACKEND_START_TIMEOUT_MS)
@@ -210,6 +233,17 @@ function createMainWindow() {
     icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
   })
   win.loadFile(path.join(__dirname, 'pages', 'app.html'))
+
+  // モデル出力（動画内容由来）に含まれるリンク等でアプリのウィンドウ自体が外部ページへ
+  // 遷移すると、preload の electronAPI（ファイル読込・ごみ箱・場所を開く）が外部ページに
+  // 露出する。ページ内遷移はすべて禁止し、http(s) は既定ブラウザで開く
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== win.webContents.getURL()) event.preventDefault()
+  })
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
 
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
@@ -264,6 +298,19 @@ process.on('exit', () => {
 
 // ---------- IPC ハンドラー ----------
 
+// レンダラーから渡されるパスは文字列の絶対パスのみ受け付ける
+function isSafeAbsolutePath(p) {
+  return typeof p === 'string' && p.length > 0 && p.length < 4096 && path.isAbsolute(p)
+}
+function isExternalHttpUrl(url) {
+  try {
+    const u = new URL(String(url))
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch (_) {
+    return false
+  }
+}
+
 // レンダラーがバックエンドの接続先を知るため（preload が起動時に同期取得）
 ipcMain.on('backend:url', (event) => {
   event.returnValue = backendUrl()
@@ -303,6 +350,7 @@ ipcMain.handle('dialog:openSrt', async () => {
 
 // ファイル/フォルダを OS のごみ箱に移動（完全削除はしない）
 ipcMain.handle('fs:trashItem', async (_, filePath) => {
+  if (!isSafeAbsolutePath(filePath)) return { ok: false, error: 'invalid path' }
   try {
     await shell.trashItem(path.normalize(filePath))
     return { ok: true }
@@ -313,12 +361,28 @@ ipcMain.handle('fs:trashItem', async (_, filePath) => {
 
 // エクスプローラーでファイル/フォルダの場所を開く（項目を選択状態で表示）
 ipcMain.handle('fs:showItemInFolder', (_, filePath) => {
+  if (!isSafeAbsolutePath(filePath)) return
   shell.showItemInFolder(path.normalize(filePath))
 })
 
-// テキストファイルを読み込む（SRT 読み込み用）
+// http(s) の URL を既定ブラウザで開く（チャット回答内のリンク用）
+ipcMain.handle('shell:openExternal', (_, url) => {
+  if (!isExternalHttpUrl(url)) return { ok: false, error: 'invalid url' }
+  shell.openExternal(String(url))
+  return { ok: true }
+})
+
+// テキストファイルを読み込む（SRT / VTT 読み込み専用。それ以外の拡張子は拒否）
+const READABLE_TEXT_EXTS = new Set(['.srt', '.vtt'])
+const READ_FILE_MAX_BYTES = 50 * 1024 * 1024
 ipcMain.handle('fs:readFile', (_, filePath) => {
+  if (!isSafeAbsolutePath(filePath) || !READABLE_TEXT_EXTS.has(path.extname(filePath).toLowerCase())) {
+    return { ok: false, error: 'invalid path' }
+  }
   try {
+    const st = fs.statSync(filePath)
+    if (!st.isFile()) return { ok: false, error: 'not a file' }
+    if (st.size > READ_FILE_MAX_BYTES) return { ok: false, error: 'file too large' }
     return { ok: true, content: fs.readFileSync(filePath, 'utf-8') }
   } catch (e) {
     return { ok: false, error: e.message }

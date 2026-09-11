@@ -1,5 +1,69 @@
 # 変更履歴
 
+## 2026-09-12
+- **アプリ全体のレビューと修正・最適化**（バックエンド 3 系統＋フロントエンドを通しで点検）
+  - **フロントエンド（app.html / main.js / preload.js）**
+    - システムリソース表示が `localhost:8765` 固定で、ポート自動変更時に動かなかった → `API` を使う
+    - 処理中に別の動画を開くと完了時の結果（字幕パス・チャプター下書き・transcript・QA 履歴・
+      ブックマーク）が **開いている別の動画に混入**していた。文字起こし／補正／翻訳／分析／QA／
+      ブックマーク追加・撮り直し／サムネール生成は開始時の動画を記憶し、切り替わっていたら
+      ステータスだけ更新して結果は捨てる（`finishDetachedTask`）
+    - 動画を連続で開くと前の動画の SRT・キャッシュが後の動画に適用されることがあった →
+      `openVideoFromPath` に世代番号を持たせ、古い読み込み結果は破棄（`loadSrt` も同様）
+    - おすすめ質問も動画切り替え後に前の動画の結果で上書きされることがあった → 番号で破棄
+    - `readSSE` が終端イベントなしに閉じたとき（バックエンド落ち）に「実行中」表示と経過タイマーが
+      残り続けた → 接続切断を `error` として各ハンドラに届ける。ハンドラ内の例外も握りつぶさない
+    - チャット回答のストリーミングで **1 トークンごとに全文 Markdown 再描画＋スムーズスクロール**
+      していた → `requestAnimationFrame` でフレームごとにまとめて描画
+    - シーン／ブックマーク一覧を再描画するたびに全サムネールを取り直していた（`no-store`）→
+      URL に版 `v=` を付け、`/cache/image` はブラウザキャッシュ可に。再生成時のみ版を更新。
+      ファイル一覧は `/folder/list` の `thumbnail_mtime` を版に使う
+    - 動画切り替え時にチャットの表示を消していなかった（state だけ空）→ 表示も消す
+    - モデル出力に含まれるリンクでアプリのウィンドウ自体が外部ページへ遷移し得た
+      （preload の `electronAPI` が露出）→ `will-navigate` 禁止・`setWindowOpenHandler` deny・
+      http(s) は `shell.openExternal` で既定ブラウザへ。IPC のパス引数を検証
+      （`fs:readFile` は .srt/.vtt のみ・50MB 上限）
+    - バックエンドが起動直後に落ちたとき 30 秒待ってから汎用エラーになっていた → exit を検知して
+      即座に stderr 末尾付きで表示。稼働中に落ちた場合はステータスバーに通知（`backend:exited`）
+    - `setResult` の innerHTML にパスやエラー文をエスケープせず入れていた → `escHtml`
+    - シークバーのホバープレビューで mousemove ごとに寸法を測っていた → 表示時に 1 回だけ測る
+    - 未使用コードを削除（`switchAnalysisPane`・`state.analysisReady`・`data:` サムネール分岐と
+      `/cache/thumbnail` 経由の保存）。`max_frames` 設定値が数値でないときの防御
+  - **バックエンド**
+    - `cancel.py`: 実行中の SSE 処理が無いときの `/cancel` を無視し、SSE 終了時にフラグを自動クリア
+      （フラグが残って `/lookup` 等が失敗し続ける問題）。クライアント切断時は中断フラグを立てて
+      ワーカーを止める（`server.sse_response` の共通ラッパー）
+    - `llama_server.py`: ストリーム中の `error:` 行（画像処理失敗・コンテキスト超過）を黙って
+      空文字にせず `RuntimeError` に。`[DONE]` 無しの切断も検知。socket timeout を分かる
+      メッセージに（既定 600 秒・`LLAMA_HTTP_TIMEOUT`）。`chat_with_meta` をストリーム版で一本化
+    - `outline.py` / `report.py`: `[m:ss]` の分を 2 桁までしか受け付けず、**100 分以降の字幕が
+      章立てから消え、レポートの VL 選定画像も落ちていた** → 桁数制限なし
+    - `report.py`: 画像は `images.new/` に書いてから差し替え（中止・失敗で前回レポートの画像が
+      消えない）。類似判定の画素比較を numpy 化しハッシュ距離でゲート（候補 1500 枚の総当たり
+      が数分かかっていた）。同じ開始時刻の章の重複除去。キャプションの `[]()` と改行で
+      Markdown が壊れないようエスケープ
+    - `video_reviewer.py`: シーン検出パスで中止が効かず、全フレームをフル解像度で書き出して
+      いた → 中止監視・幅 640px・候補 1500 枚上限（report と同じ流儀）
+    - `model_catalog.py`: スキャン結果を 3 秒 TTL でキャッシュ（翻訳で 1 バッチごとにフォルダ全体を
+      rglob していた）。無関係な mmproj をテキストモデルに付けて VL 扱いにする誤分類を修正
+      （名前が一致しない mmproj はフォルダに本体 GGUF が 1 つのときだけ採用）
+    - `server.py`: refine の結果にシーンが無いとき「全体」ダミー章が coarse の章名を上書きしていた
+      → 何も足さない。起動時の `translator_model` 復元が `vl_model` が無効だと飛ばされていた。
+      `/report/generate` で ffprobe・SRT 読み込みがイベントループをブロックしていた → executor。
+      `/translate` `/refine` の SRT 読み込み・保存も同様。`/system-stats` の pynvml 初期化を 1 回に。
+      アライメント進捗イベントを 0.25 秒間隔に間引き。`_is_analyzed` を (mtime, size) でキャッシュ。
+      `/cache/thumbnail` の名前を `scene_*.jpg` / `bookmark_*.jpg` に限定
+    - `vram.py` / `run_backend.py` / `align.py`: torch のアロケータ上限を起動時ではなく
+      アライナーのロード時に設定（API プロセスが CUDA コンテキストを常時保持していた）
+    - `asr.py`: Whisper のダウンロード先を cwd 依存の相対パスから絶対パスに
+    - `align.py`: デコード済み PCM の二重保持（`.copy()`）をやめる
+    - `runtime_manager.py`: llama.cpp インストール時にリリース JSON を 2 回取得していた → 1 回
+    - 未使用の `Translator.translate()` / `LlamaServerManager.chat()` を削除
+  - 検証: backend の単体スモーク（cancel / タイムスタンプ / report ハッシュ / llama_server の
+    ストリーム解析 / model_catalog / server 起動）、`run_backend.py` 実起動で `/health`
+    `/system-stats` `/cancel` `/lookup` `/folder/list` `/cache/thumbnail` を確認。フロントは
+    `node --check` のみ（Electron 実機での通し確認は未実施 → plan.md）
+
 ## 2026-09-10
 - **ブックマークを Enter で確定**
   - 追加後はタイトル欄へフォーカス。タイトル・コメント欄の Enter は既存の保存ボタンと同じ処理で確定する（再編集時も対応）。

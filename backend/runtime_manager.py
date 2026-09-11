@@ -300,14 +300,15 @@ def _ver_tuple(s: str) -> tuple:
     return tuple(int(x) for x in s.split(".") if x.isdigit())
 
 
-def list_llama_builds() -> dict:
+def list_llama_builds(release: dict | None = None) -> dict:
     """llama.cpp 最新リリースの Windows x64 ビルド一覧を返す。
 
     各ビルドに variant（cuda-13.1 / cpu / vulkan 等）と、この環境への推奨フラグを付ける。
     推奨は「NVIDIA ドライバの対応 CUDA バージョン以下で最大の CUDA ビルド」
     （NVIDIA GPU が無ければ CPU ビルド）。
     """
-    release = _fetch_json(LLAMA_LATEST_RELEASE_API)
+    if release is None:
+        release = _fetch_json(LLAMA_LATEST_RELEASE_API)
     assets = release.get("assets") or []
     builds = []
     for a in assets:
@@ -358,7 +359,7 @@ def install_llama_cpp(progress_cb, asset_name: str | None = None) -> dict:
         if main_asset is None or not _LLAMA_WIN_ASSET_RE.match(asset_name):
             raise ValueError(f"リリースに存在しないビルドです: {asset_name}")
     else:
-        info = list_llama_builds()
+        info = list_llama_builds(release)
         rec = next((b for b in info["builds"] if b["recommended"]), None)
         if rec is None:
             raise RuntimeError("対応する Windows ビルドがリリースに見つかりませんでした")

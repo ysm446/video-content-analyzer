@@ -57,14 +57,14 @@ translator     = Translator()
 video_reviewer = VideoReviewer()
 _review_model_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
 
-# 前回選択したモデルを復元
+# 前回選択したモデルを復元（vl_model が消えている場合でも translator_model は独立に復元する）
 _s = load_settings()
-if _m := _s.get("vl_model"):
-    if _m in _review_model_ids:
-        video_reviewer.set_model_id(_m)
-        translator.set_model_id(_m)
-elif _m := _s.get("translator_model"):
-    translator.set_model_id(_m)
+_vl = _s.get("vl_model")
+if _vl and _vl in _review_model_ids:
+    video_reviewer.set_model_id(_vl)
+    translator.set_model_id(_vl)
+elif (_t := _s.get("translator_model")) and _t in {m["id"] for m in scan_translator_models() if m.get("exists")}:
+    translator.set_model_id(_t)
 if _w := _s.get("whisper_model"):
     if _w in runtime_manager.WHISPER_MODEL_IDS:
         asr.set_model_id(_w)
@@ -116,6 +116,32 @@ app.add_middleware(
 def sse(data: dict) -> str:
     """Server-Sent Events 形式にシリアライズ"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _guarded_stream(gen):
+    """SSE ジェネレータの共通ラッパー。
+
+    - 開始時に cancel.begin_job()（フラグをクリアし「実行中」を登録）
+    - 正常終了・エラー終了時は cancel.end_job()（最後のジョブならフラグもクリア。
+      /lookup 等の非 SSE 推論が古いフラグで失敗し続けないように）
+    - クライアント切断（GeneratorExit / CancelledError）時は中断フラグを立ててワーカーを止め、
+      フラグは残す（次の begin_job() でクリアされる）
+    """
+    cancel.begin_job()
+    keep = False
+    try:
+        async for chunk in gen:
+            yield chunk
+    except (GeneratorExit, asyncio.CancelledError):
+        cancel.request_cancel()
+        keep = True
+        raise
+    finally:
+        cancel.end_job(keep_flag=keep)
+
+
+def sse_response(gen) -> StreamingResponse:
+    return StreamingResponse(_guarded_stream(gen), media_type="text/event-stream")
 
 
 def sse_canceled() -> str:
@@ -399,6 +425,13 @@ def _entries_from_refine_result(
     - モデルが絶対時刻を返す場合: そのまま区間内だけ採用
     - モデルが相対時刻(0始まり)を返す場合: 区間開始時刻を加算
     """
+    scenes = result.get("scenes") if isinstance(result, dict) else None
+    if not isinstance(scenes, list) or not any(
+        isinstance(s, dict) and _parse_timestamp_seconds(s.get("timestamp")) is not None for s in scenes
+    ):
+        # 解釈できるシーンが無い → _build_toc_entries のフォールバック（「全体」@0）を
+        # 区間の章として混ぜると coarse の章名を上書きしてしまうので、何も足さない
+        return []
     abs_entries = _build_toc_entries(result, total_duration)
     in_range = [
         e for e in abs_entries
@@ -610,8 +643,8 @@ def cancel_processing():
     推論ループ側が中断フラグをポーリングし、安全に停止してから
     （モデルを使い終えてから）unload する。
     """
-    cancel.request_cancel()
-    return {"status": "ok"}
+    accepted = cancel.request_cancel()
+    return {"status": "ok", "accepted": accepted}
 
 
 @app.get("/prompts")
@@ -682,6 +715,24 @@ def delete_prompt_preset(req: PromptDeleteRequest):
     return {"status": "ok"}
 
 
+_nvml_handle = None
+_nvml_failed = False
+
+
+def _nvml_device():
+    """pynvml のデバイスハンドル（フロントが毎秒ポーリングするので初期化は 1 回だけ）。"""
+    global _nvml_handle, _nvml_failed
+    if _nvml_handle is not None or _nvml_failed:
+        return _nvml_handle
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    except Exception:
+        _nvml_failed = True
+    return _nvml_handle
+
+
 @app.get("/system-stats")
 def system_stats():
     cpu = psutil.cpu_percent(interval=None)
@@ -690,21 +741,20 @@ def system_stats():
     ram_total = vm.total / (1024 ** 3)
 
     gpu_used  = None
-    gpu_total = None
     vram_used  = None
     vram_total = None
 
-    try:
-        import pynvml
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-        mem  = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        gpu_used   = util.gpu
-        vram_used  = mem.used  / (1024 ** 3)
-        vram_total = mem.total / (1024 ** 3)
-    except Exception:
-        pass
+    handle = _nvml_device()
+    if handle is not None:
+        try:
+            import pynvml
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            mem  = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            gpu_used   = util.gpu
+            vram_used  = mem.used  / (1024 ** 3)
+            vram_total = mem.total / (1024 ** 3)
+        except Exception:
+            pass
 
     return {
         "cpu":        round(cpu, 1),
@@ -819,8 +869,9 @@ async def runtime_status():
 
 def _resync_model_selection() -> dict:
     """モデルフォルダ変更後、選択中モデルが新フォルダに無ければアンロードして先頭のモデルに戻す。"""
-    review_ids = {m["id"] for m in scan_review_models() if m.get("exists")}
-    text_ids = {m["id"] for m in scan_translator_models() if m.get("exists")}
+    rows = model_catalog._scan_models()  # 1 回のスキャンで両方の ID 集合を作る
+    review_ids = {m["id"] for m in rows if m.get("has_mmproj")}
+    text_ids = {m["id"] for m in rows}
     to_save: dict = {}
 
     if video_reviewer.model_id not in review_ids:
@@ -854,6 +905,7 @@ async def runtime_models_dir(req: ModelsDirRequest):
         value = ""
 
     save_settings({"models_dir": value})
+    model_catalog.invalidate_cache()
     loop = asyncio.get_event_loop()
     reset = await loop.run_in_executor(None, _resync_model_selection)
     info = await loop.run_in_executor(None, model_catalog.models_dir_info)
@@ -930,6 +982,7 @@ async def runtime_install(req: RuntimeInstallRequest):
                     asset=req.asset,
                     model=req.model,
                 )
+                model_catalog.invalidate_cache()
                 q.put(("done", json.dumps(status, ensure_ascii=False)))
             except cancel.CanceledError:
                 q.put(("canceled", ""))
@@ -953,7 +1006,7 @@ async def runtime_install(req: RuntimeInstallRequest):
                 yield sse({"status": "error", "message": payload})
                 break
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 @app.get("/models")
@@ -1054,6 +1107,7 @@ async def transcribe(req: TranscribeRequest):
                     total = len(segments)
                     yield sse({"status": "aligning", "current": 0, "total": total})
                     aligned, warned = [], 0
+                    last_emit = 0.0
                     for i, seg in enumerate(segments):
                         cancel.raise_if_canceled()
                         new_seg, warn = await loop.run_in_executor(
@@ -1062,7 +1116,11 @@ async def transcribe(req: TranscribeRequest):
                         aligned.append(new_seg)
                         if warn:
                             warned += 1
-                        yield sse({"status": "aligning", "current": i + 1, "total": total})
+                        # 進捗イベントは 0.25 秒に 1 回程度に間引く（最後は必ず送る）
+                        now = asyncio.get_event_loop().time()
+                        if i + 1 == total or now - last_emit >= 0.25:
+                            last_emit = now
+                            yield sse({"status": "aligning", "current": i + 1, "total": total})
                     segments = aligned
                     if warned:
                         yield sse({
@@ -1083,13 +1141,12 @@ async def transcribe(req: TranscribeRequest):
         segments = split_long_segments(segments)
         yield sse({"status": "saving_srt", "segments": len(segments)})
 
-        srt_content = segments_to_srt(segments)
         out_path = make_output_path(str(video_path), "original")
-        save_srt(srt_content, out_path)
+        await loop.run_in_executor(None, save_srt, segments_to_srt(segments), out_path)
 
         yield sse({"status": "done", "srt_path": out_path, "segments": len(segments)})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 def _video_context_for_srt(srt_path: Path) -> str:
@@ -1169,7 +1226,7 @@ async def translate(req: TranslateRequest):
     if req.mode not in {"quality", "fast"}:
         raise HTTPException(400, f"無効な mode: {req.mode}")
 
-    segments = srt_file_to_segments(str(srt_path))
+    segments = await asyncio.get_event_loop().run_in_executor(None, srt_file_to_segments, str(srt_path))
     total = len(segments)
     if total == 0:
         raise HTTPException(400, "字幕が0件のため翻訳できません。先に文字起こしを実行してください。")
@@ -1306,10 +1363,10 @@ async def translate(req: TranslateRequest):
             out_name = srt_path.stem + ".japanese.srt"
         out_path = str(srt_path.parent / out_name)
 
-        save_srt(segments_to_srt(translated), out_path)
+        await loop.run_in_executor(None, save_srt, segments_to_srt(translated), out_path)
         yield sse({"status": "done", "srt_path": out_path, "total": total})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 @app.post("/refine")
@@ -1328,7 +1385,7 @@ async def refine(req: TranslateRequest):
     if not srt_path.exists():
         raise HTTPException(404, f"SRT ファイルが見つかりません: {srt_path}")
 
-    segments = srt_file_to_segments(str(srt_path))
+    segments = await asyncio.get_event_loop().run_in_executor(None, srt_file_to_segments, str(srt_path))
     total = len(segments)
     if total == 0:
         raise HTTPException(400, "字幕が0件のため補正できません。先に文字起こしを実行してください。")
@@ -1386,10 +1443,10 @@ async def refine(req: TranslateRequest):
             out_name = srt_path.stem + ".corrected.srt"
         out_path = str(srt_path.parent / out_name)
 
-        save_srt(segments_to_srt(refined), out_path)
+        await loop.run_in_executor(None, save_srt, segments_to_srt(refined), out_path)
         yield sse({"status": "done", "srt_path": out_path, "total": total})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 @app.post("/lookup")
@@ -1660,7 +1717,7 @@ async def review_analyze(req: ReviewRequest):
         except Exception as e:
             yield sse({"status": "error", "message": str(e)})
             return
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 def _video_meta_text(video_path: str) -> str:
@@ -1833,7 +1890,7 @@ async def review_qa(req: QARequest):
                 yield sse({"status": "error", "message": payload})
                 break
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 @app.post("/review/toc/load")
@@ -2000,7 +2057,10 @@ async def report_generate(req: ReportGenerateRequest):
                     yield sse({"status": "error", "message": f"VL モデルのロードに失敗: {e}"})
                     return
             reviewer = video_reviewer
-        transcript_rows = _report_transcript_rows(video_path, req.transcript) if req.use_llm else []
+        transcript_rows = (
+            await loop.run_in_executor(None, _report_transcript_rows, video_path, req.transcript)
+            if req.use_llm else []
+        )
 
         # 字幕から話題ごとの章立てを作り直す（分析のチャプターは映像主導で細切れになりやすいため）。
         # シーン検出は境界のヒントに使い、結果は generate_report にも渡して二重検出を避ける
@@ -2009,7 +2069,7 @@ async def report_generate(req: ReportGenerateRequest):
         if req.use_llm and req.rebuild_chapters and transcript_rows:
             transcript_text = outline_builder.rows_to_text(transcript_rows)
             kind = outline_builder.resolve_kind(req.video_kind, transcript_text)
-            duration = report_builder.probe_duration(str(video_path))
+            duration = await loop.run_in_executor(None, report_builder.probe_duration, str(video_path))
             try:
                 yield sse({"status": "detecting_scenes"})
                 detected = await loop.run_in_executor(None, report_builder.detect_scene_changes, str(video_path))
@@ -2056,7 +2116,7 @@ async def report_generate(req: ReportGenerateRequest):
                 break
             yield sse(ev)
         await fut
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return sse_response(stream())
 
 
 @app.post("/video/info")
@@ -2093,8 +2153,9 @@ async def screenshot(req: ScreenshotRequest):
 @app.post("/cache/thumbnail")
 def cache_thumbnail(req: CacheThumbnailRequest):
     """base64 画像をキャッシュフォルダの thumbnails/ に保存する。"""
-    # パストラバーサル対策: filename はファイル名そのもの（パス区切りなし）のみ許可
-    if req.filename != Path(req.filename).name or req.filename in {"", ".", ".."}:
+    # パストラバーサル対策: filename はファイル名そのもの（パス区切りなし）のみ許可し、
+    # 名前も scene_*.jpg / bookmark_*.jpg に限定する（任意の拡張子・内容を書かせない）
+    if req.filename != Path(req.filename).name or not re.fullmatch(r"(scene|bookmark)_[A-Za-z0-9_-]+\.jpg", req.filename):
         raise HTTPException(400, f"不正なファイル名: {req.filename}")
     thumb_dir = _cache_dir(req.video_path) / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -2180,8 +2241,9 @@ def cache_image(video_path: str, name: str):
         raise HTTPException(403, "不正なパス")
     if not img_path.exists():
         raise HTTPException(404, "画像が見つかりません")
-    # 再分析でファイル名そのまま上書きされるため、ブラウザキャッシュに残さない
-    return FileResponse(img_path, headers={"Cache-Control": "no-store"})
+    # 再分析で同名ファイルを上書きするが、フロントは URL に版（v=）を付けて呼ぶので
+    # ブラウザキャッシュを許可してよい（一覧の再描画のたびに全サムネールを取り直さない）
+    return FileResponse(img_path, headers={"Cache-Control": "private, max-age=86400"})
 
 
 # ---------- ファイルマネージャー ----------
@@ -2193,22 +2255,38 @@ def _is_managed_dir(name: str) -> bool:
     return name.startswith(".") or name.endswith(".cache") or name.endswith("_screenshot") or name.endswith("_report")
 
 
+_analyzed_cache: dict[str, tuple[int, int, bool]] = {}
+_ANALYZED_CACHE_MAX = 4096
+
+
 def _is_analyzed(cache: Path) -> bool:
     """分析済みかを data.json の内容で判定する。
 
     ブックマークだけを付けた動画も /cache/patch で data.json ができるため、
     存在チェックだけだと未分析なのに「分析済み」バッジが付いてしまう。
     meta / scenes / toc のいずれかが入っていれば分析済みとみなす。
+    data.json は transcript 全文を含んで大きいので、(mtime, size) が同じ間は結果を再利用する
+    （一覧・検索のたびに数百ファイルを parse しない）。
     """
     data_file = cache / "data.json"
-    if not data_file.exists():
+    try:
+        st = data_file.stat()
+    except OSError:
         return False
+    key = str(data_file)
+    hit = _analyzed_cache.get(key)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
     try:
         data = json.loads(data_file.read_text(encoding="utf-8"))
-        return bool(data.get("meta") or data.get("scenes") or data.get("toc"))
+        result = bool(data.get("meta") or data.get("scenes") or data.get("toc"))
     except Exception:
         # 壊れた JSON 等は従来どおり存在ベースで分析済み扱い
-        return True
+        result = True
+    if len(_analyzed_cache) >= _ANALYZED_CACHE_MAX:
+        _analyzed_cache.clear()
+    _analyzed_cache[key] = (st.st_mtime_ns, st.st_size, result)
+    return result
 
 
 def _video_entry(p: Path) -> dict:
@@ -2225,6 +2303,10 @@ def _video_entry(p: Path) -> dict:
     except OSError:
         size, mtime = 0, 0.0
     thumb = cache / "thumbnails" / "scene_0.jpg"
+    try:
+        thumb_mtime: int | None = thumb.stat().st_mtime_ns
+    except OSError:
+        thumb_mtime = None
     return {
         "name": p.name,
         "path": str(p),
@@ -2233,7 +2315,8 @@ def _video_entry(p: Path) -> dict:
         "analyzed": _is_analyzed(cache),
         "has_original_srt": _has_srt("original") or _has_srt("corrected"),
         "has_japanese_srt": _has_srt("japanese"),
-        "thumbnail": "thumbnails/scene_0.jpg" if thumb.exists() else None,
+        "thumbnail": "thumbnails/scene_0.jpg" if thumb_mtime is not None else None,
+        "thumbnail_mtime": thumb_mtime,  # 一覧のサムネール URL のキャッシュキー（再生成で変わる）
     }
 
 

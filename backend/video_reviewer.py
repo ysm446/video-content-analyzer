@@ -27,6 +27,8 @@ LLAMA_CPP_VISION_PORT = int(os.environ.get("LLAMA_CPP_VISION_PORT", "8767"))
 
 # シーン検出の閾値（0.0〜1.0、低いほど敏感）
 SCENE_THRESHOLD = 0.35
+# シーン検出で書き出す候補フレームの上限（高速カットの動画で数千枚になるのを防ぐ。使うのは max_frames 枚だけ）
+SCENE_MAX_CANDIDATES = 1500
 
 ANALYZE_SYSTEM = (
     "/no_think\n"
@@ -260,6 +262,9 @@ class VideoReviewer:
         print("[VideoReviewer] モデルをアンロードしました")
 
     def _make_cache_key(self, video_path: str, frame_mode: str, max_frames: int, min_interval: float) -> tuple:
+        # 枚数・間隔もキーに含める（実際の抽出パラメータ）。analyze の coarse フレーム（balanced/quality
+        # では max_frames の半分程度）を QA が黙って流用して品質が落ちないようにする意図的な設計
+        # （→ docs/design/video-analysis-review.md 3-1）。QA は分析キャッシュのサムネール→ffmpeg 抽出で補う
         p = Path(video_path)
         stat = p.stat()
         return (
@@ -605,22 +610,35 @@ class VideoReviewer:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             outpattern = str(Path(tmpdir) / "frame_%04d.jpg")
+            # モデルへは最大 ~450px 程度に縮小して送るので、抽出時点で幅 640px に落として
+            # ディスク書き込みを減らす。高速カットの動画で候補が爆発しないよう枚数も上限を設ける
             cmd = [
                 "ffmpeg", "-i", video_path,
-                "-vf", f"select=eq(n\\,0)+gt(scene\\,{threshold}),showinfo",
-                "-vsync", "vfr",
+                "-vf", f"select=eq(n\\,0)+gt(scene\\,{threshold}),scale='min(640\\,iw)':-2,showinfo",
+                "-vsync", "vfr", "-frames:v", str(SCENE_MAX_CANDIDATES),
                 "-vcodec", "mjpeg", "-q:v", "2",
                 outpattern, "-y",
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                tail = "\n".join(result.stderr.strip().splitlines()[-3:])
-                print(f"[VideoReviewer] シーン検出 ffmpeg が異常終了 (code={result.returncode}) → 均等サンプリングにフォールバック\n{tail}")
+            # 全編デコードは長い動画で数十秒〜かかるので、中止フラグを監視しながら待つ
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+            stderr_text = ""
+            while True:
+                try:
+                    _, stderr_text = proc.communicate(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel.is_canceled():
+                        proc.kill()
+                        proc.communicate()
+                        raise cancel.CanceledError()
+            if proc.returncode != 0:
+                tail = "\n".join(stderr_text.strip().splitlines()[-3:])
+                print(f"[VideoReviewer] シーン検出 ffmpeg が異常終了 (code={proc.returncode}) → 均等サンプリングにフォールバック\n{tail}")
                 return self.extract_frames(video_path, max_frames, 5.0)
             ts_pattern = re.compile(r"\bpts_time:(\d+\.?\d*)")
             raw_ts = [
                 float(m.group(1))
-                for line in result.stderr.splitlines()
+                for line in stderr_text.splitlines()
                 if (m := ts_pattern.search(line))
             ]
             frame_files = sorted(f for f in os.listdir(tmpdir) if f.startswith("frame_") and f.endswith(".jpg"))

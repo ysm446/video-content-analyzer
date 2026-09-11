@@ -865,7 +865,7 @@
     // 接続先は Electron main が決める（既定 8765。使用中なら空きポートへ自動変更）
     const API = (window.electronAPI && window.electronAPI.backendUrl) || 'http://127.0.0.1:8765'
     const MIN_INTERVAL = 5.0
-    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', analysisReady:false, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true,spec:true}, qaChat:[], qaSuggestions:null, seekMarkersVisible:true }
+    const state = { videoPath:null, origSrtPath:null, correctedSrtPath:null, jpSrtPath:null, origTranscript:'', thumbVersion:0, tocPath:null, tocData:null, tocDirty:false, showAnalysisPanel:true, showQaPanel:true, showFilePanel:true, openSceneMenuId:null, editingSceneId:null, paneTab:'chapters', openBookmarkMenuId:null, editingBookmarkId:null, addingBookmark:false, analysisExpanded:{actions:true,summary:true,detail:false,tags:true,scenes:true,spec:true}, qaChat:[], qaSuggestions:null, seekMarkersVisible:true }
 
     // 設定モーダル（左: 項目ナビ / 右: パラメータ）
     const settingsModal=document.getElementById('settingsModal')
@@ -1158,7 +1158,8 @@
 
     function setCurrentVideo(path){
       state.videoPath = path
-      state.qaChat = []  // チャット履歴は動画ごと（別動画の文脈を混ぜない）
+      state.thumbVersion = Date.now()  // サムネール URL のキャッシュキー（再生成時に更新）
+      clearChatHistoryDom()  // チャット履歴は動画ごと（別動画の文脈を混ぜない）。表示も一緒に消す
       state.qaSuggestions = null
       const name = path ? (path.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/, '') : '動画未選択'
       document.getElementById('currentVideoName').textContent = name
@@ -1270,14 +1271,13 @@
       const el=document.getElementById(`${kind}Result`)
       if(el){
         el.className='result-row '+(ok?'done':'error')
-        el.innerHTML = ok ? `<span>✓</span><span>${text}</span>` : `<span>✗</span><span>${text}</span>`
+        el.innerHTML = `<span>${ok?'✓':'✗'}</span><span>${escHtml(text)}</span>`
       }
       const hadTimer=!!_taskTimers[kind]
       stopTaskTimer(kind, ok?'done':'error', text)
       if(!hadTimer) updateGlobalStatus(kind, ok?'done':'error', text)
     }
     function setQAEnabled(enabled){
-      state.analysisReady = enabled
       const input=document.getElementById('qaInput')
       const btn=document.getElementById('qaBtn')
       const ph=document.getElementById('qaPlaceholder')
@@ -1315,24 +1315,27 @@
         submitQuestion()
       }))
     }
-    let _qaSuggestBusy=false
+    // 動画切り替え中に前の動画向けの応答が届いても捨てるよう、リクエストごとに番号を振る
+    let _qaSuggestSeq=0
     async function fetchQaSuggestions(){
       // モデルがロード済みのときだけサーバー側で生成される（未ロード時は空が返り、既存表示を維持）
-      if(_qaSuggestBusy||!state.videoPath) return
+      if(!state.videoPath) return
       if(document.getElementById('qaInput')?.disabled) return
       if(_runningJobs>0) return  // 推論中は割り込まない（回答完了後に呼ばれる）
-      _qaSuggestBusy=true
+      const seq=++_qaSuggestSeq
+      const videoPath=state.videoPath
       try{
-        const res=await fetch(`${API}/review/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,transcript:state.origTranscript,history:state.qaChat.slice(-2),bookmarks:bookmarksForLlm()})})
+        const res=await fetch(`${API}/review/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:videoPath,transcript:state.origTranscript,history:state.qaChat.slice(-2),bookmarks:bookmarksForLlm()})})
+        if(seq!==_qaSuggestSeq||state.videoPath!==videoPath) return
         if(res.ok){
           const {questions}=await res.json()
+          if(seq!==_qaSuggestSeq||state.videoPath!==videoPath) return
           if(Array.isArray(questions)&&questions.length){
             state.qaSuggestions=questions.slice(0,3)
             renderQaSuggestions()
           }
         }
       }catch{}
-      _qaSuggestBusy=false
     }
 
     function trimLeadingChatWhitespace(text){
@@ -1373,18 +1376,31 @@
       const reader=response.body.getReader()
       const decoder=new TextDecoder()
       let buf=''
-      while(true){
-        const {done,value}=await reader.read()
-        if(done) break
-        buf += decoder.decode(value,{stream:true})
-        const lines=buf.split('\n')
-        buf=lines.pop()
-        for(const line of lines){
-          if(line.startsWith('data: ')){
-            try{ onEvent(JSON.parse(line.slice(6))) }catch{}
-          }
-        }
+      // 終端イベント（done / error / canceled）を受け取らずにストリームが閉じた場合
+      // （バックエンドのクラッシュ等）、ハンドラに error を届けて「実行中」表示が残らないようにする
+      let terminal=false
+      const dispatch=line=>{
+        if(!line.startsWith('data: ')) return
+        let ev
+        try{ ev=JSON.parse(line.slice(6)) }catch{ return }  // 壊れた行だけ読み飛ばす（ハンドラの例外は握りつぶさない）
+        if(ev&&(ev.status==='done'||ev.status==='error'||ev.status==='canceled')) terminal=true
+        onEvent(ev)
       }
+      try{
+        while(true){
+          const {done,value}=await reader.read()
+          if(done) break
+          buf += decoder.decode(value,{stream:true})
+          const lines=buf.split('\n')
+          buf=lines.pop()
+          for(const line of lines) dispatch(line)
+        }
+        if(buf.trim()) dispatch(buf)
+      }catch(e){
+        if(!terminal){ terminal=true; onEvent({status:'error',message:`接続が切断されました: ${e.message}`}) }
+        return
+      }
+      if(!terminal) onEvent({status:'error',message:'サーバーとの接続が切断されました'})
     }
 
     // ---- 実行中処理の中止 ----
@@ -1417,6 +1433,14 @@
     function markCanceled(kind){
       resetSection(kind)
       updateGlobalStatus(kind,'','中止しました')
+    }
+    // 処理中に別の動画へ切り替わった後に完了した処理の後始末。
+    // 今開いている動画の状態（字幕・チャプター）には触らず、ステータスバーとファイル一覧だけ更新する
+    function finishDetachedTask(kind,text){
+      resetSection(kind)
+      updateGlobalStatus(kind,'done',text)
+      updateProcessButtons()
+      refreshFileTree()
     }
 
     function escHtml(str){
@@ -1516,9 +1540,6 @@
       saveUiSettings({[keyMap[name]]:next})
     }
 
-    function switchAnalysisPane(name){
-      document.getElementById('analysisView').style.display = state.paneTab==='bookmarks' ? 'none' : ''
-    }
 
     function parseTsToSec(ts){
       if(!ts) return null
@@ -1604,11 +1625,12 @@
       renderSeekMarkers()
     }
 
-    async function captureSceneThumbnails(scenes, analysisResult){
+    async function captureSceneThumbnails(scenes, videoPath){
       // サムネールはサーバー側で生成する（ffmpeg の入力シーク）。
       // 以前の <video> シーク＋canvas 方式は seeked とフレーム描画のレースで
       // 「前チャプターの絵」「重複」が発生し、再生位置も動いてしまっていた。
-      if(!state.videoPath) return
+      // videoPath は分析対象の動画。生成中に別の動画へ切り替わったら結果は捨てる
+      if(!videoPath) return
       const enriched = scenes.map((s,i)=>({
         id: s.id||`scene_${i}`,
         start_sec: Number.isFinite(s.start_sec) ? Number(s.start_sec) : parseTsToSec(s.timestamp),
@@ -1621,7 +1643,7 @@
         const res=await fetch(`${API}/cache/thumbnails/generate`,{
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({video_path:state.videoPath,scenes:enriched.map(s=>({start_sec:s.start_sec}))})
+          body:JSON.stringify({video_path:videoPath,scenes:enriched.map(s=>({start_sec:s.start_sec}))})
         })
         if(res.ok){
           const {thumbnails}=await res.json()
@@ -1631,7 +1653,9 @@
           }
         }
       }catch(e){ console.warn('サムネール生成に失敗:', e) }
-      if(analysisResult && state.tocData){
+      if(state.videoPath!==videoPath) return
+      state.thumbVersion=Date.now()  // 同名ファイルを上書きしたのでキャッシュキーを更新
+      if(state.tocData){
         state.tocData.scenes = enriched
         renderAnalysisDetail(analysisFromTocData(state.tocData))
         markTocDraftDirty()
@@ -1641,22 +1665,8 @@
     async function saveDraftArtifacts(){
       if(!state.videoPath || !state.tocData) return null
       const video=document.getElementById('video')
-      const draftScenes=Array.isArray(state.tocData.scenes) ? state.tocData.scenes : []
-      const persistedScenes=[]
-      for(let i=0;i<draftScenes.length;i++){
-        const scene={...draftScenes[i]}
-        const thumb=scene.thumbnail || ''
-        if(typeof thumb === 'string' && thumb.startsWith('data:')){
-          const filename = `scene_${i}.jpg`
-          await fetch(`${API}/cache/thumbnail`,{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({video_path:state.videoPath,filename,image_base64:thumb})
-          })
-          scene.thumbnail = `thumbnails/${filename}`
-        }
-        persistedScenes.push(scene)
-      }
+      // サムネールはサーバー側生成（thumbnails/scene_N.jpg の相対パス）なので、そのまま保存する
+      const persistedScenes=(Array.isArray(state.tocData.scenes) ? state.tocData.scenes : []).map(s=>({...s}))
       const cacheData={
         duration:video.duration||0,
         transcript:state.origTranscript||'',
@@ -1682,16 +1692,19 @@
       fetch(`${API}/cache/patch`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,data:patch})}).catch(()=>{})
     }
 
+    // キャッシュフォルダ内の画像 URL。同名ファイルを上書きして再生成するため、
+    // version（再生成のたびに更新）をクエリに付けてブラウザキャッシュを使い分ける
+    function cacheImageUrl(videoPath, name, version){
+      const v=version ?? state.thumbVersion ?? 0
+      return `${API}/cache/image?video_path=${encodeURIComponent(videoPath)}&name=${encodeURIComponent(name)}&v=${encodeURIComponent(v)}`
+    }
     function loadCacheThumbnails(scenes, videoPath){
       scenes.forEach((s,i)=>{
         if(!s.thumbnail) return
         const img = document.getElementById(`scene-thumb-${i}`)
         if(!img) return
-        if(typeof s.thumbnail === 'string' && s.thumbnail.startsWith('data:')){
-          img.src = s.thumbnail
-        }else{
-          img.src = `${API}/cache/image?video_path=${encodeURIComponent(videoPath)}&name=${encodeURIComponent(s.thumbnail)}`
-        }
+        const url=cacheImageUrl(videoPath, s.thumbnail)
+        if(img.getAttribute('src')!==url) img.src=url
       })
     }
 
@@ -1831,7 +1844,7 @@
         const editing=state.editingBookmarkId===b.id
         const menuOpen=state.openBookmarkMenuId===b.id
         const thumb=b.thumbnail
-          ? `<div class="scene-thumb-wrap"><img class="scene-thumb" src="${escHtml(`${API}/cache/image?video_path=${encodeURIComponent(state.videoPath||'')}&name=${encodeURIComponent(b.thumbnail)}`)}"></div>`
+          ? `<div class="scene-thumb-wrap"><img class="scene-thumb" src="${escHtml(cacheImageUrl(state.videoPath||'', b.thumbnail))}"></div>`
           : ''
         const body=editing ? `
           <div class="scene-edit">
@@ -1874,14 +1887,17 @@
     // （タイトル・コメントは保持。サムネールは同名ファイルに上書き）
     async function retakeBookmark(id){
       if(!state.videoPath) return
+      const targetVideo=state.videoPath
       const bm=getBookmarks().find(b=>b.id===id)
       if(!bm) return
       const t=video.currentTime||0
       bm.time_sec=Math.round(t*10)/10
       try{
-        const res=await fetch(`${API}/cache/bookmarks/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,time_sec:t,name:`bookmark_${id}.jpg`})})
+        const res=await fetch(`${API}/cache/bookmarks/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:targetVideo,time_sec:t,name:`bookmark_${id}.jpg`})})
         if(res.ok) bm.thumbnail=(await res.json()).thumbnail||bm.thumbnail
       }catch{}
+      if(state.videoPath!==targetVideo) return  // 生成中に別の動画へ切り替わった（元の動画の state は既に破棄済み）
+      state.thumbVersion=Date.now()  // 同名ファイルを上書きしたのでキャッシュキーを更新
       normalizeTocData().bookmarks.sort((a,b)=>(a.time_sec||0)-(b.time_sec||0))
       renderBookmarks()
       persistBookmarks(`ブックマークを現在位置に更新しました（${fmtTs(t)}）`)
@@ -1892,6 +1908,7 @@
       if(state.addingBookmark) return
       state.addingBookmark=true
       renderBookmarks()
+      const targetVideo=state.videoPath
       const t=video.currentTime||0
       const id=`bm_${Date.now().toString(36)}`
       try{
@@ -1899,9 +1916,10 @@
         // 失敗しても画像なしでブックマーク自体は作成する
         let thumbnail=''
         try{
-          const res=await fetch(`${API}/cache/bookmarks/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,time_sec:t,name:`bookmark_${id}.jpg`})})
+          const res=await fetch(`${API}/cache/bookmarks/thumbnail`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:targetVideo,time_sec:t,name:`bookmark_${id}.jpg`})})
           if(res.ok) thumbnail=(await res.json()).thumbnail||''
         }catch{}
+        if(state.videoPath!==targetVideo) return  // 生成中に別の動画へ切り替わった: 別動画のリストには入れない
         const data=normalizeTocData()
         data.bookmarks.push({id,time_sec:Math.round(t*10)/10,title:'',comment:'',thumbnail,created_at:new Date().toISOString()})
         data.bookmarks.sort((a,b)=>(a.time_sec||0)-(b.time_sec||0))
@@ -2307,14 +2325,18 @@
         return `[${m}:${sec.toString().padStart(2,'0')}] ${s.text}`
       }).join('\n')
     }
-    async function loadSrt(filePath,kind){
-      const result=await window.electronAPI.readFile(filePath)
-      if(!result.ok) return
-      const subs=parseSRT(result.content)
+    function applySubtitles(subs,kind){
       if(kind==='orig'){ origSubtitles=subs; state.origTranscript=subsToTranscript(subs); renderedOrigSub=null }
       else jpSubtitles=subs
       syncSubtitleToggleButtons()
       updateSubtitles()
+    }
+    async function loadSrt(filePath,kind){
+      const targetVideo=state.videoPath
+      const result=await window.electronAPI.readFile(filePath)
+      if(!result.ok) return
+      if(state.videoPath!==targetVideo) return  // 読み込み中に別の動画へ切り替わった
+      applySubtitles(parseSRT(result.content),kind)
     }
 
     function clearSubtitle(kind){
@@ -2337,7 +2359,11 @@
       updateSubtitles()
     }
 
-    async function tryAutoLoadSrt(videoFilePath){
+    // 動画を開く処理の世代番号。読み込み途中に別の動画を開いたら、古い方の結果は捨てる
+    let _openSeq=0
+    function isStaleOpen(seq){ return seq!==_openSeq }
+
+    async function tryAutoLoadSrt(videoFilePath, seq=_openSeq){
       const stem=videoFilePath.replace(/\.[^.]+$/,'')          // 例: D:\foo\video
       const base=stem.split(/[\\/]/).pop()                     // 例: video
       const sep=videoFilePath.includes('\\')?'\\':'/'
@@ -2352,10 +2378,12 @@
       for(const {paths,kind} of targets){
         for(const path of paths){
           const result=await window.electronAPI.readFile(path)
+          if(isStaleOpen(seq)) return
           if(result.ok){
-            if(kind==='orig'){ state.origSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
-            else if(kind==='corrected'){ state.correctedSrtPath=path; await loadSrt(path,'orig'); document.getElementById('translateBtn').disabled=false; setResult('refine',true,path) }
-            else { state.jpSrtPath=path; await loadSrt(path,'jp'); setResult('translate',true,path) }
+            const subs=parseSRT(result.content)
+            if(kind==='orig'){ state.origSrtPath=path; applySubtitles(subs,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,path) }
+            else if(kind==='corrected'){ state.correctedSrtPath=path; applySubtitles(subs,'orig'); document.getElementById('translateBtn').disabled=false; setResult('refine',true,path) }
+            else { state.jpSrtPath=path; applySubtitles(subs,'jp'); setResult('translate',true,path) }
             break
           }
         }
@@ -2363,13 +2391,14 @@
       updateProcessButtons()
     }
 
-    async function tryAutoLoadCache(videoFilePath){
+    async function tryAutoLoadCache(videoFilePath, seq=_openSeq){
       loadReportPreview()  // レポートは data.json と独立に読む（無ければ空表示）
       // 新キャッシュ (video.cache/data.json) を優先、なければ旧 .toc.json にフォールバック
       try{
         const res=await fetch(`${API}/cache/load`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:videoFilePath})})
         if(res.ok){
           const {data}=await res.json()
+          if(isStaleOpen(seq)) return
           if(data.transcript) state.origTranscript=data.transcript
           const analysisResult={genre:data.meta?.genre, summary:data.meta?.summary, detail:data.meta?.detail||'', tags:data.meta?.tags||[], scenes:data.scenes||[]}
           renderTocDetail({...data, toc:data.toc||[], bookmarks:data.bookmarks||[]})
@@ -2380,11 +2409,13 @@
           return
         }
       }catch{}
+      if(isStaleOpen(seq)) return
       // フォールバック: 旧 .toc.json
       try{
         const res=await fetch(`${API}/review/toc/load`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:videoFilePath})})
         if(!res.ok) return
         const body=await res.json()
+        if(isStaleOpen(seq)) return
         state.tocPath=body.toc_path
         renderTocDetail(body.data)
         renderAnalysisDetail(analysisFromTocData(body.data))
@@ -2435,11 +2466,14 @@
     }
 
     async function openVideoFromPath(p){
+      const seq=++_openSeq
       setCurrentVideo(p)
       loadVideo(p)
       loadVideoSpecs(p)
-      await tryAutoLoadSrt(p)
-      await tryAutoLoadCache(p)
+      await tryAutoLoadSrt(p, seq)
+      if(isStaleOpen(seq)) return
+      await tryAutoLoadCache(p, seq)
+      if(isStaleOpen(seq)) return
       highlightActiveFileRow()
     }
 
@@ -2674,7 +2708,7 @@
     seekPreview.appendChild(seekPreviewVideo)
     seekPreview.appendChild(seekPreviewTime)
     document.body.appendChild(seekPreview)
-    let _previewSeeking=false, _previewPending=null
+    let _previewSeeking=false, _previewPending=null, _previewSize=null
     function _previewSeekTo(t){
       if(_previewSeeking){ _previewPending=t; return }
       _previewSeeking=true
@@ -2689,9 +2723,12 @@
       const rect=seekBar.getBoundingClientRect()
       const frac=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))
       const t=Math.min(frac*video.duration, Math.max(video.duration-0.1,0))
+      const wasHidden=seekPreview.style.display!=='block'
       seekPreview.style.display='block'
       seekPreviewTime.textContent=fmtDurationHMS(t)
-      const w=seekPreview.offsetWidth||176, h=seekPreview.offsetHeight||99
+      // 寸法は表示直後に一度だけ測る（mousemove ごとの強制レイアウトを避ける）
+      if(wasHidden||!_previewSize){ _previewSize={w:seekPreview.offsetWidth||176,h:seekPreview.offsetHeight||99} }
+      const {w,h}=_previewSize
       seekPreview.style.left=Math.max(8,Math.min(window.innerWidth-w-8,e.clientX-w/2))+'px'
       seekPreview.style.top=(rect.top-h-10)+'px'
       _previewSeekTo(t)
@@ -2783,7 +2820,7 @@
     }
 
     function fileThumbUrl(v){
-      return `${API}/cache/image?video_path=${encodeURIComponent(v.path)}&name=${encodeURIComponent(v.thumbnail)}`
+      return cacheImageUrl(v.path, v.thumbnail, v.thumbnail_mtime ?? 0)
     }
 
     function videoBadgesHtml(v){
@@ -3331,7 +3368,7 @@
         if(fmRadio) fmRadio.checked=true
         const amRadio=document.querySelector(`input[name="analysisMode"][value="${s.analysis_mode||'speed'}"]`)
         if(amRadio) amRadio.checked=true
-        slider.value=s.max_frames
+        if(Number.isFinite(Number(s.max_frames))) slider.value=s.max_frames
         if(typeof s.volume==='number'){
           const v=Math.max(0,Math.min(1,Number(s.volume)))
           volumeBar.value=String(v)
@@ -3523,13 +3560,18 @@
     document.getElementById('transcribeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('transcribe',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('transcribeBtn'); btn.disabled=true
-      setTaskTarget('transcribe',state.videoPath)
+      const targetVideo=state.videoPath  // 処理中に別の動画を開いても、結果は開始時の動画にだけ反映する
+      setTaskTarget('transcribe',targetVideo)
       updateProcessButtons('transcribe')
       resetSection('transcribe'); setProgress('transcribe',5,'準備中...')
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,language:null})})
+        const res=await fetch(`${API}/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:targetVideo,language:null})})
         await readSSE(res,event=>{
+          if(event.status==='done'&&state.videoPath!==targetVideo){
+            // 別の動画に切り替わっている: 今の動画の状態は触らず、ステータスだけ更新する
+            finishDetachedTask('transcribe',`完了: ${event.srt_path}`); return
+          }
           if(event.status==='loading_model') setProgress('transcribe',10,'ASR モデルをロード中...')
           else if(event.status==='extracting_audio') setProgress('transcribe',30,'音声を抽出中...')
           else if(event.status==='loading_align_model') setProgress('transcribe',32,`整列モデルをロード中 (${event.language})...`)
@@ -3549,13 +3591,18 @@
     document.getElementById('refineBtn').addEventListener('click',async()=>{
       if(!state.origSrtPath){ setResult('refine',false,'先に文字起こしを実行してください'); return }
       const btn=document.getElementById('refineBtn'); btn.disabled=true
-      setTaskTarget('refine',state.videoPath||state.origSrtPath)
+      const targetVideo=state.videoPath
+      const srcSrt=state.origSrtPath
+      setTaskTarget('refine',targetVideo||srcSrt)
       updateProcessButtons('refine')
       resetSection('refine'); setProgress('refine',0,'準備中...')
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/refine`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:state.origSrtPath})})
+        const res=await fetch(`${API}/refine`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt})})
         await readSSE(res,event=>{
+          if(event.status==='done'&&state.videoPath!==targetVideo){
+            finishDetachedTask('refine',`完了: ${event.srt_path}`); return
+          }
           if(event.status==='loading_model') setProgress('refine',5,'補正モデルをロード中...')
           else if(event.status==='refining'){ const pct=event.total>0?Math.round(event.current/event.total*100):0; setProgress('refine',pct,`補正中 ${event.current}/${event.total}`) }
           else if(event.status==='canceled'){ markCanceled('refine'); updateProcessButtons() }
@@ -3571,13 +3618,17 @@
       const srcSrt=state.correctedSrtPath || state.origSrtPath
       if(!srcSrt){ setResult('translate',false,'先に文字起こしを実行してください'); return }
       const btn=document.getElementById('translateBtn'); btn.disabled=true
-      setTaskTarget('translate',state.videoPath||srcSrt)
+      const targetVideo=state.videoPath
+      setTaskTarget('translate',targetVideo||srcSrt)
       updateProcessButtons('translate')
       resetSection('translate'); setProgress('translate',0,'準備中...')
       const ac=beginCancelable()
       try{
         const res=await fetch(`${API}/translate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({srt_path:srcSrt,mode:getTranslationMode()})})
         await readSSE(res,event=>{
+          if(event.status==='done'&&state.videoPath!==targetVideo){
+            finishDetachedTask('translate',`完了: ${event.srt_path}`); return
+          }
           if(event.status==='loading_model') setProgress('translate',5,'翻訳モデルをロード中...')
           else if(event.status==='building_glossary') setProgress('translate',8,'用語集を作成中...')
           else if(event.status==='glossary_done') setProgress('translate',10,`用語集 ${event.terms} 語を適用`)
@@ -3596,13 +3647,18 @@
     document.getElementById('analyzeBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ setResult('analyze',false,'先に動画を読み込んでください'); return }
       const btn=document.getElementById('analyzeBtn'); btn.disabled=true
-      setTaskTarget('analyze',state.videoPath)
+      const targetVideo=state.videoPath
+      setTaskTarget('analyze',targetVideo)
       resetSection('analyze')
       let sawModelLoad=false
       const ac=beginCancelable()
       try{
-        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang(),video_kind:getVideoKind()})})
+        const res=await fetch(`${API}/review/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:targetVideo,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),analysis_mode:getAnalysisMode(),output_lang:getOutputLang(),video_kind:getVideoKind()})})
         await readSSE(res,event=>{
+          if(event.status==='done'&&state.videoPath!==targetVideo){
+            // 別の動画に切り替わっている: 結果（未保存の下書き）は破棄し、ステータスだけ更新する
+            finishDetachedTask('analyze','分析完了（別の動画を開いたため結果は破棄しました）'); return
+          }
           if(event.status==='loading_model'){
             sawModelLoad=true
             beginImplicitModelLoad()
@@ -3619,7 +3675,7 @@
             state.tocDirty=true
             renderTocDetail(buildTocFromAnalysis(event.result))
             renderAnalysisDetail(analysisFromTocData(normalizeTocData()))
-            captureSceneThumbnails(event.result?.scenes||[], event.result)
+            captureSceneThumbnails(event.result?.scenes||[], targetVideo)
             markTocDraftDirty()
           }
           else if(event.status==='canceled'){ markCanceled('analyze') }
@@ -3638,6 +3694,18 @@
     const qaInput=document.getElementById('qaInput')
     const qaBtn=document.getElementById('qaBtn')
     const qaHistory=document.getElementById('qaHistory')
+
+    // チャットの履歴（state と表示）を消す。動画切り替え時と「履歴を消す」ボタンで共用
+    function clearChatHistoryDom(){
+      state.qaChat=[]
+      const history=document.getElementById('qaHistory')
+      const input=document.getElementById('qaInput')
+      const ph=document.getElementById('qaPlaceholder')
+      const row=document.getElementById('qaSuggestRow')
+      history.innerHTML=''
+      if(ph){ history.appendChild(ph); ph.style.display=input.disabled?'flex':'none' }
+      if(row) history.appendChild(row)
+    }
 
     async function submitQuestion(){
       // 回答生成中の Enter 連打で並行リクエストが走らないようにする
@@ -3685,6 +3753,20 @@
 
       let sawModelLoad=false
       const ac=beginCancelable()
+      const targetVideo=state.videoPath  // 回答中に別の動画へ切り替えたら、その動画の履歴には積まない
+      // ストリーミング中の Markdown 再描画はトークンごとではなくフレームごとにまとめる
+      // （毎トークン全文を parse + sanitize すると長い回答で O(n^2) になり、スクロールも暴れる）
+      let _renderPending=false
+      const flushAnswer=()=>{
+        _renderPending=false
+        ans.innerHTML=renderMarkdown(qaRaw)
+        pair.scrollIntoView({block:'end'})
+      }
+      const scheduleRender=()=>{
+        if(_renderPending) return
+        _renderPending=true
+        requestAnimationFrame(flushAnswer)
+      }
       try{
         const res=await fetch(`${API}/review/qa`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,question:q,max_frames:parseInt(document.getElementById('maxFrames').value),min_interval:MIN_INTERVAL,transcript:state.origTranscript,frame_mode:getFrameMode(),history:state.qaChat.slice(-3),bookmarks:bookmarksForLlm()})})
         await readSSE(res,event=>{
@@ -3701,24 +3783,25 @@
               ? trimLeadingChatWhitespace(event.delta || '')
               : (event.delta || '')
             qaRaw += delta
-            ans.innerHTML = renderMarkdown(qaRaw)
-            pair.scrollIntoView({behavior:'smooth'})
+            scheduleRender()
           }
           else if(event.status==='done'){
             if(qaRaw.trim().length===0){
               ans.style.display=''
               qaRaw=trimLeadingChatWhitespace(event.answer || '')
-              ans.innerHTML=renderMarkdown(qaRaw)
               thinking.style.display='none'
             }
+            flushAnswer()
             const metaHtml = renderQaMeta(event.meta)
             if(metaHtml){
               ansMeta.style.display=''
               ansMeta.innerHTML=metaHtml
               lucide.createIcons({nodes:[ansMeta]})
             }
-            state.qaChat.push({question:q,answer:qaRaw})
-            if(state.qaChat.length>6) state.qaChat.shift()
+            if(state.videoPath===targetVideo){
+              state.qaChat.push({question:q,answer:qaRaw})
+              if(state.qaChat.length>6) state.qaChat.shift()
+            }
             stopQaTimer('完了')
             updateGlobalStatus('qa','done','回答を生成しました')
           }
@@ -3730,6 +3813,7 @@
         })
       }catch(e){ thinking.textContent='接続エラー: '+e.message; stopQaTimer('エラー'); updateGlobalStatus('qa','error',`接続エラー: ${e.message}`) }
       finally{ endCancelable(ac); if(sawModelLoad) endImplicitModelLoad() }
+      if(qaRaw && _renderPending) flushAnswer()
       _qaAnswering=false
       renderQaSuggestions()  // まず既存チップを会話の末尾に再表示
       fetchQaSuggestions()  // 回答後、会話を踏まえたフォローアップ質問に差し替え（モデルはロード済み）
@@ -3793,13 +3877,7 @@
     qaInput.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.isComposing) submitQuestion() })
     document.getElementById('cancelBtn').addEventListener('click',cancelAllProcesses)
     document.getElementById('clearHistoryBtn').addEventListener('click',()=>{
-      const ph=document.getElementById('qaPlaceholder')
-      const row=document.getElementById('qaSuggestRow')
-      qaHistory.innerHTML=''
-      state.qaChat=[]
-      if(ph) qaHistory.appendChild(ph)
-      if(row) qaHistory.appendChild(row)
-      ph.style.display=qaInput.disabled?'flex':'none'
+      clearChatHistoryDom()
       // 前の会話に基づくフォローアップ質問チップもリセットして再生成
       state.qaSuggestions=null
       renderQaSuggestions()
@@ -4054,7 +4132,6 @@
     loadPrompts()
     setQAEnabled(false)
     syncSubtitleToggleButtons()
-    switchAnalysisPane('analysis')
     updatePanelLayout()
     lucide.createIcons()
 
@@ -4092,7 +4169,7 @@
 
     async function updateSysInfo() {
       try {
-        const r = await fetch('http://localhost:8765/system-stats')
+        const r = await fetch(`${API}/system-stats`)
         if (!r.ok) return
         const d = await r.json()
         setSysItem('si_cpu', d.cpu, `${d.cpu}%`)
@@ -4111,6 +4188,22 @@
     }
     updateSysInfo()
     setInterval(updateSysInfo, 1000)
+
+    // チャット回答・詳細などモデル出力に含まれる http(s) リンクは既定ブラウザで開く
+    // （main.js 側で will-navigate も禁止しているが、ここで先に拾って外部へ渡す）
+    document.addEventListener('click',e=>{
+      const a=e.target.closest('a[href]')
+      if(!a) return
+      const href=a.getAttribute('href')||''
+      if(!/^https?:\/\//i.test(href)) return
+      e.preventDefault()
+      window.electronAPI?.openExternal?.(href)
+    })
+
+    // バックエンドが稼働中に落ちた場合はステータスバーに表示する（fetch が黙って失敗し続けるのを防ぐ）
+    window.electronAPI?.onBackendExited?.(info=>{
+      updateGlobalStatus('app','error',`バックエンドが停止しました (code=${info?.code ?? '?'})。アプリを再起動してください`)
+    })
   </script>
 </body>
 </html>

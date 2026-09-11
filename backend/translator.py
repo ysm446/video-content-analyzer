@@ -367,16 +367,6 @@ class Translator:
             )
         return "\n\n".join(parts)
 
-    def translate(
-        self,
-        text: str,
-        context: list[tuple[str, str]] | None = None,
-        lookahead: list[str] | None = None,
-        extra_system: str = "",
-    ) -> str:
-        result, _meta = self.translate_ex(text, context, lookahead, extra_system)
-        return result
-
     def translate_ex(
         self,
         text: str,

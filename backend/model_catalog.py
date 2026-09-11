@@ -1,5 +1,7 @@
 import json
 import re
+import threading
+import time
 from pathlib import Path
 
 
@@ -62,8 +64,14 @@ def _parse_param_size(label: str) -> float:
     return float(m.group(1)) if m else 9999.0
 
 
-def _find_mmproj_for(model_path: Path) -> Path | None:
-    files = sorted(model_path.parent.glob("*.gguf"))
+def _find_mmproj_for(model_path: Path, folder_files: list[Path] | None = None) -> Path | None:
+    """同じフォルダの mmproj を探す。
+
+    名前が一致する mmproj を優先し、一致しないものは「フォルダに本体 GGUF が 1 つしか無い」
+    ときだけ採用する（VL モデルとテキストモデルが同居するフォルダで、無関係な mmproj を
+    テキストモデルに付けて VL 扱いにしてしまわないため）。
+    """
+    files = folder_files if folder_files is not None else sorted(model_path.parent.glob("*.gguf"))
     mmproj_files = [p for p in files if "mmproj" in p.name.lower()]
     if not mmproj_files:
         return None
@@ -75,12 +83,41 @@ def _find_mmproj_for(model_path: Path) -> Path | None:
         score = 0 if cand_norm and cand_norm in stem_norm else 1
         ranked.append((score, candidate.name.lower(), candidate))
     ranked.sort(key=lambda row: (row[0], row[1]))
-    return ranked[0][2]
+    best_score, _name, best = ranked[0]
+    if best_score == 0:
+        return best
+    main_models = [p for p in files if "mmproj" not in p.name.lower()]
+    return best if len(main_models) == 1 else None
+
+
+# スキャン結果の短時間キャッシュ。翻訳では 1 バッチごとにモデルメタを引くため、
+# そのたびにフォルダ全体を rglob + stat すると大きなモデルフォルダで無視できない
+# コストになる。フォルダ変更・インストール後は invalidate_cache() で明示的に捨てる。
+_SCAN_CACHE_TTL_SEC = 3.0
+_scan_cache: dict = {"key": None, "at": 0.0, "rows": []}
+_scan_lock = threading.Lock()
+
+
+def invalidate_cache() -> None:
+    with _scan_lock:
+        _scan_cache["key"] = None
 
 
 def _scan_models() -> list[dict]:
-    rows: list[dict] = []
     base = models_dir()
+    key = str(base)
+    now = time.monotonic()
+    with _scan_lock:
+        if _scan_cache["key"] == key and now - _scan_cache["at"] < _SCAN_CACHE_TTL_SEC:
+            return _scan_cache["rows"]
+    rows = _scan_models_uncached(base)
+    with _scan_lock:
+        _scan_cache.update(key=key, at=time.monotonic(), rows=rows)
+    return rows
+
+
+def _scan_models_uncached(base: Path) -> list[dict]:
+    rows: list[dict] = []
     if not base.is_dir():
         return rows
 
@@ -89,10 +126,15 @@ def _scan_models() -> list[dict]:
     for folder in sorted((p for p in base.iterdir() if _is_model_dir(p)), key=lambda p: p.name.lower()):
         gguf_paths.extend(sorted(folder.rglob("*.gguf")))
 
+    # フォルダごとの GGUF 一覧は 1 回だけ作る（モデルごとに glob し直さない）
+    folder_files: dict[Path, list[Path]] = {}
     for model_path in gguf_paths:
         if "mmproj" in model_path.name.lower():
             continue
-        mmproj_path = _find_mmproj_for(model_path)
+        parent = model_path.parent
+        if parent not in folder_files:
+            folder_files[parent] = sorted(parent.glob("*.gguf"))
+        mmproj_path = _find_mmproj_for(model_path, folder_files[parent])
         label = _model_label(model_path)
         rows.append(
             {

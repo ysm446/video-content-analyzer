@@ -87,7 +87,7 @@ def chapter_target(kind: VideoKind, duration: float) -> int:
 
 # ---------- 字幕の扱い ----------
 
-_ROW_RE = re.compile(r"^\[(?:(\d+):)?(\d{1,2}):(\d{2})\]\s*(.*)$")
+_ROW_RE = re.compile(r"^\[(?:(\d+):)?(\d+):(\d{2})\]\s*(.*)$")  # [m:ss] の分は 100 以上もあり得る（フロントは分を桁数制限なしで出す）
 
 
 def parse_rows(transcript: str) -> list[tuple[float, str]]:
@@ -121,7 +121,7 @@ def parse_ts(value) -> float | None:
     if value is None:
         return None
     s = str(value).strip().strip("[]")
-    m = re.match(r"^(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.\d+)?$", s)
+    m = re.match(r"^(?:(\d+):)?(\d+):(\d{2})(?:\.\d+)?$", s)
     if not m:
         return None
     return int(m.group(1) or 0) * 3600 + int(m.group(2)) * 60 + int(m.group(3))

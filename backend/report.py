@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 from PIL import Image, ImageStat
 
 from . import cancel
@@ -91,12 +92,18 @@ def hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
-def gray_thumb(img: Image.Image, n: int = 16) -> list[int]:
-    return list(img.convert("L").resize((n, n), Image.Resampling.LANCZOS).getdata())
+def gray_thumb(img: Image.Image, n: int = 16) -> np.ndarray:
+    return np.asarray(img.convert("L").resize((n, n), Image.Resampling.LANCZOS), dtype=np.int16).ravel()
 
 
-def pixel_mad(a: list[int], b: list[int]) -> float:
-    return sum(abs(x - y) for x, y in zip(a, b)) / max(len(a), 1)
+def pixel_mad(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.abs(a - b).mean()) if a.size else 0.0
+
+
+# 画素比較（pixel_mad）はハッシュがこの距離以内のときだけ行う。同一スライドで講演者が
+# 動いただけならハッシュも近いので取りこぼしは無く、候補 1500 枚 × 採用済み全件の
+# 総当たりを避けられる
+PIXEL_CHECK_HASH_DISTANCE = 28
 
 
 class Signature:
@@ -109,7 +116,10 @@ class Signature:
         self.gray = gray_thumb(img)
 
     def same_as(self, other: "Signature", hash_distance: int) -> bool:
-        return hamming(self.hash, other.hash) <= hash_distance or pixel_mad(self.gray, other.gray) <= PIXEL_MAD_SAME
+        d = hamming(self.hash, other.hash)
+        if d <= hash_distance:
+            return True
+        return d <= PIXEL_CHECK_HASH_DISTANCE and pixel_mad(self.gray, other.gray) <= PIXEL_MAD_SAME
 
     def similar_to(self, other: "Signature") -> bool:
         return hamming(self.hash, other.hash) <= LOOSE_HASH_DISTANCE
@@ -370,7 +380,7 @@ def _parse_label_ts(value) -> float | None:
     if value is None:
         return None
     s = str(value).strip().strip("[]")
-    m = re.match(r"^(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$", s)
+    m = re.match(r"^(?:(\d+):)?(\d+):(\d{2})(?:\.(\d+))?$", s)  # 100 分以降の章もラベルは m:ss（分は桁数制限なし）
     if not m:
         return None
     h = int(m.group(1) or 0)
@@ -477,7 +487,13 @@ def generate_chapter_texts(
 # ---------- Markdown ----------
 
 def _md_escape(text: str) -> str:
-    return str(text or "").replace("\r", "").strip()
+    """段落・箇条書き用。改行は空白に畳む（モデル出力の改行で箇条書きが途切れないように）。"""
+    return re.sub(r"\s*\n\s*", " ", str(text or "").replace("\r", "")).strip()
+
+
+def _md_inline(text: str) -> str:
+    """画像 alt / キャプション用。[ ] ( ) * を含むと画像構文が壊れるので落とす。"""
+    return re.sub(r"[\[\]()*]", "", _md_escape(text)).strip()
 
 
 def _anchor(index: int) -> str:
@@ -537,9 +553,9 @@ def build_markdown(
             lines.append("")
         for im in ch.images:
             cap = im.caption or fmt_ts(im.ts)
-            lines.append(f"![{_md_escape(cap)}]({im.file})")
+            lines.append(f"![{_md_inline(cap)}]({im.file})")
             lines.append("")
-            lines.append(f"*{_md_escape(cap)}*")
+            lines.append(f"*{_md_inline(cap)}*")
             lines.append("")
 
     if bookmarks:
@@ -688,6 +704,13 @@ def generate_report(
         norm.append({"start_sec": max(0.0, s), "title": str(c.get("title") or f"チャプター{i+1}").strip(),
                      "summary": str(c.get("summary") or "").strip()})
     norm.sort(key=lambda c: c["start_sec"])
+    # 同じ開始時刻の章が 2 つあると後の章の end が duration まで伸びて全体と重なるので、先勝ちで 1 つにする
+    dedup: list[dict] = []
+    for c in norm:
+        if dedup and abs(c["start_sec"] - dedup[-1]["start_sec"]) < 1e-3:
+            continue
+        dedup.append(c)
+    norm = dedup
     if not norm:
         norm = [{"start_sec": 0.0, "title": "全体", "summary": str(meta.get("summary") or "")}]
     for i, c in enumerate(norm):
@@ -708,13 +731,16 @@ def generate_report(
 
     out_dir = report_dir_for(p)
     img_dir = out_dir / "images"
-    img_dir.mkdir(parents=True, exist_ok=True)
-    # 前回の生成物を消す（章構成が変わって古い画像が残らないように）
-    for old in img_dir.glob("*.jpg"):
-        try:
-            old.unlink()
-        except OSError:
-            pass
+    # 新しい画像は一時フォルダに書き、全部そろってから images/ と入れ替える。
+    # 先に消してしまうと、中止・失敗時に前回の report.json が存在しない画像を指したままになる
+    new_img_dir = out_dir / "images.new"
+    if new_img_dir.exists():
+        for old in new_img_dir.glob("*"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    new_img_dir.mkdir(parents=True, exist_ok=True)
 
     # 本番解像度で抽出・保存
     jobs: list[tuple[int, int, float]] = [(ci, k, ts) for ci, lst in enumerate(selected) for k, ts in enumerate(lst)]
@@ -742,7 +768,7 @@ def generate_report(
             name = f"ch{ci+1:02d}_{k+1}_{_file_stamp(ts)}.jpg"
         else:
             name = f"bookmark_{re.sub(r'[^A-Za-z0-9_-]', '', key)}_{_file_stamp(ts)}.jpg"
-        img.convert("RGB").save(img_dir / name, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+        img.convert("RGB").save(new_img_dir / name, format="JPEG", quality=JPEG_QUALITY, optimize=True)
         return (kind, key, f"images/{name}")
 
     all_jobs = [("ch", (ci, k), ts) for ci, k, ts in jobs] + [("bm", bid, ts) for bid, ts in bm_jobs]
@@ -753,6 +779,19 @@ def generate_report(
             if res:
                 lock_files[(res[0], res[1])] = res[2]
     cancel.raise_if_canceled()
+
+    # 抽出が最後まで終わったので、前回の画像を消して新しい画像に差し替える
+    if img_dir.exists():
+        for old in img_dir.glob("*"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        try:
+            img_dir.rmdir()
+        except OSError:
+            pass
+    new_img_dir.rename(img_dir)
 
     chapters_out: list[ChapterOut] = []
     for ci, c in enumerate(norm):

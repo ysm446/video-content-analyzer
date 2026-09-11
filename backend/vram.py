@@ -5,11 +5,14 @@
   推論中の KV キャッシュ・アテンション行列・中間アクティベーションには無効。
 
 【本ファイルで行う対策】
-  1. set_process_memory_fraction() → CUDA アロケータへのハードキャップ（run_backend.py で呼ぶ）
-  2. max_memory_map()              → モデル重みの配置制御（from_pretrained に渡す）
+  1. set_process_memory_fraction() → torch の CUDA アロケータへのハードキャップ。
+                                     torch を使う wav2vec2 アライナーのロード時（align.py）に呼ぶ。
+                                     llama-server（別プロセス）と CTranslate2（独自アロケータ）には効かない
+  2. max_memory_map()              → モデル重みの配置制御（from_pretrained に渡す。HF フォールバック経路のみ）
   3. MAX_PIXELS_PER_FRAME          → 視覚トークン数の制限（画像 1 枚あたり最大 N トークン）
+
+torch は遅延 import（API プロセス起動時に CUDA を初期化しないため）。
 """
-import torch
 
 # ------------------------------------------------------------------ #
 #  定数（必要に応じて調整）
@@ -30,6 +33,8 @@ CPU_FALLBACK = "32GiB"
 #   15 枚 × 938 トークン = 14,074 トークン（変更前 → VRAM 枯渇の原因）
 MAX_PIXELS_PER_FRAME = 256 * 28 * 28  # ← ここを増やすと画質↑・VRAM↑
 
+_fraction_set = False
+
 
 # ------------------------------------------------------------------ #
 #  関数
@@ -42,12 +47,15 @@ def set_process_memory_fraction(fraction: float = VRAM_FRACTION) -> None:
     モデル重み・KV キャッシュ・アクティベーション全てに適用される。
     uvicorn 起動前（run_backend.py）で呼ぶこと。
     """
-    if not torch.cuda.is_available():
+    global _fraction_set
+    import torch
+    if not torch.cuda.is_available() or _fraction_set:
         return
     for i in range(torch.cuda.device_count()):
         torch.cuda.set_per_process_memory_fraction(fraction, i)
+    _fraction_set = True
     total = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-    print(f"[VRAM] ハードキャップ: {fraction*100:.0f}% of {total:.1f} GiB "
+    print(f"[VRAM] torch アロケータ上限: {fraction*100:.0f}% of {total:.1f} GiB "
           f"= {total * fraction:.1f} GiB")
 
 
@@ -56,6 +64,7 @@ def max_memory_map() -> dict | None:
     from_pretrained の max_memory 引数に渡す辞書を返す（重みの配置制御用）。
     CUDA 未使用の場合は None を返す。
     """
+    import torch
     if not torch.cuda.is_available():
         return None
     total      = torch.cuda.get_device_properties(0).total_memory

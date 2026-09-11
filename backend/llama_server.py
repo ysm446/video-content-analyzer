@@ -8,6 +8,7 @@
 """
 import json
 import os
+import socket
 import subprocess
 import threading
 import time
@@ -36,6 +37,9 @@ def resolve_llama_dir() -> Path:
 LLAMA_CPP_DIR = resolve_llama_dir()
 LLAMA_CPP_HOST = os.environ.get("LLAMA_CPP_HOST", "127.0.0.1")
 LLAMA_CPP_CTX = int(os.environ.get("LLAMA_CPP_CTX", "16384"))
+# 推論 1 回あたりの HTTP 読み取りタイムアウト（秒）。多数フレームのプロンプト処理は最初の
+# トークンまで数分かかることがあるので長め（中断は cancel フラグで接続を閉じる）
+LLAMA_HTTP_TIMEOUT = float(os.environ.get("LLAMA_HTTP_TIMEOUT", "600"))
 
 
 class LlamaServerManager:
@@ -176,9 +180,11 @@ class LlamaServerManager:
                     proc.wait(timeout=5.0)
 
     def loaded_for(self, model_id: str) -> bool:
+        # stop() と並行して呼ばれ得るので _process は 1 回だけ読む（None になった瞬間の AttributeError 回避）
+        proc = self._process
         return (
-            self._process is not None
-            and self._process.poll() is None
+            proc is not None
+            and proc.poll() is None
             and self._current_model_id == model_id
             and self._is_ready()
         )
@@ -225,59 +231,39 @@ class LlamaServerManager:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        return request.urlopen(req, timeout=300.0)
-
-    def chat(self, model_id: str, messages: list[dict], max_tokens: int, response_format: dict | None = None) -> str:
-        text, _meta = self.chat_with_meta(model_id, messages, max_tokens, response_format)
-        return text
+        return request.urlopen(req, timeout=LLAMA_HTTP_TIMEOUT)
 
     def chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int, response_format: dict | None = None) -> tuple[str, dict]:
         """非ストリーミング相当の推論。(テキスト, {"usage", "finish_reason"}) を返す。
 
-        中断に即応するため内部はストリーミングで受信し、
+        中断に即応するため内部はストリーミング（stream_chat_with_meta）で受信し、
         トークン行ごとに cancel.is_canceled() を確認する。中断時は接続を閉じて
         llama-server の生成を止め、CanceledError を送出する。
         finish_reason が "length" のときは max_tokens で打ち切られている。
         """
-        self.ensure_model(model_id)
-        cancel.raise_if_canceled()
         parts: list[str] = []
-        usage: dict | None = None
-        finish_reason: str | None = None
-        try:
-            with self._open_stream(messages, max_tokens, response_format) as resp:
-                for raw_line in resp:
-                    if cancel.is_canceled():
-                        resp.close()
-                        raise cancel.CanceledError()
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if not data or data == "[DONE]":
-                        continue
-                    event = json.loads(data)
-                    if isinstance(event.get("usage"), dict):
-                        usage = event["usage"]
-                    for choice in event.get("choices") or []:
-                        if choice.get("finish_reason"):
-                            finish_reason = str(choice["finish_reason"])
-                        delta = choice.get("delta") or {}
-                        content = delta.get("content")
-                        if isinstance(content, str) and content:
-                            parts.append(content)
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"{self._label} llama-cpp サーバーに接続できません: {exc}") from exc
-        return "".join(parts).strip(), {"usage": usage or {}, "finish_reason": finish_reason or ""}
+        gen = self.stream_chat_with_meta(model_id, messages, max_tokens, response_format)
+        meta: dict = {"usage": {}, "finish_reason": ""}
+        while True:
+            try:
+                parts.append(next(gen))
+            except StopIteration as stop:
+                if isinstance(stop.value, dict):
+                    meta = stop.value
+                break
+        return "".join(parts).strip(), meta
 
     def stream_chat_with_meta(self, model_id: str, messages: list[dict], max_tokens: int, response_format: dict | None = None):
+        """ストリーミング推論。content の断片を yield し、終了時に {"usage", "finish_reason"} を return する。
+
+        llama-server は HTTP 200 でストリームを始めた後のエラー（画像処理失敗・コンテキスト超過等）を
+        `error: {...}` 行で返すので、それも RuntimeError として送出する（黙って空文字を返さない）。
+        """
         self.ensure_model(model_id)
         cancel.raise_if_canceled()
         usage: dict | None = None
         finish_reason: str | None = None
+        saw_done = False
         try:
             with self._open_stream(messages, max_tokens, response_format) as resp:
                 for raw_line in resp:
@@ -285,12 +271,23 @@ class LlamaServerManager:
                         resp.close()
                         raise cancel.CanceledError()
                     line = raw_line.decode("utf-8", errors="replace").strip()
+                    if line.startswith("error:"):
+                        raise RuntimeError(f"llama-cpp API error: {line[6:].strip()}")
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
-                    if not data or data == "[DONE]":
+                    if not data:
                         continue
-                    event = json.loads(data)
+                    if data == "[DONE]":
+                        saw_done = True
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event.get("error"), dict):
+                        err = event["error"]
+                        raise RuntimeError(f"llama-cpp API error: {err.get('code', '')} {err.get('message', '')}".strip())
                     if isinstance(event.get("usage"), dict):
                         usage = event["usage"]
                     for choice in event.get("choices") or []:
@@ -300,6 +297,9 @@ class LlamaServerManager:
                         content = delta.get("content")
                         if isinstance(content, str) and content:
                             yield content
+                if not saw_done and not finish_reason:
+                    # サーバーが途中で落ちた・接続が切れた（[DONE] も finish_reason も無し）
+                    raise RuntimeError(f"{self._label} llama-cpp サーバーとの接続が途中で終了しました")
                 return {
                     "usage": usage or {},
                     "finish_reason": finish_reason or "",
@@ -308,4 +308,8 @@ class LlamaServerManager:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"llama-cpp API error: {exc.code} {detail}") from exc
         except error.URLError as exc:
+            if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+                raise RuntimeError(f"{self._label} llama-cpp サーバーの応答がタイムアウトしました（{LLAMA_HTTP_TIMEOUT:.0f} 秒）") from exc
             raise RuntimeError(f"{self._label} llama-cpp サーバーに接続できません: {exc}") from exc
+        except (socket.timeout, TimeoutError) as exc:
+            raise RuntimeError(f"{self._label} llama-cpp サーバーの応答がタイムアウトしました（{LLAMA_HTTP_TIMEOUT:.0f} 秒）") from exc
