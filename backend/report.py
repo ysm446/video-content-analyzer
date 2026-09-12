@@ -10,7 +10,7 @@
      レポート全体で間引く（章をまたいでも同じ絵を二度出さない）
   3. 章ごとに上限枚数まで時間的に散らして選び、選ばれた時刻だけを
      入力シークで長辺 1280px の JPEG として保存する
-  4. 概要・タグ・章ごとのまとめ・画像・末尾にブックマークを Markdown に組み立てる
+  4. 概要・タグ・章ごとのまとめ・画像を Markdown に組み立てる
 
 生成した構造は `report.json` にも保存し、後段（LLM による本文生成・単一 HTML 書き出し・
 章単位の再生成）が同じ材料を再利用できるようにする。
@@ -362,6 +362,13 @@ MAX_CANDIDATES_PER_CHAPTER = 6   # モデルに見せる候補フレームの上
 CANDIDATE_MAX_SIDE = 640         # モデルに渡す候補フレームの長辺（VRAM 側で更に縮小される）
 CHAPTER_TRANSCRIPT_MAX_CHARS = 1800
 
+# レポートの形式: 時系列の章だけ / 内容から再構成したテーマ別だけ / 両方（既定）
+REPORT_LAYOUTS = ("both", "timeline", "thematic")
+DEFAULT_LAYOUT = "both"
+SYNTHESIS_TRANSCRIPT_MAX_CHARS = 6000   # 再構成パスに渡す字幕サンプル（章本文と併せて ctx 16k に収める）
+SYNTHESIS_MAX_THEMES = 8
+SYNTHESIS_IMAGES_PER_THEME = 2
+
 
 def slice_transcript_rows(rows: list[tuple[float, str]], start_sec: float, end_sec: float, max_chars: int = CHAPTER_TRANSCRIPT_MAX_CHARS) -> str:
     """時刻付き字幕行から区間内のものを取り出し、長ければ等間隔に間引いて返す。"""
@@ -486,6 +493,152 @@ def generate_chapter_texts(
 
 # ---------- Markdown ----------
 
+# ---------- 内容の再構成（テーマ別まとめ） ----------
+
+SYNTHESIS_SYSTEM = (
+    "/no_think\n"
+    "あなたは動画の内容を読者向けの報告書に再構成する編集者です。"
+    "時系列の章ごとのまとめと字幕を材料に、動画全体を横断して「結局何が語られたか」を整理します。"
+    "章の順番に縛られず、同じ話題は 1 つのテーマにまとめ、テーマの見出しは内容を表す名詞句にします。"
+    "字幕と章のまとめに書かれていることだけを根拠にし、推測で補わないでください。"
+)
+
+_SYNTHESIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "key_messages": {"type": "array", "items": {"type": "string"}},
+        "themes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "times": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["title", "body", "times"],
+            },
+        },
+        "key_facts": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+        "genre": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["key_messages", "themes", "key_facts", "summary", "genre", "tags"],
+}
+
+
+def _sample_rows_text(rows: list[tuple[float, str]], max_chars: int) -> str:
+    """字幕行を全編から等間隔に間引いて "[m:ss] text" のテキストにする（先頭切り捨てにしない）。"""
+    rows = [(t, x) for t, x in rows if x and x.strip()]
+    if not rows:
+        return ""
+    total = sum(len(x) + 9 for _, x in rows)
+    if total > max_chars:
+        keep = max(2, int(len(rows) * max_chars / total))
+        step = len(rows) / keep
+        rows = [rows[int(i * step)] for i in range(keep)]
+    return "\n".join(f"[{fmt_ts(t)}] {x.strip()}" for t, x in rows)
+
+
+def build_synthesis_prompt(meta: dict, chapters: list["ChapterOut"], transcript_rows: list[tuple[float, str]], duration: float) -> str:
+    parts: list[str] = [f"動画の長さ: {fmt_ts(duration)}"]
+    ctx = _video_context_text(meta)
+    if ctx:
+        parts.append(f"動画全体の情報:\n{ctx}")
+    if chapters:
+        rows = []
+        for ch in chapters:
+            line = f"[{fmt_ts(ch.start_sec)}〜{fmt_ts(ch.end_sec)}] {ch.title}"
+            if ch.summary:
+                line += f": {ch.summary}"
+            if ch.points:
+                line += "\n  - " + "\n  - ".join(ch.points)
+            rows.append(line)
+        parts.append("時系列の章ごとのまとめ:\n" + "\n".join(rows))
+    sample = _sample_rows_text(transcript_rows, SYNTHESIS_TRANSCRIPT_MAX_CHARS)
+    if sample:
+        parts.append(f"字幕（全編から抜粋）:\n{sample}")
+    parts.append(
+        "次の JSON のみを出力してください。\n"
+        "- key_messages: この動画の主要なメッセージ（3〜5 個・各 1 文。結論・主張・最も重要な発表を先に）\n"
+        f"- themes: 内容をテーマ別に再構成したまとめ（3〜{SYNTHESIS_MAX_THEMES} 個）。title は内容を表す名詞句、"
+        "body は 2〜5 文で、数値・固有名詞・比較は字幕に基づいて具体的に。times はそのテーマが語られている"
+        "時刻（章の範囲や字幕の [m:ss] から 1〜3 個。m:ss 形式）\n"
+        "- key_facts: 主要な事実・数値・固有名詞・製品名など（最大 10 個・各 1 文。無ければ空配列）\n"
+        "- summary: 動画全体の概要（1〜2 文）。genre: ジャンル（短く）。tags: 内容を表すタグ（3〜8 個）"
+    )
+    return "\n\n".join(parts)
+
+
+def generate_synthesis(
+    reviewer,
+    meta: dict,
+    chapters: list["ChapterOut"],
+    transcript_rows: list[tuple[float, str]],
+    duration: float,
+) -> dict | None:
+    """動画全体を横断した再構成（要点・テーマ別まとめ・主要な事実）をテキストのみ推論で生成する。
+
+    戻り値: {key_messages, themes:[{title, body, times:[sec], images:[{time_sec,file,caption}]}], key_facts,
+             summary, genre, tags}。失敗時は例外（呼び出し側で警告にして続行）。
+    テーマの画像は章の画像から時刻が最も近いものを流用する（追加抽出はしない）。
+    """
+    prompt = build_synthesis_prompt(meta, chapters, transcript_rows, duration)
+    raw, gen_meta = reviewer.text_infer(
+        SYNTHESIS_SYSTEM, prompt, max_new_tokens=2048,
+        response_format={"type": "json_schema", "json_schema": {"name": "report_synthesis", "schema": _SYNTHESIS_SCHEMA}},
+    )
+    try:
+        data = json.loads(raw)
+    except Exception:
+        m = re.search(r"\{.*\}", raw, re.S)
+        data = json.loads(m.group(0)) if m else {}
+    if not isinstance(data, dict):
+        raise RuntimeError("再構成の JSON を解釈できませんでした")
+
+    def _strs(v, limit: int) -> list[str]:
+        return [str(x).strip() for x in (v or []) if isinstance(v, list) and str(x).strip()][:limit]
+
+    all_images = [im for ch in chapters for im in ch.images]
+    themes: list[dict] = []
+    used_files: set[str] = set()
+    for t in (data.get("themes") or [])[:SYNTHESIS_MAX_THEMES]:
+        if not isinstance(t, dict):
+            continue
+        title = str(t.get("title") or "").strip()
+        body = str(t.get("body") or "").strip()
+        if not title or not body:
+            continue
+        times: list[float] = []
+        for v in (t.get("times") or [])[:3]:
+            sec = _parse_label_ts(v)
+            if sec is not None and 0 <= sec <= max(duration, 0) + 1:
+                times.append(float(sec))
+        images: list[dict] = []
+        for sec in times:
+            if not all_images:
+                break
+            near = min(all_images, key=lambda im: abs(im.ts - sec))
+            if abs(near.ts - sec) > 180.0 or near.file in used_files:
+                continue
+            used_files.add(near.file)
+            images.append({"time_sec": near.ts, "file": near.file, "caption": near.caption})
+            if len(images) >= SYNTHESIS_IMAGES_PER_THEME:
+                break
+        themes.append({"title": title, "body": body, "times": times, "images": images})
+
+    return {
+        "key_messages": _strs(data.get("key_messages"), 6),
+        "themes": themes,
+        "key_facts": _strs(data.get("key_facts"), 10),
+        "summary": str(data.get("summary") or "").strip(),
+        "genre": str(data.get("genre") or "").strip(),
+        "tags": _strs(data.get("tags"), 8),
+        "_meta": gen_meta,
+    }
+
+
 def _md_escape(text: str) -> str:
     """段落・箇条書き用。改行は空白に畳む（モデル出力の改行で箇条書きが途切れないように）。"""
     return re.sub(r"\s*\n\s*", " ", str(text or "").replace("\r", "")).strip()
@@ -505,10 +658,12 @@ def build_markdown(
     duration: float,
     meta: dict,
     chapters: list[ChapterOut],
-    bookmarks: list[dict],
-    bookmark_images: dict[str, str],
     generated_at: str,
+    synthesis: dict | None = None,
+    layout: str = DEFAULT_LAYOUT,
 ) -> str:
+    show_timeline = layout != "thematic"
+    show_synthesis = layout != "timeline" and bool(synthesis)
     lines: list[str] = []
     lines.append(f"# {_md_escape(video_name)}")
     lines.append("")
@@ -531,13 +686,46 @@ def build_markdown(
         lines.append(_md_escape(meta["detail"]))
         lines.append("")
 
-    lines.append("## 目次")
-    lines.append("")
-    for ch in chapters:
-        lines.append(f"{ch.index}. [{_md_escape(ch.title)}](#{_anchor(ch.index)}) — {fmt_ts(ch.start_sec)}")
-    lines.append("")
+    if show_synthesis:
+        syn = synthesis or {}
+        if syn.get("key_messages"):
+            lines.append("## 要点")
+            lines.append("")
+            for m in syn["key_messages"]:
+                lines.append(f"- {_md_escape(m)}")
+            lines.append("")
+        if syn.get("themes"):
+            lines.append("## テーマ別のまとめ")
+            lines.append("")
+            for th in syn["themes"]:
+                lines.append(f"### {_md_escape(th.get('title'))}")
+                lines.append("")
+                if th.get("times"):
+                    lines.append("*" + " / ".join(fmt_ts(t) for t in th["times"]) + "*")
+                    lines.append("")
+                lines.append(_md_escape(th.get("body")))
+                lines.append("")
+                for im in th.get("images") or []:
+                    cap = im.get("caption") or fmt_ts(float(im.get("time_sec") or 0))
+                    lines.append(f"![{_md_inline(cap)}]({im['file']})")
+                    lines.append("")
+                    lines.append(f"*{_md_inline(cap)}*")
+                    lines.append("")
+        if syn.get("key_facts"):
+            lines.append("## 主要な事実・数値")
+            lines.append("")
+            for f in syn["key_facts"]:
+                lines.append(f"- {_md_escape(f)}")
+            lines.append("")
 
-    for ch in chapters:
+    if show_timeline:
+        lines.append("## 目次" if not show_synthesis else "## 時系列の章")
+        lines.append("")
+        for ch in chapters:
+            lines.append(f"{ch.index}. [{_md_escape(ch.title)}](#{_anchor(ch.index)}) — {fmt_ts(ch.start_sec)}")
+        lines.append("")
+
+    for ch in (chapters if show_timeline else []):
         lines.append(f'<a id="{_anchor(ch.index)}"></a>')
         lines.append("")
         lines.append(f"## {ch.index}. {_md_escape(ch.title)}")
@@ -558,23 +746,6 @@ def build_markdown(
             lines.append(f"*{_md_inline(cap)}*")
             lines.append("")
 
-    if bookmarks:
-        lines.append("## ブックマーク")
-        lines.append("")
-        for bm in bookmarks:
-            ts = float(bm.get("time_sec") or 0.0)
-            title = _md_escape(bm.get("title") or "")
-            comment = _md_escape(bm.get("comment") or "")
-            head = f"### {fmt_ts(ts)}" + (f" {title}" if title else "")
-            lines.append(head)
-            lines.append("")
-            img = bookmark_images.get(str(bm.get("id") or ""))
-            if img:
-                lines.append(f"![{title or fmt_ts(ts)}]({img})")
-                lines.append("")
-            if comment:
-                lines.append(comment)
-                lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -635,11 +806,31 @@ def build_html(structure: dict, out_dir: Path, embed_images: bool = True) -> str
             o.append(f"<p>{_h(meta['summary'])}</p>")
         if meta.get("detail"):
             o.append(f"<p>{_h(meta['detail'])}</p>")
-    chapters = structure.get("chapters") or []
-    o.append("<h2>目次</h2><nav><ol>")
-    for ch in chapters:
-        o.append(f"<li><a href=\"#{_anchor(int(ch['index']))}\">{_h(ch.get('title'))}</a><span class=\"ts\">{fmt_ts(float(ch.get('start_sec') or 0))}</span></li>")
-    o.append("</ol></nav>")
+    layout = structure.get("layout") or DEFAULT_LAYOUT
+    syn = structure.get("synthesis") or {}
+    show_timeline = layout != "thematic"
+    show_synthesis = layout != "timeline" and bool(syn)
+    if show_synthesis:
+        if syn.get("key_messages"):
+            o.append("<h2>要点</h2><ul>" + "".join(f"<li>{_h(m)}</li>" for m in syn["key_messages"]) + "</ul>")
+        if syn.get("themes"):
+            o.append("<h2>テーマ別のまとめ</h2>")
+            for th in syn["themes"]:
+                o.append(f"<h3>{_h(th.get('title'))}</h3>")
+                if th.get("times"):
+                    o.append("<div class=\"range\">" + " / ".join(fmt_ts(float(t)) for t in th["times"]) + "</div>")
+                o.append(f"<p>{_h(th.get('body'))}</p>")
+                for im in th.get("images") or []:
+                    cap = im.get("caption") or fmt_ts(float(im.get("time_sec") or 0))
+                    o.append(f"<figure><img src=\"{src(im['file'])}\" alt=\"{_h(cap)}\" loading=\"lazy\"><figcaption>{_h(cap)}</figcaption></figure>")
+        if syn.get("key_facts"):
+            o.append("<h2>主要な事実・数値</h2><ul>" + "".join(f"<li>{_h(f)}</li>" for f in syn["key_facts"]) + "</ul>")
+    chapters = (structure.get("chapters") or []) if show_timeline else []
+    if chapters:
+        o.append(("<h2>時系列の章</h2>" if show_synthesis else "<h2>目次</h2>") + "<nav><ol>")
+        for ch in chapters:
+            o.append(f"<li><a href=\"#{_anchor(int(ch['index']))}\">{_h(ch.get('title'))}</a><span class=\"ts\">{fmt_ts(float(ch.get('start_sec') or 0))}</span></li>")
+        o.append("</ol></nav>")
     for ch in chapters:
         o.append(f"<h2 id=\"{_anchor(int(ch['index']))}\">{ch['index']}. {_h(ch.get('title'))}</h2>")
         o.append(f"<div class=\"range\">{fmt_ts(float(ch.get('start_sec') or 0))} 〜 {fmt_ts(float(ch.get('end_sec') or 0))}</div>")
@@ -650,17 +841,6 @@ def build_html(structure: dict, out_dir: Path, embed_images: bool = True) -> str
         for im in ch.get("images") or []:
             cap = im.get("caption") or fmt_ts(float(im.get("time_sec") or 0))
             o.append(f"<figure><img src=\"{src(im['file'])}\" alt=\"{_h(cap)}\" loading=\"lazy\"><figcaption>{_h(cap)}</figcaption></figure>")
-    bms = structure.get("bookmarks") or []
-    if bms:
-        o.append("<h2>ブックマーク</h2>")
-        for bm in bms:
-            ts = fmt_ts(float(bm.get("time_sec") or 0))
-            head = ts + (f" {_h(bm['title'])}" if bm.get("title") else "")
-            o.append(f"<h3>{head}</h3>")
-            if bm.get("image"):
-                o.append(f"<figure><img src=\"{src(bm['image'])}\" alt=\"{head}\" loading=\"lazy\"></figure>")
-            if bm.get("comment"):
-                o.append(f"<p>{_h(bm['comment'])}</p>")
     o.append("</main></body></html>")
     return "".join(o)
 
@@ -671,7 +851,6 @@ def generate_report(
     video_path: str,
     chapters: list[dict],
     meta: dict | None,
-    bookmarks: list[dict] | None,
     max_per_chapter: int = DEFAULT_MAX_IMAGES_PER_CHAPTER,
     image_max_side: int = DEFAULT_IMAGE_MAX_SIDE,
     hash_distance: int = DEFAULT_HASH_DISTANCE,
@@ -679,15 +858,18 @@ def generate_report(
     reviewer=None,
     transcript_rows: list[tuple[float, str]] | None = None,
     detected: list[tuple[float, Image.Image]] | None = None,
+    layout: str = DEFAULT_LAYOUT,
 ) -> dict:
     """レポートを生成して {report_path, html_path, dir, chapters, images, stats} を返す。
 
-    reviewer（VideoReviewer・ロード済み）を渡すと章ごとに VL モデルで本文と掲載画像を生成する
-    （第2段階）。渡さなければ機械選定のみ（第1段階）。transcript_rows は [(sec, text)] の字幕行。
+    reviewer（VideoReviewer・ロード済み）を渡すと章ごとに VL モデルで本文と掲載画像を生成し
+    （第2段階）、layout が timeline 以外なら全体を横断した再構成（要点・テーマ別・主要な事実）も
+    作る。渡さなければ機械選定のみ（第1段階）。transcript_rows は [(sec, text)] の字幕行。
     """
     progress = progress or (lambda _e: None)
-    meta = meta or {}
-    bookmarks = [b for b in (bookmarks or []) if isinstance(b, dict)]
+    meta = dict(meta or {})
+    if layout not in REPORT_LAYOUTS:
+        layout = DEFAULT_LAYOUT
     p = Path(video_path)
     duration = probe_duration(str(p))
 
@@ -744,13 +926,7 @@ def generate_report(
 
     # 本番解像度で抽出・保存
     jobs: list[tuple[int, int, float]] = [(ci, k, ts) for ci, lst in enumerate(selected) for k, ts in enumerate(lst)]
-    bm_jobs: list[tuple[str, float]] = []
-    for bm in bookmarks:
-        try:
-            bm_jobs.append((str(bm.get("id") or f"bm_{len(bm_jobs)}"), float(bm.get("time_sec") or 0.0)))
-        except (TypeError, ValueError):
-            continue
-    total = len(jobs) + len(bm_jobs)
+    total = len(jobs)
     progress({"status": "extracting", "phase": "images", "current": 0, "total": total})
     done_count = 0
     lock_files: dict[tuple, str] = {}
@@ -758,26 +934,21 @@ def generate_report(
     def work(job):
         if cancel.is_canceled():
             return None
-        kind, key, ts = job
+        ci, k, ts = job
         ts_c = min(max(0.0, ts), max(duration - 0.1, 0.0)) if duration else ts
         img = grab_frame(str(p), ts_c, image_max_side)
         if img is None:
             return None
-        if kind == "ch":
-            ci, k = key
-            name = f"ch{ci+1:02d}_{k+1}_{_file_stamp(ts)}.jpg"
-        else:
-            name = f"bookmark_{re.sub(r'[^A-Za-z0-9_-]', '', key)}_{_file_stamp(ts)}.jpg"
+        name = f"ch{ci+1:02d}_{k+1}_{_file_stamp(ts)}.jpg"
         img.convert("RGB").save(new_img_dir / name, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-        return (kind, key, f"images/{name}")
+        return ((ci, k), f"images/{name}")
 
-    all_jobs = [("ch", (ci, k), ts) for ci, k, ts in jobs] + [("bm", bid, ts) for bid, ts in bm_jobs]
     with ThreadPoolExecutor(max_workers=4) as ex:
-        for res in ex.map(work, all_jobs):
+        for res in ex.map(work, jobs):
             done_count += 1
             progress({"status": "extracting", "phase": "images", "current": done_count, "total": total})
             if res:
-                lock_files[(res[0], res[1])] = res[2]
+                lock_files[res[0]] = res[1]
     cancel.raise_if_canceled()
 
     # 抽出が最後まで終わったので、前回の画像を消して新しい画像に差し替える
@@ -799,16 +970,39 @@ def generate_report(
         ch = ChapterOut(index=ci + 1, title=c["title"], start_sec=c["start_sec"], end_sec=c["end_sec"],
                         summary=t.get("summary") or c["summary"], points=list(t.get("points") or []))
         for k, ts in enumerate(selected[ci]):
-            f = lock_files.get(("ch", (ci, k)))
+            f = lock_files.get((ci, k))
             if f:
                 cap = captions[ci].get(ts) or ""
                 ch.images.append(ChapterImage(ts=ts, file=f, caption=(f"{cap}（{fmt_ts(ts)}）" if cap else fmt_ts(ts))))
         chapters_out.append(ch)
-    bookmark_images = {bid: lock_files[("bm", bid)] for bid, _ in bm_jobs if ("bm", bid) in lock_files}
+
+    # 内容の再構成（要点・テーマ別まとめ・主要な事実）。章本文と字幕を材料にテキストのみ推論で 1 回。
+    # 分析していない動画（meta が空）の概要・ジャンル・タグもここから補う
+    synthesis: dict | None = None
+    if reviewer is not None and layout != "timeline":
+        cancel.raise_if_canceled()
+        progress({"status": "synthesizing"})
+        try:
+            synthesis = generate_synthesis(reviewer, meta, chapters_out, transcript_rows or [], duration)
+        except cancel.CanceledError:
+            raise
+        except Exception as e:
+            progress({"status": "report_warning", "message": f"内容の再構成に失敗したため時系列の章だけで続行します: {e}"})
+            synthesis = None
+        if synthesis:
+            if (synthesis.get("_meta") or {}).get("finish_reason") == "length":
+                progress({"status": "report_warning", "message": "内容の再構成の出力がトークン上限で打ち切られました"})
+            for k in ("summary", "genre", "tags"):
+                if not meta.get(k) and synthesis.get(k):
+                    meta[k] = synthesis[k]
+            synthesis = {k: v for k, v in synthesis.items() if k != "_meta"}
+            stats["themes"] = len(synthesis.get("themes") or [])
+    if synthesis is None and layout == "thematic":
+        layout = "timeline"  # 再構成が無いのに章も出さないと空のレポートになる
 
     progress({"status": "writing"})
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    md = build_markdown(p.stem, duration, meta, chapters_out, bookmarks, bookmark_images, generated_at)
+    md = build_markdown(p.stem, duration, meta, chapters_out, generated_at, synthesis=synthesis, layout=layout)
     report_path = out_dir / "report.md"
     report_path.write_text(md, encoding="utf-8")
 
@@ -816,6 +1010,8 @@ def generate_report(
         "video": p.name,
         "duration": duration,
         "generated_at": generated_at,
+        "layout": layout,
+        "synthesis": synthesis,
         "meta": {k: meta.get(k) for k in ("genre", "summary", "detail", "tags") if meta.get(k)},
         "chapters": [
             {
@@ -826,12 +1022,8 @@ def generate_report(
             }
             for ch in chapters_out
         ],
-        "bookmarks": [
-            {**{k: bm.get(k) for k in ("id", "time_sec", "title", "comment")}, "image": bookmark_images.get(str(bm.get("id") or ""))}
-            for bm in bookmarks
-        ],
         "stats": stats,
-        "options": {"max_images_per_chapter": max_per_chapter, "image_max_side": image_max_side, "hash_distance": hash_distance},
+        "options": {"max_images_per_chapter": max_per_chapter, "image_max_side": image_max_side, "hash_distance": hash_distance, "layout": layout},
     }
     (out_dir / "report.json").write_text(json.dumps(structure, ensure_ascii=False, indent=2), encoding="utf-8")
     # ビューワに依存せず開けるよう、画像を埋め込んだ単一 HTML も書き出す（md が正本、HTML は派生）

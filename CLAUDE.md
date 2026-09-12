@@ -69,6 +69,12 @@ Claude Code がこのプロジェクトで作業する際の参照ドキュメ�
 | `start.bat` | Windows 起動スクリプト |
 | `settings.json` | モデル選択・UI 設定の永続化（自動生成） |
 
+## 処理オプションの配置
+
+文字起こし・字幕生成・動画分析・レポートの実行条件は、操作エリアの各処理行で変更する。
+旧「設定 → 動画分析」の項目と翻訳モードは各行へ移動済み。ランタイムはインストール用、文字起こしの使用モデル・エンジンは処理行で選択する。
+詳細は [docs/design/process-options.md](docs/design/process-options.md) を参照。
+
 ## モデル管理の仕組み
 
 - `model_catalog.py` が モデルフォルダ配下を再帰スキャンして GGUF を検出
@@ -195,7 +201,7 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 ### 設定
 - `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode / screenshot_format /
   root_folder / show_file_panel / video_kind / report_use_llm / report_rebuild_chapters /
-  report_images_per_chapter 等。`video_kinds` に種類の選択肢）
+  report_images_per_chapter / report_layout 等。`video_kinds` に種類の選択肢）
 - `POST /ui-settings` — UI 設定保存
 
 ### 動画情報
@@ -221,8 +227,12 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   章ごとに VL モデルへ候補フレーム＋区間の字幕（日本語→補正→原文 SRT の順、無ければ
   `transcript`）を渡して本文（summary / points）と掲載画像・キャプションを json_schema で生成
   （`VideoReviewer.report_chapter`）。失敗した章は機械選定で続行。
+  `layout`（`both`（既定）/ `thematic` / `timeline`）が `timeline` 以外で use_llm なら、章本文の後に
+  全章のまとめ＋字幕サンプルからテキストのみ推論で「要点・テーマ別のまとめ（関連時刻と章画像の流用）・
+  主要な事実」に再構成する（`report.generate_synthesis`）。分析していない動画（meta 空）の
+  概要・ジャンル・タグもここから補うので、**字幕だけあれば分析なしでも生成できる**（`chapters` は空でよい）。
   イベント: (loading_model) / detecting_scenes / (outlining{kind,target}) / extracting{phase} / selecting /
-  (generating{current,total,title} / report_warning) / writing /
+  (generating{current,total,title} / report_warning) / (synthesizing) / writing /
   done{report_path,html_path,dir,chapters,images,stats} / canceled / error。詳細は docs/design/report.md
 
 ### ランタイム
@@ -436,7 +446,7 @@ video.mp4
 | モデル管理ポップアップ | VL モデルと翻訳モデルの選択・ロード・アンロード。リストの項目をクリックすると即ロード（ロードボタンは廃止。フッターはアンロードのみ）。最近使ったモデル（settings.json の `model_history`・新しい順・最大8件。`GET /review/models` の `recent`）を「最近使ったモデル」グループとして先頭に表示し、残りは「その他」に並べる |
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |
-| レポート | 分析パネル操作行の「レポート」ボタン（章立てがあるときのみ有効）。`POST /report/generate` で `{動画名}_report/` に 1 ページ Markdown＋単一 HTML＋画像を書き出し、完了時にレポートモーダルを開く。設定 → 動画分析 → レポート で VL による本文生成の ON/OFF と 1 章あたりの画像上限を指定。進捗はステータスバー（kind=report）、中止ボタン対応 |
+| レポート | 分析パネル操作行の「レポート」ボタン（章立てか字幕のどちらかがあるとき有効）。`POST /report/generate` で `{動画名}_report/` に 1 ページ Markdown＋単一 HTML＋画像を書き出し、完了時にレポートモーダルを開く。設定 → 動画分析 → レポート で VL による本文生成の ON/OFF と 1 章あたりの画像上限を指定。進捗はステータスバー（kind=report）、中止ボタン対応 |
 | F12 | 再生位置のスクリーンショットを動画と同じ場所の `{動画名}_screenshot/` に保存（`POST /screenshot`。形式は設定 → プレイヤーで png/jpg を選択。結果はステータスバーに表示） |
 | Ctrl+R / F5 | 開発用リロードショートカット（main.js で登録） |
 

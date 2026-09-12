@@ -549,6 +549,7 @@ class UISettingsRequest(BaseModel):
     report_rebuild_chapters: Optional[bool] = None # レポート: 字幕から章立てを作り直す
     report_use_llm: Optional[bool] = None          # レポート: VL モデルで本文生成・画像選定
     report_images_per_chapter: Optional[int] = None  # レポート: 1 章あたりの画像上限（1〜5）
+    report_layout: Optional[str] = None            # レポート: "both" | "timeline" | "thematic"
 
 
 class TOCLoadRequest(BaseModel):
@@ -600,7 +601,6 @@ class ReportGenerateRequest(BaseModel):
     video_path: str
     chapters: list[dict] = Field(default_factory=list)   # [{start_sec, end_sec?, title, summary}]
     meta: Optional[dict] = None                           # {genre, summary, detail, tags}
-    bookmarks: Optional[list[dict]] = None                # [{id, time_sec, title, comment}]
     max_images_per_chapter: int = Field(default=3, ge=1, le=8)
     image_max_side: int = Field(default=1280, ge=480, le=3840)
     hash_distance: int = Field(default=12, ge=0, le=30)
@@ -608,6 +608,7 @@ class ReportGenerateRequest(BaseModel):
     transcript: str = ""                 # "[m:ss] text" 形式（SRT が見つからない場合のフォールバック）
     rebuild_chapters: bool = True        # 字幕から話題ごとの章立てを作り直す（use_llm のときのみ）
     video_kind: str = "auto"             # 章立ての基準（分析時の meta.video_kind か設定値）
+    layout: str = "both"                 # "both" | "timeline" | "thematic"（内容から再構成したテーマ別まとめの有無）
 
 
 class FolderListRequest(BaseModel):
@@ -797,6 +798,7 @@ def get_ui_settings():
         "report_rebuild_chapters": s.get("report_rebuild_chapters", True),
         "report_use_llm": s.get("report_use_llm", True),
         "report_images_per_chapter": s.get("report_images_per_chapter", 3),
+        "report_layout": s.get("report_layout", "both"),
     }
 
 
@@ -853,6 +855,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["report_use_llm"] = bool(req.report_use_llm)
     if req.report_images_per_chapter is not None:
         to_save["report_images_per_chapter"] = max(1, min(5, int(req.report_images_per_chapter)))
+    if req.report_layout is not None:
+        to_save["report_layout"] = req.report_layout if req.report_layout in report_builder.REPORT_LAYOUTS else "both"
     if to_save:
         save_settings(to_save)
     return {"status": "ok"}
@@ -2032,6 +2036,7 @@ async def report_generate(req: ReportGenerateRequest):
       {"status": "loading_model"}（use_llm で VL モデル未ロードのときのみ）
       {"status": "generating", "current", "total", "title"}（use_llm のとき章ごと）
       {"status": "report_warning", "message"}（章の本文生成失敗→機械選定で続行、打ち切り等）
+      {"status": "synthesizing"}（use_llm かつ layout != timeline: 要点・テーマ別まとめを生成中）
       {"status": "writing"}
       {"status": "done", "report_path", "html_path", "dir", "chapters", "images", "stats"}
       {"status": "canceled"} / {"status": "error", "message"}
@@ -2041,6 +2046,8 @@ async def report_generate(req: ReportGenerateRequest):
         raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")
     if len(req.chapters) > 200:
         raise HTTPException(400, "chapters が多すぎます（最大200）")
+    if req.layout not in report_builder.REPORT_LAYOUTS:
+        raise HTTPException(400, f"無効な layout: {req.layout}")
 
     async def stream():
         loop = asyncio.get_event_loop()
@@ -2092,7 +2099,7 @@ async def report_generate(req: ReportGenerateRequest):
         def run():
             try:
                 result = report_builder.generate_report(
-                    str(video_path), chapters, req.meta, req.bookmarks,
+                    str(video_path), chapters, req.meta,
                     max_per_chapter=req.max_images_per_chapter,
                     image_max_side=req.image_max_side,
                     hash_distance=req.hash_distance,
@@ -2100,6 +2107,7 @@ async def report_generate(req: ReportGenerateRequest):
                     reviewer=reviewer,
                     transcript_rows=transcript_rows,
                     detected=detected,
+                    layout=req.layout,
                 )
                 q.put({"status": "done", **result})
             except cancel.CanceledError:

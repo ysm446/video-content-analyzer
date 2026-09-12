@@ -151,6 +151,30 @@
     .vertical-resizer:hover{background:var(--accent)}
     .player-detail-pane{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
     .detail-scroll{flex:1;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+
+    .process-list{container-type:inline-size;min-width:0}
+    .process-row{display:grid;grid-template-columns:108px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)}
+    .process-row:last-child{border-bottom:0}
+    .process-name{display:flex;align-items:center;gap:8px;font-size:12px;min-width:0}
+    .process-options-toggle{min-width:0;justify-content:space-between;padding:6px 10px;font-size:11px}
+    .process-options-toggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .process-options-toggle .lucide{flex-shrink:0;stroke-width:2.4}
+    .process-options-toggle[aria-expanded="true"] .lucide{transform:rotate(180deg)}
+    .process-options{grid-column:1/-1;min-width:0;margin:0;padding:12px;border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;gap:12px}
+    .process-options[hidden]{display:none}
+    .process-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr));gap:12px}
+    .process-options label{font-size:12px;display:inline-flex;align-items:center;gap:6px}
+    .process-fields>label{display:flex;align-items:stretch;flex-direction:column}
+    .process-options select{max-width:100%;min-width:0;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:12px}
+    .process-options input{accent-color:var(--accent)}
+    .process-options .frame-setting{flex-wrap:wrap;gap:8px;margin:8px 0}
+    .process-options .frame-slider{min-width:80px;flex:1}
+    .process-options .section-label{margin-bottom:8px}
+    .process-hint{font-size:11px;color:var(--text-dim);margin:0;line-height:1.5;overflow-wrap:anywhere}
+    .process-options:disabled{opacity:.45}
+    .process-run{min-height:32px}
+    @container(max-width:420px){.process-row{grid-template-columns:minmax(0,1fr) auto}.process-options-toggle,.process-row>.process-hint{grid-row:2;grid-column:1/-1}.process-run{grid-row:1;grid-column:2}}
+
     .detail-actions{display:flex;flex-direction:column;gap:8px}
     .detail-action-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start}
     .detail-action-row.primary{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-start}
@@ -220,7 +244,7 @@
     .sub-toggle svg.lucide{width:14px;height:14px}
     /* 字幕メニュー: コントロール列からのドロップアップ。.file-menu より後勝ちにするため2クラス */
     .sub-menu-group{position:relative;display:flex}
-    .file-menu.sub-menu{display:none;top:auto;bottom:calc(100% + 6px);left:auto;right:0;min-width:120px}
+    .file-menu.sub-menu{display:none;top:auto;bottom:calc(100% + 6px);left:auto;right:0;min-width:200px}
     .file-menu.sub-menu.open{display:flex}
     .sub-menu-check{display:inline-flex;width:14px;justify-content:center;color:var(--accent)}
     .sub-menu-check svg.lucide{width:13px;height:13px;stroke-width:2.4}
@@ -397,6 +421,8 @@
     .report-chapter-title{font-size:14px;font-weight:600;line-height:1.4;cursor:pointer;display:flex;gap:8px;align-items:baseline}
     .report-chapter-title:hover{color:var(--accent-hover)}
     .report-chapter-range{font-size:11px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+    .report-time-link{cursor:pointer}
+    .report-time-link:hover{color:var(--accent-hover)}
     .report-points{margin:0;padding-left:1.2em;font-size:13px;line-height:1.6}
     .report-figure{margin:0;cursor:pointer}
     .report-figure img{width:100%;border-radius:6px;display:block;border:1px solid var(--border);background:#000}
@@ -528,10 +554,12 @@
               <button class="ctrl-btn" id="bookmarkBtn" title="現在位置をブックマークに追加"><i data-lucide="bookmark-plus"></i></button>
               <button class="ctrl-btn sub-toggle" id="seekMarkersBtn" title="シークバーのチャプター・ブックマークマーカー表示切り替え" aria-pressed="true"><i data-lucide="milestone"></i> マーカー</button>
               <div class="sub-menu-group">
-                <button class="ctrl-btn sub-toggle" id="subtitleMenuBtn" title="字幕の表示切り替え"><i data-lucide="captions"></i> 字幕</button>
+                <button class="ctrl-btn sub-toggle" id="subtitleMenuBtn" title="字幕の表示・SRTの読込と解除"><i data-lucide="captions"></i> 字幕</button>
                 <div class="file-menu sub-menu" id="subtitleMenu">
-                  <button class="file-menu-item" id="subMenuOrig"><span class="sub-menu-check"><i data-lucide="check"></i></span>原文</button>
-                  <button class="file-menu-item" id="subMenuJp"><span class="sub-menu-check"><i data-lucide="check"></i></span>日本語</button>
+                  <button class="file-menu-item" id="subMenuOrig"><span class="sub-menu-check"><i data-lucide="check"></i></span>原文を表示</button>
+                  <button class="file-menu-item" id="subMenuJp"><span class="sub-menu-check"><i data-lucide="check"></i></span>日本語を表示</button>
+                  <button class="file-menu-item" id="toggleOrigSrtBtn"><i data-lucide="file-text"></i> 原文SRTを読み込む</button>
+                  <button class="file-menu-item" id="toggleJpSrtBtn"><i data-lucide="languages"></i> 日本語SRTを読み込む</button>
                 </div>
               </div>
               </div>
@@ -585,17 +613,105 @@
                   </button>
                   <div class="analysis-section-body" id="actionsSectionBody">
                     <div class="detail-actions">
-                      <div class="detail-action-row primary">
-                        <button class="btn btn-ghost detail-action-btn" id="loadVideoBtn"><i data-lucide="folder-open"></i> 動画読込</button>
-                        <button class="btn btn-ghost detail-action-btn" id="toggleOrigSrtBtn"><i data-lucide="file-text"></i> 原文</button>
-                        <button class="btn btn-ghost detail-action-btn" id="toggleJpSrtBtn"><i data-lucide="languages"></i> 日本語</button>
-                      </div>
-                      <div class="detail-action-row secondary">
-                        <button class="btn btn-primary detail-action-btn" id="transcribeBtn" disabled><i data-lucide="mic"></i> 文字起こし</button>
-                        <button class="btn btn-primary detail-action-btn" id="refineBtn" disabled><i data-lucide="spell-check"></i> 補正</button>
-                        <button class="btn btn-primary detail-action-btn" id="translateBtn" disabled><i data-lucide="languages"></i> 字幕生成</button>
-                        <button class="btn btn-primary detail-action-btn" id="analyzeBtn" disabled><i data-lucide="scan-search"></i> 動画分析</button>
-                        <button class="btn btn-ghost detail-action-btn" id="reportBtn" disabled title="章立てと代表画像を Markdown と単一 HTML にまとめて「動画名_report」フォルダに書き出す"><i data-lucide="book-text"></i> レポート</button>
+<div class="process-list" id="processList">
+<div class="process-row" data-process="transcribe"><span class="process-name"><i data-lucide="mic"></i>文字起こし</span><button class="btn btn-ghost process-options-toggle" type="button" data-process-options="transcribe" aria-expanded="false" aria-controls="process-options-transcribe"><span id="process-summary-transcribe">設定</span><i data-lucide="chevron-down"></i></button><button class="btn btn-ghost detail-action-btn process-run" id="transcribeBtn" type="button" aria-label="文字起こしを実行" disabled>実行</button><fieldset class="process-options" id="process-options-transcribe" aria-label="文字起こしのオプション" hidden><div class="process-fields"><label for="processAsrEngine">エンジン<select id="processAsrEngine" disabled><option>取得中...</option></select></label><label for="processWhisperModel">音声認識モデル<select id="processWhisperModel" disabled><option>取得中...</option></select></label></div><p class="process-hint">インストール済みモデルから選択できます。WhisperX は字幕タイミングを精密化します（整列モデルは初回に自動取得）。</p><button class="btn btn-ghost detail-action-btn" id="processRuntimeBtn" type="button">モデルをインストール</button><p class="process-hint" id="processAsrStatus" role="status"></p></fieldset></div>
+<div class="process-row" data-process="refine"><span class="process-name"><i data-lucide="spell-check"></i>補正</span><span class="process-hint">共通 LLM を使用</span><button class="btn btn-ghost detail-action-btn process-run" id="refineBtn" type="button" aria-label="補正を実行" disabled>実行</button></div>
+<div class="process-row" data-process="translate"><span class="process-name"><i data-lucide="languages"></i>字幕生成</span><button class="btn btn-ghost process-options-toggle" type="button" data-process-options="translate" aria-expanded="false" aria-controls="process-options-translate"><span id="process-summary-translate">設定</span><i data-lucide="chevron-down"></i></button><button class="btn btn-ghost detail-action-btn process-run" id="translateBtn" type="button" aria-label="字幕生成を実行" disabled>実行</button><fieldset class="process-options" id="process-options-translate" aria-label="字幕生成のオプション" hidden>              <div class="frame-setting">
+                <label for="translationMode">翻訳モード：</label>
+                <select id="translationMode">
+                  <option value="quality" selected>高品質（用語集・文脈重視）</option>
+                  <option value="fast">高速（軽量）</option>
+                </select>
+              </div>
+              <div class="frame-hint process-hint">高品質は用語集の生成と広い文脈で訳語を安定させます。高速は用語集・動画文脈を省略し、バッチを大きくして時間を短縮します。</div>
+</fieldset></div>
+<div class="process-row" data-process="analyze"><span class="process-name"><i data-lucide="scan-search"></i>動画分析</span><button class="btn btn-ghost process-options-toggle" type="button" data-process-options="analyze" aria-expanded="false" aria-controls="process-options-analyze"><span id="process-summary-analyze">設定</span><i data-lucide="chevron-down"></i></button><button class="btn btn-ghost detail-action-btn process-run" id="analyzeBtn" type="button" aria-label="動画分析を実行" disabled>実行</button><fieldset class="process-options" id="process-options-analyze" aria-label="動画分析のオプション" hidden>            <div>
+              <div class="section-label">サンプリング</div>
+              <div>
+                <label>
+                  <input type="radio" name="frameMode" value="uniform" checked> 均等サンプリング
+                </label>
+                <label>
+                  <input type="radio" name="frameMode" value="scene"> シーン検出
+                  <span>ffmpeg</span>
+                </label>
+              </div>
+              <div class="frame-setting">
+                <label for="maxFrames">最大フレーム数：</label>
+                <input type="range" class="frame-slider" id="maxFrames" min="5" max="60" value="30" step="5">
+                <span id="maxFramesValue">30 枚</span>
+              </div>
+            </div>
+            <div>
+              <div class="section-label">解析</div>
+              <div class="frame-setting">
+                <label for="videoKind">動画の種類：</label>
+                <select id="videoKind">
+                  <option value="auto" selected>自動（字幕があれば話題で章分け）</option>
+                  <option value="presentation">プレゼン・講演・解説</option>
+                  <option value="talk">対談・インタビュー・配信</option>
+                  <option value="tutorial">チュートリアル・画面操作</option>
+                  <option value="footage">映像作品・Vlog・スポーツ</option>
+                </select>
+              </div>
+              <div class="frame-hint process-hint">プレゼン・対談・チュートリアルは字幕の話題で章分けします。先に文字起こしを実行してください。映像作品は場面の変化で章分けします。</div>
+              <div class="frame-setting">
+                <label>解析モード：</label>
+                <label>
+                  <input type="radio" name="analysisMode" value="speed" checked> 高速
+                </label>
+                <label>
+                  <input type="radio" name="analysisMode" value="balanced"> バランス
+                </label>
+                <label>
+                  <input type="radio" name="analysisMode" value="quality"> 高品質
+                </label>
+              </div>
+              <div class="frame-setting">
+                <label for="outputLang">出力言語：</label>
+                <select id="outputLang">
+                  <option value="ja" selected>日本語</option>
+                  <option value="en">英語</option>
+                </select>
+              </div>
+              <div class="frame-hint process-hint" id="frameHint"></div>
+            </div>
+</fieldset></div>
+<div class="process-row" data-process="report"><span class="process-name"><i data-lucide="book-text"></i>レポート</span><button class="btn btn-ghost process-options-toggle" type="button" data-process-options="report" aria-expanded="false" aria-controls="process-options-report"><span id="process-summary-report">設定</span><i data-lucide="chevron-down"></i></button><button class="btn btn-ghost detail-action-btn process-run" id="reportBtn" type="button" aria-label="レポートを実行" disabled>実行</button><fieldset class="process-options" id="process-options-report" aria-label="レポートのオプション" hidden>            <div>
+              <div class="section-label">レポート</div>
+              <div class="frame-setting">
+                <label>
+                  <input type="checkbox" id="reportUseLlm" checked> VL モデルで章ごとの本文と掲載画像を生成する
+                </label>
+              </div>
+              <div class="frame-setting">
+                <label>
+                  <input type="checkbox" id="reportRebuildChapters" checked> レポート用に字幕から章立てを作り直す（プレイヤーのチャプターは変えない）
+                </label>
+              </div>
+              <div class="frame-setting">
+                <label for="reportImagesPerChapter">1 章あたりの画像：</label>
+                <select id="reportImagesPerChapter">
+                  <option value="1">最大 1 枚</option>
+                  <option value="2">最大 2 枚</option>
+                  <option value="3" selected>最大 3 枚</option>
+                  <option value="4">最大 4 枚</option>
+                  <option value="5">最大 5 枚</option>
+                </select>
+              </div>
+              <div class="frame-setting">
+                <label for="reportLayout">形式：</label>
+                <select id="reportLayout">
+                  <option value="both" selected>要点・テーマ別 ＋ 時系列の章</option>
+                  <option value="thematic">要点・テーマ別のみ</option>
+                  <option value="timeline">時系列の章のみ</option>
+                </select>
+              </div>
+              <div class="frame-hint process-hint">字幕またはチャプターからレポートを作成します。LLM を使わない場合は現在の章の説明と自動選定した画像を掲載します。</div>
+            </div>
+</fieldset></div>
+</div>
+<div class="detail-action-row secondary">
                         <button class="btn btn-ghost detail-action-btn" id="reportShowBtn" disabled title="生成済みのレポートを大きく表示"><i data-lucide="book-open"></i> レポートを表示</button>
                         <button class="btn detail-action-btn detail-save-btn" id="saveTocBtn" disabled><i data-lucide="save"></i> 保存</button>
                       </div>
@@ -719,92 +835,14 @@
       </div>
       <div class="settings-modal-body">
         <nav class="settings-nav">
-          <button class="settings-nav-btn active" data-settings-section="analysis"><i data-lucide="scan-search"></i> 動画分析</button>
-          <button class="settings-nav-btn" data-settings-section="subtitle"><i data-lucide="captions"></i> 字幕</button>
+          <button class="settings-nav-btn active" data-settings-section="subtitle"><i data-lucide="captions"></i> 字幕表示</button>
           <button class="settings-nav-btn" data-settings-section="player"><i data-lucide="monitor-play"></i> プレイヤー</button>
           <button class="settings-nav-btn" data-settings-section="prompts"><i data-lucide="file-pen-line"></i> プロンプト</button>
           <button class="settings-nav-btn" data-settings-section="runtime"><i data-lucide="hard-drive-download"></i> ランタイム</button>
           <button class="settings-nav-btn" data-settings-section="info"><i data-lucide="info"></i> 情報</button>
         </nav>
         <div class="settings-content">
-          <section class="settings-section active" id="settings-section-analysis">
-            <div>
-              <div class="section-label">サンプリング</div>
-              <div style="display:flex;gap:16px;margin-bottom:10px">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="radio" name="frameMode" value="uniform" checked style="accent-color:var(--accent)"> 均等サンプリング
-                </label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="radio" name="frameMode" value="scene" style="accent-color:var(--accent)"> シーン検出
-                  <span style="font-size:11px;color:var(--text-dim)">ffmpeg</span>
-                </label>
-              </div>
-              <div class="frame-setting">
-                <label>最大フレーム数：</label>
-                <input type="range" class="frame-slider" id="maxFrames" min="5" max="60" value="30" step="5">
-                <span id="maxFramesValue">30 枚</span>
-              </div>
-            </div>
-            <div>
-              <div class="section-label">解析</div>
-              <div class="frame-setting" style="margin-bottom:8px">
-                <label>動画の種類：</label>
-                <select id="videoKind" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
-                  <option value="auto" selected>自動（字幕があれば話題で章分け）</option>
-                  <option value="presentation">プレゼン・講演・解説</option>
-                  <option value="talk">対談・インタビュー・配信</option>
-                  <option value="tutorial">チュートリアル・画面操作</option>
-                  <option value="footage">映像作品・Vlog・スポーツ</option>
-                </select>
-              </div>
-              <div class="frame-hint" style="margin:0 0 10px">プレゼン・対談・チュートリアルは字幕の話題の切れ目で章を分け、章名も話題名にします（字幕が必要。先に文字起こしを実行）。映像作品は従来どおり場面の変化で分けます。</div>
-              <div class="frame-setting">
-                <label>解析モード：</label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="radio" name="analysisMode" value="speed" checked style="accent-color:var(--accent)"> speed
-                </label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="radio" name="analysisMode" value="balanced" style="accent-color:var(--accent)"> balanced
-                </label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="radio" name="analysisMode" value="quality" style="accent-color:var(--accent)"> quality
-                </label>
-              </div>
-              <div class="frame-setting" style="margin-top:8px">
-                <label>出力言語：</label>
-                <select id="outputLang" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
-                  <option value="ja" selected>日本語</option>
-                  <option value="en">英語</option>
-                </select>
-              </div>
-              <div class="frame-hint" id="frameHint"></div>
-            </div>
-            <div>
-              <div class="section-label">レポート</div>
-              <div class="frame-setting">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="reportUseLlm" checked style="accent-color:var(--accent)"> VL モデルで章ごとの本文と掲載画像を生成する
-                </label>
-              </div>
-              <div class="frame-setting" style="margin-top:6px">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="reportRebuildChapters" checked style="accent-color:var(--accent)"> レポート用に字幕から章立てを作り直す（プレイヤーのチャプターは変えない）
-                </label>
-              </div>
-              <div class="frame-setting" style="margin-top:8px">
-                <label>1 章あたりの画像：</label>
-                <select id="reportImagesPerChapter" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
-                  <option value="1">最大 1 枚</option>
-                  <option value="2">最大 2 枚</option>
-                  <option value="3" selected>最大 3 枚</option>
-                  <option value="4">最大 4 枚</option>
-                  <option value="5">最大 5 枚</option>
-                </select>
-              </div>
-              <div class="frame-hint">「レポート」ボタンで章立てと代表画像を「動画名_report」フォルダに Markdown と単一 HTML で書き出します。VL モデルを使うと章ごとに字幕とフレームから本文（まとめ・要点）を書き、情報量の多い画像を選びます。オフにすると画像はシーン検出と類似判定だけで機械的に選び、本文はチャプターの説明をそのまま使います。</div>
-            </div>
-          </section>
-          <section class="settings-section" id="settings-section-subtitle">
+          <section class="settings-section active" id="settings-section-subtitle">
             <div>
               <div class="section-label">字幕</div>
               <div class="frame-setting">
@@ -823,14 +861,6 @@
                   <option value="meiryo">Meiryo</option>
                 </select>
               </div>
-              <div class="frame-setting" style="margin-top:8px">
-                <label>翻訳モード：</label>
-                <select id="translationMode" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px">
-                  <option value="quality" selected>高品質（用語集・文脈重視）</option>
-                  <option value="fast">高速（軽量）</option>
-                </select>
-              </div>
-              <div class="frame-hint">高品質は用語集の生成と広い文脈で訳語を安定させます。高速は用語集・動画文脈を省略し、バッチを大きくして時間を短縮します。</div>
             </div>
           </section>
           <section class="settings-section" id="settings-section-player">
@@ -922,8 +952,10 @@
         if(!res.ok) throw new Error(`HTTP ${res.status}`)
         _runtimeStatus=await res.json()
         renderRuntimeList()
+        updateTranscribeOptions()
       }catch(e){
         el.innerHTML=`<div style="font-size:12px;color:var(--text-dim)">状態の取得に失敗しました: ${escHtml(String(e.message||e))}</div>`
+        document.getElementById('processAsrStatus').textContent='設定を取得できませんでした。オプションを開き直すと再取得します'
       }
     }
     function renderRuntimeList(){
@@ -977,22 +1009,14 @@
         const inst=installedModels.includes(m.id)
         return `<option value="${escHtml(m.id)}"${m.id===w.model?' selected':''}>${escHtml(m.id)}（${escHtml(m.size)}）${inst?' ✓済':''}</option>`
       }).join('')
-      const engineOptions=(w.engines||[]).map(e=>
-        `<option value="${escHtml(e.id)}"${e.id===w.engine?' selected':''}>${escHtml(e.label)}</option>`
-      ).join('')
       const alignInstalled=(w.align_models||[]).filter(a=>a.installed).map(a=>a.language)
       const whisperHtml=`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
         ${_runtimeRowHead(!!w.installed,'Whisper モデル',w.installed?`使用中: ${w.model}`:'未インストール','')}
-        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">音声書き起こし（faster-whisper）。切り替えは次回の文字起こしから反映されます</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">音声書き起こし（faster-whisper）。使用するモデルとエンジンは操作エリアの「文字起こし」で選択します</div>
         <div class="frame-setting" style="margin-top:8px">
-          <label style="font-size:12px">使用モデル：</label>
+          <label style="font-size:12px">取得するモデル：</label>
           <select id="whisperModelSel" style="${RUNTIME_SEL_STYLE}">${whisperOptions}</select>
-          <button class="btn btn-primary" id="whisperModelApply" style="padding:4px 12px;font-size:12px">適用</button>
-        </div>
-        <div class="frame-setting" style="margin-top:6px">
-          <label style="font-size:12px">エンジン：</label>
-          <select id="asrEngineSel" style="${RUNTIME_SEL_STYLE}">${engineOptions}</select>
-          <button class="btn btn-ghost" id="asrEngineApply" style="padding:4px 12px;font-size:12px">適用</button>
+          <button class="btn btn-primary" id="whisperModelApply" style="padding:4px 12px;font-size:12px">インストール</button>
         </div>
         <div style="font-size:11px;color:var(--text-dim);margin-top:4px">WhisperX 整列は wav2vec2 で字幕タイミングを精密化します。整列モデルは初回の文字起こし時に自動ダウンロード（日本語 約1.2GB / 英語 約360MB）${alignInstalled.length?` ｜ 取得済み: ${alignInstalled.map(escHtml).join(', ')}`:''}</div>
         <div id="runtime-progress-whisper" style="font-size:12px;color:var(--accent);margin-top:6px;display:none"></div>
@@ -1046,26 +1070,8 @@
         const sel=document.getElementById('whisperModelSel')
         if(!sel) return
         const model=sel.value
-        const applySelect=async()=>{
-          const res=await fetch(`${API}/runtime/whisper/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model})})
-          if(!res.ok) throw new Error(await res.text())
-        }
-        try{
-          if(installedModels.includes(model)){ await applySelect(); await loadRuntimeStatus() }
-          else{
-            const ok=await installRuntime('whisper',{model})
-            if(ok){ await applySelect(); await loadRuntimeStatus() }
-          }
-        }catch(e){ alert('切り替えに失敗しました: '+e.message) }
-      })
-      document.getElementById('asrEngineApply')?.addEventListener('click',async()=>{
-        const sel=document.getElementById('asrEngineSel')
-        if(!sel) return
-        try{
-          const res=await fetch(`${API}/runtime/asr/engine`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({engine:sel.value})})
-          if(!res.ok) throw new Error(await res.text())
-          await loadRuntimeStatus()
-        }catch(e){ alert('切り替えに失敗しました: '+e.message) }
+        try{ await installRuntime('whisper',{model}) }
+        catch(e){ alert('インストールに失敗しました: '+e.message) }
       })
       document.getElementById('ffmpegInstall')?.addEventListener('click',()=>installRuntime('ffmpeg'))
     }
@@ -1123,6 +1129,95 @@
       return !failed
     }
 
+    let _processOptionSaving=false
+    function updateProcessSummaries(){
+      const selected=id=>document.getElementById(id)?.selectedOptions[0]?.textContent||''
+      const summaries={
+        transcribe:_runtimeStatus?.whisper ? `${selected('processAsrEngine')} · ${selected('processWhisperModel')}` : '設定を取得',
+        translate:selected('translationMode'),
+        analyze:`${{speed:'高速',balanced:'バランス',quality:'高品質'}[getAnalysisMode()]} · ${getFrameMode()==='scene'?'シーン検出':'均等'} · ${slider.value}枚 · ${selected('outputLang')}`,
+        report:`${reportUseLlmChk.checked?selected('reportLayout'):'LLM なし'} · 最大${reportImagesSel.value}枚/章`,
+      }
+      for(const [kind,text] of Object.entries(summaries)){
+        const el=document.getElementById(`process-summary-${kind}`)
+        el.textContent=text
+        el.parentElement.title=text
+      }
+      document.getElementById('reportRebuildChapters').disabled=!reportUseLlmChk.checked
+      document.getElementById('reportLayout').disabled=!reportUseLlmChk.checked
+    }
+    function syncProcessOptionLocks(){
+      const locked=_runningJobs>0||_processOptionSaving
+      document.querySelectorAll('.process-options').forEach(el=>el.disabled=locked)
+      const install=document.getElementById('whisperModelApply')
+      if(install) install.disabled=locked||!!_runtimeInstalling
+    }
+    function updateTranscribeOptions(){
+      const w=_runtimeStatus?.whisper
+      if(!w) return
+      const engine=document.getElementById('processAsrEngine')
+      const model=document.getElementById('processWhisperModel')
+      engine.innerHTML=(w.engines||[]).map(e=>`<option value="${escHtml(e.id)}">${escHtml(e.label)}</option>`).join('')
+      engine.value=w.engine
+      const installed=w.installed_models||[]
+      const models=(w.available_models||[]).filter(m=>installed.includes(m.id)||m.id===w.model)
+      model.innerHTML=models.map(m=>`<option value="${escHtml(m.id)}"${installed.includes(m.id)?'':' disabled'}>${escHtml(m.id)}${installed.includes(m.id)?'':'（未取得）'}</option>`).join('')
+      model.value=w.model
+      engine.disabled=!engine.options.length
+      model.disabled=!installed.length
+      updateProcessSummaries()
+      syncProcessOptionLocks()
+    }
+    async function saveTranscribeOption(key,value){
+      if(_processOptionSaving||_runningJobs>0) return
+      const w=_runtimeStatus?.whisper
+      if(!w) return
+      _processOptionSaving=true
+      document.getElementById('transcribeBtn').disabled=true
+      syncProcessOptionLocks()
+      const status=document.getElementById('processAsrStatus')
+      status.textContent='設定を保存中...'
+      try{
+        const path=key==='model'?'/runtime/whisper/select':'/runtime/asr/engine'
+        const res=await fetch(`${API}${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[key]:value})})
+        if(!res.ok) throw new Error(await res.text())
+        w[key]=value
+        status.textContent='次回の文字起こしから適用します'
+      }catch(e){status.textContent=`設定を保存できませんでした: ${e.message}`}
+      finally{
+        _processOptionSaving=false
+        document.getElementById('transcribeBtn').disabled=!state.videoPath
+        updateTranscribeOptions()
+      }
+    }
+    function initProcessOptions(){
+      const list=document.getElementById('processList')
+      list.querySelectorAll('[data-process-options]').forEach(button=>button.addEventListener('click',()=>{
+        const open=button.getAttribute('aria-expanded')!=='true'
+        list.querySelectorAll('[data-process-options]').forEach(other=>{
+          const expanded=other===button&&open
+          other.setAttribute('aria-expanded',String(expanded))
+          document.getElementById(other.getAttribute('aria-controls')).hidden=!expanded
+        })
+        if(open&&button.dataset.processOptions==='transcribe'&&!_runtimeStatus) loadRuntimeStatus()
+      }))
+      list.addEventListener('input',updateProcessSummaries)
+      list.addEventListener('change',updateProcessSummaries)
+      list.addEventListener('click',event=>{
+        if(event.target.closest('#transcribeBtn')&&_processOptionSaving){
+          event.stopImmediatePropagation();event.preventDefault()
+        }
+      },true)
+      document.getElementById('processAsrEngine').addEventListener('change',event=>saveTranscribeOption('engine',event.target.value))
+      document.getElementById('processWhisperModel').addEventListener('change',event=>saveTranscribeOption('model',event.target.value))
+      document.getElementById('processRuntimeBtn').addEventListener('click',()=>{
+        openSettingsModal()
+        document.querySelector('[data-settings-section="runtime"]').click()
+      })
+      updateProcessSummaries()
+      syncProcessOptionLocks()
+    }
+
     function updateProcessButtons(runningKind=null){
       const transcribeBtn=document.getElementById('transcribeBtn')
       const refineBtn=document.getElementById('refineBtn')
@@ -1139,16 +1234,16 @@
       translateBtn.classList.toggle('running', runningKind==='translate')
 
       transcribeBtn.innerHTML = transcribeReady && runningKind!=='transcribe'
-        ? '<i data-lucide="check"></i> 文字起こし済み'
+        ? '<i data-lucide="check"></i> 再実行'
         : runningKind==='transcribe'
-          ? '<i data-lucide="loader-circle"></i> 文字起こし中'
-          : '<i data-lucide="mic"></i> 文字起こし'
+          ? '<i data-lucide="loader-circle"></i> 実行中'
+          : '実行'
 
       translateBtn.innerHTML = translateReady && runningKind!=='translate'
-        ? '<i data-lucide="check"></i> 字幕生成済み'
+        ? '<i data-lucide="check"></i> 再実行'
         : runningKind==='translate'
-          ? '<i data-lucide="loader-circle"></i> 字幕生成中'
-          : '<i data-lucide="languages"></i> 字幕生成'
+          ? '<i data-lucide="loader-circle"></i> 実行中'
+          : '実行'
 
       transcribeBtn.title = transcribeReady ? '文字起こし済みです。再実行もできます' : '動画を文字起こしします'
       translateBtn.title = translateReady ? '字幕生成済みです。再実行もできます' : '日本語字幕を生成します'
@@ -1160,10 +1255,10 @@
         refineBtn.classList.toggle('ready', refineReady && runningKind!=='refine')
         refineBtn.classList.toggle('running', runningKind==='refine')
         refineBtn.innerHTML = refineReady && runningKind!=='refine'
-          ? '<i data-lucide="check"></i> 補正済み'
+          ? '<i data-lucide="check"></i> 再実行'
           : runningKind==='refine'
-            ? '<i data-lucide="loader-circle"></i> 補正中'
-            : '<i data-lucide="spell-check"></i> 補正'
+            ? '<i data-lucide="loader-circle"></i> 実行中'
+            : '実行'
         refineBtn.title = refineReady ? '補正済みです。翻訳は補正後の字幕を使います' : '文字起こしをローカルLLMで補正します（任意）'
         refineNodes.push(refineBtn)
       }
@@ -1432,11 +1527,13 @@
       const btn=document.getElementById('cancelBtn')
       if(btn) btn.disabled=false
       updateCancelButton()
+      syncProcessOptionLocks()
       return null
     }
     function endCancelable(){
       _runningJobs=Math.max(0,_runningJobs-1)
       updateCancelButton()
+      syncProcessOptionLocks()
     }
     async function cancelAllProcesses(){
       const btn=document.getElementById('cancelBtn')
@@ -1802,16 +1899,39 @@
       if(d.generated_at) info.push(`生成 ${escHtml(d.generated_at)}`)
       const stats=d.stats||{}
       const tags=(meta.tags||[]).filter(t=>typeof t==='string'&&t.trim())
+      const layout=d.layout||'both'
+      const syn=(layout!=='timeline'&&d.synthesis&&typeof d.synthesis==='object')?d.synthesis:null
+      const showTimeline=layout!=='thematic'
       let html=`<div class="report-meta">${info.join(' ／ ')}${chapters.length?` ／ ${chapters.length} 章・画像 ${stats.selected??''} 枚`:''}</div>`
       if(tags.length) html+=`<div class="tags-wrap">${tags.map(t=>`<span class="tag">${escHtml(t)}</span>`).join('')}</div>`
       if(meta.summary) html+=`<div class="report-text">${escHtml(meta.summary)}</div>`
       if(meta.detail) html+=`<div class="report-text" style="color:var(--text-dim)">${escHtml(meta.detail)}</div>`
-      if(chapters.length){
-        html+=`<div><div class="section-label">目次</div><div class="report-toc">${chapters.map(ch=>
+      const figureHtml=im=>`<figure class="report-figure" data-start="${Number(im.time_sec)||0}" title="クリックでこの場面へ"><img src="${escHtml(reportImageUrl(im.file))}" alt="${escHtml(im.caption||'')}" loading="lazy"><figcaption>${escHtml(im.caption||fmtTs(im.time_sec||0))}</figcaption></figure>`
+      if(syn){
+        const msgs=(syn.key_messages||[]).filter(m=>typeof m==='string'&&m.trim())
+        if(msgs.length) html+=`<div><div class="section-label">要点</div><ul class="report-points">${msgs.map(m=>`<li>${escHtml(m)}</li>`).join('')}</ul></div>`
+        const themes=Array.isArray(syn.themes)?syn.themes:[]
+        if(themes.length){
+          html+=`<div><div class="section-label">テーマ別のまとめ</div></div>`
+          html+=themes.map(th=>{
+            const times=(th.times||[]).filter(t=>Number.isFinite(Number(t)))
+            const imgs=(th.images||[]).map(figureHtml).join('')
+            return `<div class="report-chapter">
+              <div class="report-chapter-title"><span>${escHtml(th.title||'')}</span>${times.length?`<span class="report-chapter-range">${times.map(t=>`<span class="report-time-link" data-start="${Number(t)}" title="クリックでこの場面へ">${fmtTs(t)}</span>`).join(' / ')}</span>`:''}</div>
+              ${th.body?`<div class="report-text">${escHtml(th.body)}</div>`:''}
+              ${imgs?`<div class="report-figures">${imgs}</div>`:''}
+            </div>`
+          }).join('')
+        }
+        const facts=(syn.key_facts||[]).filter(f=>typeof f==='string'&&f.trim())
+        if(facts.length) html+=`<div><div class="section-label">主要な事実・数値</div><ul class="report-points">${facts.map(f=>`<li>${escHtml(f)}</li>`).join('')}</ul></div>`
+      }
+      if(showTimeline&&chapters.length){
+        html+=`<div><div class="section-label">${syn?'時系列の章':'目次'}</div><div class="report-toc">${chapters.map(ch=>
           `<div class="report-toc-item" data-start="${Number(ch.start_sec)||0}"><span class="report-toc-ts">${fmtTs(ch.start_sec||0)}</span><span>${ch.index}. ${escHtml(ch.title||'')}</span></div>`).join('')}</div></div>`
         html+=chapters.map(ch=>{
           const pts=(ch.points||[]).filter(p=>typeof p==='string'&&p.trim())
-          const imgs=(ch.images||[]).map(im=>`<figure class="report-figure" data-start="${Number(im.time_sec)||0}" title="クリックでこの場面へ"><img src="${escHtml(reportImageUrl(im.file))}" alt="${escHtml(im.caption||'')}" loading="lazy"><figcaption>${escHtml(im.caption||fmtTs(im.time_sec||0))}</figcaption></figure>`).join('')
+          const imgs=(ch.images||[]).map(figureHtml).join('')
           return `<div class="report-chapter" id="reportCh${ch.index}">
             <div class="report-chapter-title" data-start="${Number(ch.start_sec)||0}" title="クリックでこの章の先頭へ"><span>${ch.index}. ${escHtml(ch.title||'')}</span><span class="report-chapter-range">${fmtTs(ch.start_sec||0)} 〜 ${fmtTs(ch.end_sec||0)}</span></div>
             ${ch.summary?`<div class="report-text">${escHtml(ch.summary)}</div>`:''}
@@ -1819,14 +1939,6 @@
             ${imgs?`<div class="report-figures">${imgs}</div>`:''}
           </div>`
         }).join('')
-      }
-      const bms=Array.isArray(d.bookmarks)?d.bookmarks:[]
-      if(bms.length){
-        html+=`<div><div class="section-label">ブックマーク</div>${bms.map(b=>`<div class="report-chapter" style="margin-bottom:8px">
-          <div class="report-chapter-title" data-start="${Number(b.time_sec)||0}"><span>${escHtml(b.title||'')}</span><span class="report-chapter-range">${fmtTs(b.time_sec||0)}</span></div>
-          ${b.image?`<figure class="report-figure" data-start="${Number(b.time_sec)||0}"><img src="${escHtml(reportImageUrl(b.image))}" alt="" loading="lazy"></figure>`:''}
-          ${b.comment?`<div class="report-text">${escHtml(b.comment)}</div>`:''}
-        </div>`).join('')}</div>`
       }
       content.innerHTML=html
       lucide.createIcons({nodes:[content]})
@@ -2179,9 +2291,9 @@
     function syncSubtitleToggleButtons(){
       const hasOrig = !!(state.origSrtPath || origSubtitles.length)
       const hasJp = !!(state.jpSrtPath || jpSubtitles.length)
-      toggleOrigSrtBtn.innerHTML = hasOrig ? '<i data-lucide="x"></i> 原文解除' : '<i data-lucide="file-text"></i> 原文SRT'
+      toggleOrigSrtBtn.innerHTML = hasOrig ? '<i data-lucide="x"></i> 原文SRTを解除' : '<i data-lucide="file-text"></i> 原文SRTを読み込む'
       toggleOrigSrtBtn.title = hasOrig ? '原文SRTを解除' : '原文SRTを読み込む'
-      toggleJpSrtBtn.innerHTML = hasJp ? '<i data-lucide="x"></i> 日本語解除' : '<i data-lucide="languages"></i> 日本語SRT'
+      toggleJpSrtBtn.innerHTML = hasJp ? '<i data-lucide="x"></i> 日本語SRTを解除' : '<i data-lucide="languages"></i> 日本語SRTを読み込む'
       toggleJpSrtBtn.title = hasJp ? '日本語SRTを解除' : '日本語SRTを読み込む'
       lucide.createIcons({nodes:[toggleOrigSrtBtn, toggleJpSrtBtn]})
       updateProcessButtons()
@@ -2344,6 +2456,7 @@
       else jpSubtitles=subs
       syncSubtitleToggleButtons()
       updateSubtitles()
+      updateReportButton()  // 字幕だけでもレポートを生成できる
     }
     async function loadSrt(filePath,kind){
       const targetVideo=state.videoPath
@@ -2491,15 +2604,8 @@
       highlightActiveFileRow()
     }
 
-    async function selectVideo(){
-      const p=await window.electronAPI.openVideo()
-      if(!p) return
-      await openVideoFromPath(p)
-    }
-
-    document.getElementById('loadVideoBtn').addEventListener('click',selectVideo)
-
     toggleOrigSrtBtn.addEventListener('click',async()=>{
+      subtitleMenu.classList.remove('open')
       if(state.origSrtPath || origSubtitles.length){
         clearSubtitle('orig')
         return
@@ -2508,6 +2614,7 @@
       state.origSrtPath=p; await loadSrt(p,'orig'); document.getElementById('translateBtn').disabled=false; setResult('transcribe',true,p)
     })
     toggleJpSrtBtn.addEventListener('click',async()=>{
+      subtitleMenu.classList.remove('open')
       if(state.jpSrtPath || jpSubtitles.length){
         clearSubtitle('jp')
         return
@@ -2757,7 +2864,7 @@
       saveUiSettings({playback_rate:v})
     })
 
-    // 字幕メニュー: 原文/日本語の表示トグル。両方まとめて切り替えられるよう
+    // 字幕メニュー: 表示トグルと SRT の読込・解除。両方まとめて切り替えられるよう
     // 項目クリックではメニューを閉じない（外側クリック・Esc で閉じる）
     const subtitleMenuBtn=document.getElementById('subtitleMenuBtn')
     const subtitleMenu=document.getElementById('subtitleMenu')
@@ -3343,6 +3450,9 @@
     const reportRebuildChk=document.getElementById('reportRebuildChapters')
     reportRebuildChk.addEventListener('change',()=>saveUiSettings({report_rebuild_chapters:reportRebuildChk.checked}))
     reportImagesSel.addEventListener('change',()=>saveUiSettings({report_images_per_chapter:parseInt(reportImagesSel.value)||3}))
+    const reportLayoutSel=document.getElementById('reportLayout')
+    const REPORT_LAYOUTS=['both','thematic','timeline']
+    reportLayoutSel.addEventListener('change',()=>saveUiSettings({report_layout:REPORT_LAYOUTS.includes(reportLayoutSel.value)?reportLayoutSel.value:'both'}))
     const screenshotFormatSel=document.getElementById('screenshotFormat')
     function getScreenshotFormat(){ return screenshotFormatSel.value==='jpg' ? 'jpg' : 'png' }
     screenshotFormatSel.addEventListener('change',()=>saveUiSettings({screenshot_format:getScreenshotFormat()}))
@@ -3419,6 +3529,7 @@
         reportRebuildChk.checked = s.report_rebuild_chapters !== false
         videoKindSel.value = VIDEO_KINDS.includes(s.video_kind) ? s.video_kind : 'auto'
         reportImagesSel.value = String([1,2,3,4,5].includes(Number(s.report_images_per_chapter)) ? Number(s.report_images_per_chapter) : 3)
+        reportLayoutSel.value = REPORT_LAYOUTS.includes(s.report_layout) ? s.report_layout : 'both'
         state.seekMarkersVisible = s.seek_markers !== false
         updateSeekMarkersBtn()
         renderSeekMarkers()
@@ -3429,6 +3540,7 @@
         setAnalysisSectionExpanded('tags', state.analysisExpanded.tags !== false)
         setAnalysisSectionExpanded('scenes', state.analysisExpanded.scenes !== false)
         updateFrameHint()
+        updateProcessSummaries()
         updatePanelLayout()
       }catch{}
     }
@@ -3841,30 +3953,32 @@
     function updateReportButton(){
       const btn=document.getElementById('reportBtn')
       if(!btn) return
+      // 章立て（分析結果）か字幕のどちらかがあれば生成できる（字幕からは章立てもテーマ別まとめも作れる）
       const hasChapters=Array.isArray(state.tocData?.toc)&&state.tocData.toc.length>0
-      btn.disabled=!state.videoPath||!hasChapters||btn.classList.contains('running')
+      const hasTranscript=!!(state.origTranscript&&state.origTranscript.trim())
+      btn.disabled=!state.videoPath||!(hasChapters||hasTranscript)||btn.classList.contains('running')
       const regen=document.getElementById('reportRegenBtn'); if(regen) regen.disabled=btn.disabled
       const show=document.getElementById('reportShowBtn'); if(show) show.disabled=!state.videoPath||!reportState.data
     }
     document.getElementById('reportBtn').addEventListener('click',async()=>{
       if(!state.videoPath){ updateGlobalStatus('report','error','先に動画を読み込んでください'); return }
       const toc=Array.isArray(state.tocData?.toc)?state.tocData.toc:[]
-      if(!toc.length){ updateGlobalStatus('report','error','章立てがありません。先に動画分析を実行してください'); return }
+      if(!toc.length&&!(state.origTranscript&&state.origTranscript.trim())){ updateGlobalStatus('report','error','章立ても字幕もありません。先に文字起こしか動画分析を実行してください'); return }
       const btn=document.getElementById('reportBtn'); btn.disabled=true; btn.classList.add('running')
       setTaskTarget('report',state.videoPath)
       const chapters=toc.map(ch=>({start_sec:ch.start_sec||0,title:ch.title||'',summary:ch.summary||''}))  // end_sec はサーバー側で次章の開始から算出
       const meta=state.tocData?.meta||{}
-      const bookmarks=(Array.isArray(state.tocData?.bookmarks)?state.tocData.bookmarks:[]).map(b=>({id:b.id,time_sec:b.time_sec,title:b.title||'',comment:b.comment||''}))
       beginCancelable()
       let reportPath=null
       let sawModelLoad=false
       const useLlm=reportUseLlmChk.checked
       const maxImages=parseInt(reportImagesSel.value)||3
       const rebuild=reportRebuildChk.checked
+      const layout=REPORT_LAYOUTS.includes(reportLayoutSel.value)?reportLayoutSel.value:'both'
       const videoKind=VIDEO_KINDS.includes(meta.video_kind)?meta.video_kind:getVideoKind()
       try{
         setProgress('report',5,'準備中...')
-        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,bookmarks,max_images_per_chapter:maxImages,image_max_side:1280,use_llm:useLlm,transcript:useLlm?state.origTranscript:'',rebuild_chapters:rebuild,video_kind:videoKind})})
+        const res=await fetch(`${API}/report/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_path:state.videoPath,chapters,meta,max_images_per_chapter:maxImages,image_max_side:1280,use_llm:useLlm,transcript:useLlm?state.origTranscript:'',rebuild_chapters:rebuild,video_kind:videoKind,layout})})
         await readSSE(res,event=>{
           if(event.status==='loading_model'){ sawModelLoad=true; beginImplicitModelLoad(); setProgress('report',5,'VL モデルをロード中...') }
           else if(event.status==='detecting_scenes') setProgress('report',10,'場面の切り替わりを検出中...')
@@ -3873,6 +3987,7 @@
           else if(event.status==='selecting') setProgress('report',20,`画像を選定中 (${event.current}/${event.total} 章)`)
           else if(event.status==='generating') setProgress('report',20+Math.round(60*(event.total?(event.current-1)/event.total:0)),`本文を生成中 (${event.current}/${event.total} 章: ${event.title||''})`)
           else if(event.status==='report_warning') setProgress('report',null,`注意: ${event.message}`)
+          else if(event.status==='synthesizing') setProgress('report',80,'全体の要点とテーマ別のまとめを作成中...')
           else if(event.status==='extracting'&&event.phase==='images') setProgress('report',82+Math.round(12*(event.total?event.current/event.total:1)),`画像を書き出し中 (${event.current}/${event.total})`)
           else if(event.status==='writing') setProgress('report',96,'Markdown / HTML を書き出し中...')
           else if(event.status==='done'){
@@ -4142,6 +4257,8 @@
 
     updateFrameHint()
     fetchReviewModelStatus()
+    initProcessOptions()
+    loadRuntimeStatus()
     loadUiSettings()
     loadPrompts()
     setQAEnabled(false)
