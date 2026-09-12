@@ -64,6 +64,17 @@ def _parse_param_size(label: str) -> float:
     return float(m.group(1)) if m else 9999.0
 
 
+def _model_family(stem: str) -> str:
+    """Compare model names without projector markers and quantization suffixes."""
+    name = re.sub(r"(?i)mmproj", "", stem).strip("-_. ")
+    name = re.sub(
+        r"(?i)[._-](?:bf16|f16|f32|fp16|fp32|q\d+(?:[_-][a-z0-9]+)*|iq\d+(?:[_-][a-z0-9]+)*)$",
+        "",
+        name,
+    )
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
 def _find_mmproj_for(model_path: Path, folder_files: list[Path] | None = None) -> Path | None:
     """同じフォルダの mmproj を探す。
 
@@ -76,11 +87,11 @@ def _find_mmproj_for(model_path: Path, folder_files: list[Path] | None = None) -
     if not mmproj_files:
         return None
 
-    stem_norm = re.sub(r"[^a-z0-9]+", "", model_path.stem.lower())
+    stem_norm = _model_family(model_path.stem)
     ranked: list[tuple[int, str, Path]] = []
     for candidate in mmproj_files:
-        cand_norm = re.sub(r"[^a-z0-9]+", "", candidate.stem.lower().replace("mmproj", ""))
-        score = 0 if cand_norm and cand_norm in stem_norm else 1
+        cand_norm = _model_family(candidate.stem)
+        score = 0 if cand_norm and cand_norm == stem_norm else 1
         ranked.append((score, candidate.name.lower(), candidate))
     ranked.sort(key=lambda row: (row[0], row[1]))
     best_score, _name, best = ranked[0]
