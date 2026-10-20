@@ -2143,7 +2143,7 @@ async def video_info(req: VideoInfoRequest):
 
 @app.post("/screenshot")
 async def screenshot(req: ScreenshotRequest):
-    """再生位置のフレームを {動画名}_screenshot/ フォルダにフル解像度で保存する（F12）。"""
+    """再生位置のフレームを {動画名}_screenshot/ フォルダにフル解像度で保存する（F9）。"""
     video_path = Path(req.video_path)
     if not video_path.exists():
         raise HTTPException(404, f"動画ファイルが見つかりません: {video_path}")

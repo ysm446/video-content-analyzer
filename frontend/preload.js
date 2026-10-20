@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // エクスプローラーで場所を開く（項目を選択状態で表示）
   showItemInFolder: (filePath) => ipcRenderer.invoke('fs:showItemInFolder', filePath),
 
+  // アプリ画面のスクリーンショットを保存（logical=true で 100% 相当の論理サイズ）
+  captureWindow: (logical) => ipcRenderer.invoke('app:captureWindow', { logical: !!logical }),
+
   // http(s) の URL を既定ブラウザで開く（アプリ内では遷移させない）
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
 

@@ -54,6 +54,12 @@
     .status-bar-label{color:var(--text);white-space:nowrap}
     .status-bar-file{color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;flex-shrink:0}
     .status-bar-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .app-toast{position:fixed;right:14px;bottom:40px;z-index:9998;display:flex;align-items:center;gap:10px;max-width:min(520px,70vw);padding:10px 14px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius);box-shadow:0 12px 32px rgba(0,0,0,.34);color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background .15s;animation:chip-in .2s ease}
+    .app-toast:hover{background:var(--surface2)}
+    .app-toast-body{min-width:0;display:flex;flex-direction:column;gap:2px}
+    .app-toast-title,.app-toast-detail{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .app-toast-title{font-size:12px}
+    .app-toast-detail{font-size:11px;color:var(--text-dim)}
     .status-stop-btn{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border:1px solid var(--error-tint-border);border-radius:4px;background:transparent;color:var(--error);font-size:11px;cursor:pointer;flex-shrink:0}
     .status-stop-btn:hover{background:var(--error-tint-bg)}
     .status-stop-btn svg{width:12px;height:12px}
@@ -787,6 +793,14 @@
     <span class="status-bar-sysinfo" id="sysInfo"></span>
   </div>
 
+  <button class="app-toast" id="appToast" type="button" style="display:none">
+    <span class="status-bar-dot" id="appToastDot"></span>
+    <span class="app-toast-body">
+      <span class="app-toast-title" id="appToastTitle"></span>
+      <span class="app-toast-detail" id="appToastDetail"></span>
+    </span>
+  </button>
+
   <div id="modelModal" class="model-modal" style="display:none">
     <div class="model-modal-bg" id="modelModalBg"></div>
     <div class="model-modal-panel">
@@ -873,7 +887,7 @@
                   <option value="jpg">JPG（軽量）</option>
                 </select>
               </div>
-              <div class="frame-hint">F12 キーで再生中のフレームをフル解像度で保存します。保存先は動画と同じ場所の「動画名_screenshot」フォルダ、ファイル名は「動画名_時-分-秒.png」です。</div>
+              <div class="frame-hint">F9 キーで再生中のフレームをフル解像度で保存します。保存先は動画と同じ場所の「動画名_screenshot」フォルダ、ファイル名は「動画名_時-分-秒.png」です。</div>
             </div>
           </section>
           <section class="settings-section" id="settings-section-prompts">
@@ -3442,7 +3456,7 @@
     function getTranslationMode(){ return translationModeSel.value==='fast' ? 'fast' : 'quality' }
     translationModeSel.addEventListener('change',()=>saveUiSettings({translation_mode:getTranslationMode()}))
 
-    // スクリーンショット（F12）: 再生位置のフレームをサーバー側 ffmpeg で
+    // フレーム保存（F9）: 再生位置のフレームをサーバー側 ffmpeg で
     // {動画名}_screenshot/ にフル解像度保存する
     const reportUseLlmChk=document.getElementById('reportUseLlm')
     const reportImagesSel=document.getElementById('reportImagesPerChapter')
@@ -3474,9 +3488,69 @@
       }
     }
     document.addEventListener('keydown',e=>{
-      if(e.key!=='F12') return
+      if(e.key!=='F9' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return
       e.preventDefault()
       takeScreenshot()
+    })
+
+    // お知らせトースト（同時に1件。クリック時の動作は onClick で渡す）
+    const appToast=document.getElementById('appToast')
+    let _toastTimer=null, _toastOnClick=null
+    function hideToast(){
+      clearTimeout(_toastTimer); _toastTimer=null
+      appToast.style.display='none'
+      _toastOnClick=null
+    }
+    function showToast({ok,title,detail,clickTitle,onClick}){
+      hideToast()
+      document.getElementById('appToastDot').className='status-bar-dot '+(ok?'done':'error')
+      document.getElementById('appToastTitle').textContent=title||''
+      const detailEl=document.getElementById('appToastDetail')
+      detailEl.textContent=detail||''
+      detailEl.style.display=detail?'':'none'
+      appToast.title=clickTitle||''
+      appToast.style.cursor=onClick?'':'default'
+      _toastOnClick=onClick||null
+      appToast.style.display=''
+      _toastTimer=setTimeout(hideToast,6000)
+    }
+    appToast.addEventListener('click',()=>{ const fn=_toastOnClick; hideToast(); if(fn) fn() })
+    appToast.addEventListener('mouseenter',()=>{ clearTimeout(_toastTimer); _toastTimer=null })
+    appToast.addEventListener('mouseleave',()=>{ if(appToast.style.display!=='none') _toastTimer=setTimeout(hideToast,6000) })
+
+    // アプリ画面のスクリーンショット（F12 = 画面の実ピクセル / Shift+F12 = 100% 相当の論理サイズ）。
+    // 保存は main プロセス（アプリフォルダ直下の screenshot/）。撮影中は次の撮影を受け付けない
+    let _windowShotBusy=false
+    async function takeWindowScreenshot(logical){
+      if(_windowShotBusy || !window.electronAPI?.captureWindow) return
+      _windowShotBusy=true
+      try{
+        // 前回のトーストが写り込まないよう、消してから再描画を待って撮る
+        if(appToast.style.display!=='none'){
+          hideToast()
+          await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))
+        }
+        const res=await window.electronAPI.captureWindow(logical)
+        if(!res || !res.ok) throw new Error(res?.error||'不明なエラー')
+        const filePath=res.path
+        showToast({
+          ok:true,
+          title:`スクリーンショットを保存しました${logical?'（100% 相当のサイズ）':''}　${res.width}×${res.height}`,
+          detail:filePath,
+          clickTitle:'エクスプローラーで表示',
+          onClick:()=>window.electronAPI.showItemInFolder(filePath),
+        })
+      }catch(e){
+        showToast({ok:false,title:'スクリーンショットを保存できませんでした',detail:String(e.message||e)})
+      }finally{
+        _windowShotBusy=false
+      }
+    }
+    document.addEventListener('keydown',e=>{
+      if(e.key!=='F12' || e.ctrlKey || e.altKey || e.metaKey) return
+      e.preventDefault()
+      if(e.repeat) return
+      takeWindowScreenshot(e.shiftKey)
     })
 
 

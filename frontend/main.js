@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, Menu, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, Menu, shell, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
@@ -370,6 +370,59 @@ ipcMain.handle('shell:openExternal', (_, url) => {
   if (!isExternalHttpUrl(url)) return { ok: false, error: 'invalid url' }
   shell.openExternal(String(url))
   return { ok: true }
+})
+
+// アプリ画面のスクリーンショット（F12 / Shift+F12）。ページの表示領域を
+// アプリフォルダ直下の screenshot/ に PNG 保存する。
+// logical=false は画面の実ピクセル（表示スケール 150% なら論理サイズの 1.5 倍）、
+// logical=true は表示スケールをかける前の論理サイズ（100% 相当）に縮めて保存
+const APP_SCREENSHOT_DIR = path.join(path.resolve(__dirname, '..'), 'screenshot')
+
+function screenshotStamp(d) {
+  const p2 = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-` +
+    `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
+}
+
+// 同じ秒に撮ったときは -2, -3 … を付ける（'wx' で既存ファイルを上書きしない）
+function writeUniquePng(dir, stem, buf) {
+  for (let i = 1; i < 1000; i++) {
+    const filePath = path.join(dir, i === 1 ? `${stem}.png` : `${stem}-${i}.png`)
+    try {
+      fs.writeFileSync(filePath, buf, { flag: 'wx' })
+      return filePath
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e
+    }
+  }
+  throw new Error('保存先のファイル名を決められませんでした')
+}
+
+ipcMain.handle('app:captureWindow', async (event, opts) => {
+  const logical = !!(opts && opts.logical)
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return { ok: false, error: 'window not found' }
+  try {
+    const captured = await event.sender.capturePage()
+    // capturePage は表示スケール分の解像度で返る。PNG を経由して実ピクセル寸法の画像に正規化する
+    let image = captured.isEmpty() ? captured : nativeImage.createFromBuffer(captured.toPNG())
+    if (image.isEmpty()) return { ok: false, error: '画像が空でした（ウィンドウが最小化されている可能性があります）' }
+    if (logical) {
+      const [width, height] = win.getContentSize()
+      const size = image.getSize()
+      if (size.width !== width || size.height !== height) {
+        image = image.resize({ width, height, quality: 'best' })
+      }
+    }
+    const buf = image.toPNG()
+    if (!buf || buf.length === 0) return { ok: false, error: '画像が空でした' }
+    fs.mkdirSync(APP_SCREENSHOT_DIR, { recursive: true })
+    const filePath = writeUniquePng(APP_SCREENSHOT_DIR, screenshotStamp(new Date()), buf)
+    const { width, height } = image.getSize()
+    return { ok: true, path: filePath, width, height }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
 })
 
 // テキストファイルを読み込む（SRT / VTT 読み込み専用。それ以外の拡張子は拒否）

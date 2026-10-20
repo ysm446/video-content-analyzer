@@ -210,7 +210,7 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
   プレイヤー下の詳細エリアの「スペック」セクションが動画オープン時に取得）
 
 ### スクリーンショット
-- `POST /screenshot` — 再生位置のフレームを ffmpeg 入力シークでフル解像度保存（F12）。
+- `POST /screenshot` — 再生位置のフレームを ffmpeg 入力シークでフル解像度保存（F9）。
   保存先は動画と同じ場所の `{動画名}_screenshot/`、ファイル名は
   `{動画名}_{HH-MM-SS.mmm}.{png|jpg}`（形式は ui-settings の `screenshot_format`）。
   末尾・範囲外の時刻は `duration - 0.1` にクランプ
@@ -447,7 +447,8 @@ video.mp4
 | ステータスログ | 文字起こし・字幕生成・動画分析の状態を1行ずつ表示 |
 | 中止ボタン | ステータスバー右側。実行中のみ表示。`POST /cancel` で `backend/cancel.py` のフラグを立て、推論ループ（ASR セグメント走査・llama.cpp ストリーム読取）が安全に停止してから unload する。停止すると SSE で `{status:'canceled'}` が届き各ハンドラが `markCanceled`。fetch の abort は使わない（推論中 unload 事故を避けるため） |
 | レポート | 分析パネル操作行の「レポート」ボタン（章立てか字幕のどちらかがあるとき有効）。`POST /report/generate` で `{動画名}_report/` に 1 ページ Markdown＋単一 HTML＋画像を書き出し、完了時にレポートモーダルを開く。設定 → 動画分析 → レポート で VL による本文生成の ON/OFF と 1 章あたりの画像上限を指定。進捗はステータスバー（kind=report）、中止ボタン対応 |
-| F12 | 再生位置のスクリーンショットを動画と同じ場所の `{動画名}_screenshot/` に保存（`POST /screenshot`。形式は設定 → プレイヤーで png/jpg を選択。結果はステータスバーに表示） |
+| F9 | 再生位置のフレームを動画と同じ場所の `{動画名}_screenshot/` に保存（`POST /screenshot`。形式は設定 → プレイヤーで png/jpg を選択。結果はステータスバーに表示） |
+| F12 / Shift+F12 | アプリ画面（Web ページの表示領域）のスクリーンショットをアプリフォルダ直下の `screenshot/` に PNG 保存（IPC `app:captureWindow`・main.js の `webContents.capturePage()`）。F12 は画面の実ピクセル（表示スケール 150% なら論理サイズの 1.5 倍）、Shift+F12 は 100% 相当の論理サイズに縮小。ファイル名 `YYYYMMDD-HHMMSS.png`（同じ秒は `-2`…）。Ctrl/Alt 併用は無視、撮影中・キーリピートは受け付けない。結果は右下のトースト（`.app-toast`）に出し、クリックでエクスプローラー表示。直前のトーストは消してから撮る |
 | Ctrl+R / F5 | 開発用リロードショートカット（main.js で登録） |
 
 ## アイコン
@@ -476,6 +477,7 @@ Lucide Icons（`frontend/vendor/` にローカル同梱。marked も同様）を
   アプリのウィンドウが外部ページへ遷移して preload の `electronAPI` が露出しないように）。
   http(s) リンクはレンダラーの委譲クリックで IPC `shell:openExternal` に渡し既定ブラウザで開く。
   IPC `fs:readFile` は `.srt` / `.vtt` の絶対パスのみ（50MB 上限）、`fs:trashItem` /
-  `fs:showItemInFolder` は絶対パス文字列のみ受け付ける
+  `fs:showItemInFolder` は絶対パス文字列のみ受け付ける。`app:captureWindow` は保存先を
+  main 側で固定（アプリフォルダ直下の `screenshot/`）し、レンダラーからはパスを受け取らない
 - モデルフォルダのスキャン（`model_catalog._scan_models`）は 3 秒 TTL でキャッシュ。
   フォルダ変更・ランタイムインストール後は `invalidate_cache()` で捨てる
