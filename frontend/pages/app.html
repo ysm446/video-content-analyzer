@@ -73,6 +73,11 @@
     .sysinfo-bar-fill{display:block;width:0%;height:100%;border-radius:2px;background:var(--accent);transition:width .6s ease,background .4s}
     .sysinfo-bar-fill.hi{background:var(--warning)}
     .sysinfo-bar-fill.crit{background:var(--error)}
+    .status-bar-sysinfo.collapsed .sysinfo-item{display:none}
+    .status-bar-icon-btn{width:22px;height:22px;border:none;background:none;color:var(--text-dim);border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;margin-right:-6px;transition:background .15s,color .15s}
+    .status-bar-icon-btn:hover{background:var(--surface2);color:var(--text)}
+    .status-bar-icon-btn.toggled-off{opacity:.45}
+    .status-bar-icon-btn svg.lucide{width:13px;height:13px;stroke-width:2.2}
 
     .sidebar-left{display:flex;align-items:center;gap:3px;position:relative;z-index:1}
     .main-row{flex:1;display:flex;min-height:0;min-width:0;overflow:hidden}
@@ -791,6 +796,7 @@
     <span class="status-bar-text" id="globalStatusText">待機中</span>
     <button class="status-stop-btn" id="cancelBtn" type="button" style="display:none" title="実行中の処理を中止"><i data-lucide="square"></i> 中止</button>
     <span class="status-bar-sysinfo" id="sysInfo"></span>
+    <button class="status-bar-icon-btn" id="sysInfoToggleBtn" type="button" title="リソース表示を隠す" aria-pressed="true"><i data-lucide="activity"></i></button>
   </div>
 
   <button class="app-toast" id="appToast" type="button" style="display:none">
@@ -3606,6 +3612,7 @@
         reportLayoutSel.value = REPORT_LAYOUTS.includes(s.report_layout) ? s.report_layout : 'both'
         state.seekMarkersVisible = s.seek_markers !== false
         updateSeekMarkersBtn()
+        setSysInfoVisible(s.show_sysinfo !== false)
         renderSeekMarkers()
         applySubtitleDisplay(subtitleDisplaySel.value)
         applySubtitleFont(subtitleFontSel.value)
@@ -4371,8 +4378,25 @@
     sysInfo.append(itemCpu, itemRam)
 
     let gpuAttached = false, vramAttached = false
+    let sysInfoVisible = true
+
+    // リソース表示の表示／非表示（非表示中はポーリングも止める）
+    function setSysInfoVisible(visible) {
+      sysInfoVisible = visible
+      sysInfo.classList.toggle('collapsed', !visible)
+      const btn = document.getElementById('sysInfoToggleBtn')
+      btn.title = visible ? 'リソース表示を隠す' : 'リソース表示を表示'
+      btn.setAttribute('aria-pressed', visible ? 'true' : 'false')
+      btn.classList.toggle('toggled-off', !visible)
+      if (visible) updateSysInfo()
+    }
+    document.getElementById('sysInfoToggleBtn').addEventListener('click', () => {
+      setSysInfoVisible(!sysInfoVisible)
+      saveUiSettings({show_sysinfo: sysInfoVisible})
+    })
 
     async function updateSysInfo() {
+      if (!sysInfoVisible) return
       try {
         const r = await fetch(`${API}/system-stats`)
         if (!r.ok) return

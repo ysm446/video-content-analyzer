@@ -201,7 +201,7 @@ asyncio.run_in_executor(None, ...) でブロッキング推論を非同期化
 ### 設定
 - `GET  /ui-settings` — UI 設定取得（volume / playback_rate / frame_mode / screenshot_format /
   root_folder / show_file_panel / video_kind / report_use_llm / report_rebuild_chapters /
-  report_images_per_chapter / report_layout 等。`video_kinds` に種類の選択肢）
+  report_images_per_chapter / report_layout / show_sysinfo 等。`video_kinds` に種類の選択肢）
 - `POST /ui-settings` — UI 設定保存
 
 ### 動画情報

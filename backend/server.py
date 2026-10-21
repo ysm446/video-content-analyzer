@@ -545,6 +545,7 @@ class UISettingsRequest(BaseModel):
     show_file_panel: Optional[bool] = None
     file_panel_width: Optional[int] = None  # px（180〜600 にクランプ）
     seek_markers: Optional[bool] = None  # シークバーのチャプター・ブックマークマーカー表示
+    show_sysinfo: Optional[bool] = None  # ステータスバーのリソース表示（CPU/RAM/GPU/VRAM）
     video_kind: Optional[str] = None               # 動画の種類（章分けの基準・粒度）
     report_rebuild_chapters: Optional[bool] = None # レポート: 字幕から章立てを作り直す
     report_use_llm: Optional[bool] = None          # レポート: VL モデルで本文生成・画像選定
@@ -793,6 +794,7 @@ def get_ui_settings():
         "show_file_panel": s.get("show_file_panel", True),
         "file_panel_width": s.get("file_panel_width", 272),
         "seek_markers": s.get("seek_markers", True),
+        "show_sysinfo": s.get("show_sysinfo", True),
         "video_kind": s.get("video_kind", "auto"),
         "video_kinds": outline_builder.kind_options(),
         "report_rebuild_chapters": s.get("report_rebuild_chapters", True),
@@ -847,6 +849,8 @@ def post_ui_settings(req: UISettingsRequest):
         to_save["file_panel_width"] = max(180, min(600, int(req.file_panel_width)))
     if req.seek_markers is not None:
         to_save["seek_markers"] = bool(req.seek_markers)
+    if req.show_sysinfo is not None:
+        to_save["show_sysinfo"] = bool(req.show_sysinfo)
     if req.video_kind is not None:
         to_save["video_kind"] = req.video_kind if req.video_kind in outline_builder.VIDEO_KINDS else "auto"
     if req.report_rebuild_chapters is not None:
