@@ -2430,7 +2430,7 @@
     function toFileUrl(filePath){ return 'file:///'+filePath.replace(/\\/g,'/') }
     function loadVideo(filePath){
       video.src=toFileUrl(filePath)
-      seekPreviewVideo.src=toFileUrl(filePath)  // シークバーのホバープレビュー用
+      setPreviewSource(filePath)  // シークバーのホバープレビュー用（ホバー中だけ読み込む）
       video.style.display='block'
       noVideo.style.display='none'
       origSubtitles=[]; jpSubtitles=[]
@@ -2446,9 +2446,7 @@
       video.removeAttribute('src')
       video.load()
       // プレビュー用 video もファイルハンドルを解放（リネーム・削除のロック回避）
-      seekPreviewVideo.removeAttribute('src')
-      seekPreviewVideo.load()
-      seekPreview.style.display='none'
+      setPreviewSource(null)
       video.style.display='none'
       noVideo.style.display=''
       origSubtitles=[]; jpSubtitles=[]; renderedOrigSub=null
@@ -2840,7 +2838,11 @@
 
     // シークバーのホバープレビュー: 非表示のプレビュー用 video をホバー位置へ
     // シークして小窓表示する（本編の再生位置は動かさない。サーバー抽出なしで高速）。
-    // 連続 mousemove は seeked 待ちで直列化し、最新位置だけを追いかける
+    // 連続 mousemove は seeked 待ちで直列化し、最新位置だけを追いかける。
+    // プレビュー用 video に本編と同じファイルを常時読み込んでおくと、ハードウェア
+    // デコーダのセッションとデコード用サーフェスを 2 本分占有し、本編の再生がコマ落ち
+    // することがある。そのため src はシークバーにマウスが乗っている間だけ設定し、
+    // 離れて少し経ったら解放する（短い再ホバーでは読み直さない）
     const seekPreview=document.createElement('div')
     seekPreview.id='seekPreview'
     const seekPreviewVideo=document.createElement('video')
@@ -2852,17 +2854,49 @@
     seekPreview.appendChild(seekPreviewTime)
     document.body.appendChild(seekPreview)
     let _previewSeeking=false, _previewPending=null, _previewSize=null
+    let _previewPath=null, _previewReady=false, _previewReleaseTimer=null
+    const PREVIEW_RELEASE_DELAY_MS=1500
+    // 開いている動画のパスを覚えるだけで、この時点では読み込まない
+    function setPreviewSource(filePath){
+      _previewPath=filePath||null
+      _previewSize=null
+      _releasePreviewVideo()
+      seekPreview.style.display='none'
+    }
+    function _attachPreviewVideo(){
+      clearTimeout(_previewReleaseTimer); _previewReleaseTimer=null
+      if(!_previewPath || seekPreviewVideo.getAttribute('src')) return
+      _previewReady=false; _previewSeeking=false; _previewPending=null
+      seekPreviewVideo.src=toFileUrl(_previewPath)
+    }
+    function _releasePreviewVideo(){
+      clearTimeout(_previewReleaseTimer); _previewReleaseTimer=null
+      _previewReady=false; _previewSeeking=false; _previewPending=null
+      if(!seekPreviewVideo.getAttribute('src')) return
+      seekPreviewVideo.removeAttribute('src')
+      seekPreviewVideo.load()
+    }
+    function _scheduleReleasePreviewVideo(){
+      clearTimeout(_previewReleaseTimer)
+      _previewReleaseTimer=setTimeout(_releasePreviewVideo, PREVIEW_RELEASE_DELAY_MS)
+    }
     function _previewSeekTo(t){
-      if(_previewSeeking){ _previewPending=t; return }
+      if(!_previewReady || _previewSeeking){ _previewPending=t; return }
       _previewSeeking=true
       try{ seekPreviewVideo.currentTime=t }catch{ _previewSeeking=false }
     }
+    seekPreviewVideo.addEventListener('loadedmetadata',()=>{
+      _previewReady=true
+      if(_previewPending!=null){ const t=_previewPending; _previewPending=null; _previewSeekTo(t) }
+    })
     seekPreviewVideo.addEventListener('seeked',()=>{
       _previewSeeking=false
       if(_previewPending!=null){ const t=_previewPending; _previewPending=null; _previewSeekTo(t) }
     })
+    seekBar.addEventListener('mouseenter',()=>{ if(video.src && _previewPath) _attachPreviewVideo() })
     seekBar.addEventListener('mousemove',e=>{
-      if(!video.src || isNaN(video.duration) || !seekPreviewVideo.getAttribute('src')){ seekPreview.style.display='none'; return }
+      if(!video.src || isNaN(video.duration) || !_previewPath){ seekPreview.style.display='none'; return }
+      _attachPreviewVideo()
       const rect=seekBar.getBoundingClientRect()
       const frac=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))
       const t=Math.min(frac*video.duration, Math.max(video.duration-0.1,0))
@@ -2876,7 +2910,7 @@
       seekPreview.style.top=(rect.top-h-10)+'px'
       _previewSeekTo(t)
     })
-    seekBar.addEventListener('mouseleave',()=>{ seekPreview.style.display='none' })
+    seekBar.addEventListener('mouseleave',()=>{ seekPreview.style.display='none'; _scheduleReleasePreviewVideo() })
 
     volumeBar.addEventListener('input',()=>{ video.volume=volumeBar.value })
     volumeBar.addEventListener('change',()=>saveUiSettings({volume:parseFloat(volumeBar.value)}))
