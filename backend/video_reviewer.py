@@ -793,6 +793,22 @@ class VideoReviewer:
             except (TypeError, ValueError):
                 return None
 
+        def _bit_depth(stream: dict) -> int | None:
+            # bits_per_raw_sample が無い（コンテナ・コーデックにより欠ける）ときは
+            # pix_fmt から推定する（yuv420p10le → 10、末尾に数字が無い yuv420p 等は 8）
+            depth = _int(stream.get("bits_per_raw_sample"))
+            if depth:
+                return depth
+            pix_fmt = stream.get("pix_fmt") or ""
+            if not pix_fmt:
+                return None
+            m = re.search(r"p(\d{2})(le|be)$", pix_fmt)
+            if m:
+                return int(m.group(1))
+            if re.fullmatch(r"(yuvj?4[0-4][0-4]p|nv12|nv21|gray|rgb24|bgr24|rgba|bgra)", pix_fmt):
+                return 8
+            return None
+
         try:
             size = p.stat().st_size
         except OSError:
@@ -803,6 +819,9 @@ class VideoReviewer:
             "size_bytes": size,
             "bit_rate": _int(fmt.get("bit_rate")),
             "video_codec": v.get("codec_name"),
+            "video_profile": v.get("profile"),
+            "pix_fmt": v.get("pix_fmt"),
+            "bit_depth": _bit_depth(v) if v else None,
             "width": v.get("width"),
             "height": v.get("height"),
             "fps": _fps(v) if v else None,

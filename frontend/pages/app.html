@@ -2598,7 +2598,9 @@
         if(info.width && info.height) rows.push(['解像度',`${info.width}×${info.height}`])
         if(Number.isFinite(info.duration)) rows.push(['長さ',fmtDurationHMS(info.duration)])
         if(typeof info.size_bytes==='number') rows.push(['ファイルサイズ',_fmtBytes(info.size_bytes)])
-        const vparts=[info.video_codec, info.fps?`${info.fps} fps`:''].filter(Boolean)
+        // 例: h264 (High 10) / 10bit / 29.97 fps（プロファイル・ビット数は HW デコード可否の目安）
+        const vcodec=info.video_codec ? (info.video_profile ? `${info.video_codec} (${info.video_profile})` : info.video_codec) : ''
+        const vparts=[vcodec, info.bit_depth?`${info.bit_depth}bit`:'', info.fps?`${info.fps} fps`:''].filter(Boolean)
         if(vparts.length) rows.push(['映像',vparts.join(' / ')])
         const aparts=[info.audio_codec, info.audio_sample_rate?`${Math.round(info.audio_sample_rate/1000)} kHz`:'', info.audio_channels?`${info.audio_channels}ch`:''].filter(Boolean)
         if(aparts.length) rows.push(['音声',aparts.join(' / ')])
